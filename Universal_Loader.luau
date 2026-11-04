@@ -174,19 +174,48 @@ local function sendVerifyRequest(key)
 end
 
 -- ==============================================================================
--- 3. SCRIPT EXECUTION ENGINE
+-- 3. SCRIPT EXECUTION ENGINE (ALWAYS FETCH LATEST FROM CLOUD)
 -- ==============================================================================
 local function launchGameScript(scriptFileName, gameTitle)
-    print(string.format("[Universal Hub] 🚀 Launching script for %s...", gameTitle))
+    print(string.format("[Universal Hub] 🚀 Launching latest script for %s...", gameTitle))
 
-    -- Try local file first (fastest, works offline in workspace)
+    -- 1. Always fetch latest version from Whitelist Server first (guarantees up-to-date features)
+    local url = SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. tostring(tick())
+    local dlOk, code = pcall(game.HttpGet, game, url)
+    if dlOk and code and #code > 50 then
+        local fn, err = loadstring(code)
+        if fn then
+            print("[Universal Hub] ✅ Downloaded latest script from server: " .. url)
+            -- Overwrite local file cache so offline mode and autoexecute have the newest version
+            pcall(function()
+                if writefile then
+                    if not isfolder("UniversalHub") then makefolder("UniversalHub") end
+                    writefile("UniversalHub/" .. scriptFileName, code)
+                    if scriptFileName == "hunting_together.luau" then
+                        writefile("hunting_together_script.lua", code)
+                        writefile("hunting_together.luau", code)
+                    end
+                end
+            end)
+            task.spawn(fn)
+            return
+        else
+            warn("[Universal Hub] ⚠️ Error compiling downloaded script: " .. tostring(err))
+        end
+    else
+        warn("[Universal Hub] Failed to download script from server, checking offline cache...")
+    end
+
+    -- 2. Fallback to local file only if server is unreachable
     local localCandidates = {
-        "games/" .. scriptFileName,
         "UniversalHub/" .. scriptFileName,
+        "games/" .. scriptFileName,
         scriptFileName
     }
 
-    if scriptFileName == "anime_galaxies.luau" then
+    if scriptFileName == "hunting_together.luau" then
+        table.insert(localCandidates, "hunting_together_script.lua")
+    elseif scriptFileName == "anime_galaxies.luau" then
         table.insert(localCandidates, "AnimeGalaxiesHub/AnimeGalaxies_Hub.luau")
         table.insert(localCandidates, "AnimeGalaxies_Hub.luau")
     end
@@ -197,30 +226,12 @@ local function launchGameScript(scriptFileName, gameTitle)
             if ok and content and #content > 50 then
                 local fn, err = loadstring(content)
                 if fn then
-                    print("[Universal Hub] Loaded from local file: " .. path)
+                    print("[Universal Hub] Loaded from offline cache: " .. path)
                     task.spawn(fn)
                     return
-                else
-                    warn("[Universal Hub] Failed to compile local file (" .. path .. "): " .. tostring(err))
                 end
             end
         end
-    end
-
-    -- Fallback: Fetch directly from Whitelist Server
-    local url = SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. tostring(tick())
-    local dlOk, code = pcall(game.HttpGet, game, url)
-    if dlOk and code and #code > 50 then
-        local fn, err = loadstring(code)
-        if fn then
-            print("[Universal Hub] Downloaded and executed from server: " .. url)
-            task.spawn(fn)
-            return
-        else
-            warn("[Universal Hub] Error compiling script: " .. tostring(err))
-        end
-    else
-        warn("[Universal Hub] Failed to download script from: " .. url)
     end
 end
 
