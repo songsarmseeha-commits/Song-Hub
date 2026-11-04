@@ -9,8 +9,8 @@ module.exports = {
     // Public domain/host URL for Get Key redirects (e.g. http://localhost:3000 or https://your-hub.domain.com)
     PUBLIC_URL: process.env.PUBLIC_URL || "https://song-hub-avp8.onrender.com",
 
-    // Admin dashboard login password (CHANGE THIS in production!)
-    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "admin1234",
+    // Admin dashboard login password
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "ttt0871457806",
 
     // Secret salt used for request signature verification (optional anti-tamper)
     API_SECRET_KEY: process.env.API_SECRET_KEY || "galaxy_hub_super_secret_salt_2026",
