@@ -754,20 +754,25 @@ app.get('/api/v1/getkey/callback', (req, res) => {
         return res.redirect(`/getkey?session=${sessionId}&stepSuccess=1`);
     }
 
-    // All steps complete! Issue 24h key!
+    // All steps complete! Issue free key with configured HWID & session limits!
     const keyString = generateKey('GALAXY');
     const durationHours = parseInt(db.getSetting('getkey_duration_hours', config.GETKEY.KEY_DURATION_HOURS)) || 24;
     const durationSeconds = durationHours * 3600;
+    const maxHwid = parseInt(db.getSetting('getkey_max_hwid', config.GETKEY.MAX_HWID || 1)) || 1;
+    const maxSessions = parseInt(db.getSetting('getkey_max_sessions', config.GETKEY.MAX_SESSIONS || 1)) || 1;
 
     const newKey = db.createKey({
         keyString,
         keyType: `${durationHours}h`,
         durationSeconds,
-        note: `Free Key via GetKey (${session.provider} - Steps: ${session.total_steps})`
+        note: `Free Key via GetKey (${session.provider} - Steps: ${session.total_steps})`,
+        maxHwid,
+        maxSessions
     });
 
     if (session.hwid) {
         db.activateKey(newKey.id, session.hwid, 'Free_User', durationSeconds);
+        db.addKeyHwid(newKey.id, session.hwid, null, 'Free_User');
     }
 
     db.completeSessionWithKey(sessionId, keyString);
@@ -813,6 +818,8 @@ app.get('/api/v1/admin/getkey/settings', requireAdmin, (req, res) => {
         mode: db.getSetting('getkey_mode', config.GETKEY.MODE),
         steps: parseInt(db.getSetting('getkey_steps', config.GETKEY.TOTAL_STEPS)) || 2,
         durationHours: parseInt(db.getSetting('getkey_duration_hours', config.GETKEY.KEY_DURATION_HOURS)) || 24,
+        maxHwid: parseInt(db.getSetting('getkey_max_hwid', config.GETKEY.MAX_HWID || 1)) || 1,
+        maxSessions: parseInt(db.getSetting('getkey_max_sessions', config.GETKEY.MAX_SESSIONS || 1)) || 1,
         linkvertiseUserId: db.getSetting('linkvertise_user_id', config.GETKEY.LINKVERTISE_USER_ID),
         lootlabsApiKey: db.getSetting('lootlabs_api_key', config.GETKEY.LOOTLABS_API_KEY),
         lootlabsTierId: parseInt(db.getSetting('lootlabs_tier_id', config.GETKEY.LOOTLABS_TIER_ID)) || 1,
@@ -828,6 +835,8 @@ app.post('/api/v1/admin/getkey/settings', requireAdmin, (req, res) => {
         mode,
         steps,
         durationHours,
+        maxHwid,
+        maxSessions,
         linkvertiseUserId,
         lootlabsApiKey,
         lootlabsTierId,
@@ -838,6 +847,8 @@ app.post('/api/v1/admin/getkey/settings', requireAdmin, (req, res) => {
     if (mode) db.setSetting('getkey_mode', mode);
     if (steps) db.setSetting('getkey_steps', String(steps));
     if (durationHours) db.setSetting('getkey_duration_hours', String(durationHours));
+    if (maxHwid) db.setSetting('getkey_max_hwid', String(Math.max(parseInt(maxHwid) || 1, 1)));
+    if (maxSessions) db.setSetting('getkey_max_sessions', String(Math.max(parseInt(maxSessions) || 1, 1)));
     if (linkvertiseUserId) db.setSetting('linkvertise_user_id', String(linkvertiseUserId).trim());
     if (lootlabsApiKey) db.setSetting('lootlabs_api_key', String(lootlabsApiKey).trim());
     if (lootlabsTierId) db.setSetting('lootlabs_tier_id', String(lootlabsTierId));
