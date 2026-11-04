@@ -421,18 +421,37 @@ task.spawn(function()
     })
 
     TabKey:Button({
-        Title = "🔑 Get Free 24h Key (LootLabs / Linkvertise)",
-        Desc = "Copy Get Key link to browser to claim free 24-hour key",
-        Icon = "external-link",
+        Title = "🟣 Get Free Key via LootLabs",
+        Desc = "Copy LootLabs checkpoint link (Fast & Mobile Friendly)",
+        Icon = "layers",
         Callback = function()
             local hwid = getHardwareId()
-            local portalUrl = SERVER_HOST .. "/getkey?hwid=" .. HttpService:UrlEncode(hwid)
+            local portalUrl = SERVER_HOST .. "/getkey?hwid=" .. HttpService:UrlEncode(hwid) .. "&provider=lootlabs"
             if setclipboard then
                 setclipboard(portalUrl)
             end
             WindUI:Notify({
-                Title = "Link Copied! 📋",
-                Content = "Get Key URL copied! Open it in your browser:\n" .. portalUrl,
+                Title = "LootLabs Link Copied! 📋",
+                Content = "LootLabs URL copied! Open it in your browser:\n" .. portalUrl,
+                Duration = 6,
+                Icon = "clipboard-check"
+            })
+        end
+    })
+
+    TabKey:Button({
+        Title = "🔵 Get Free Key via Linkvertise",
+        Desc = "Copy Linkvertise checkpoint link",
+        Icon = "external-link",
+        Callback = function()
+            local hwid = getHardwareId()
+            local portalUrl = SERVER_HOST .. "/getkey?hwid=" .. HttpService:UrlEncode(hwid) .. "&provider=linkvertise"
+            if setclipboard then
+                setclipboard(portalUrl)
+            end
+            WindUI:Notify({
+                Title = "Linkvertise Link Copied! 📋",
+                Content = "Linkvertise URL copied! Open it in your browser:\n" .. portalUrl,
                 Duration = 6,
                 Icon = "clipboard-check"
             })
