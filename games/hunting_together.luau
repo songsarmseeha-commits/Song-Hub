@@ -65,6 +65,7 @@ local UseItem = getRemote("UseItem", 3)
 local PickupDrop = getRemote("PickupDrop", 3)
 local DungeonAction = getRemote("DungeonAction", 1)
 local DungeonPrompt = getRemote("DungeonPrompt", 1)
+local PartyAction = getRemote("PartyAction", 1)
 
 -- Graceful thread termination & instance cleanup
 local currentRunId = (getgenv and getgenv()._HT_ScriptRunId or 0) + 1
@@ -132,6 +133,8 @@ local activeBossFight = nil
 local lastBoxScanTime = 0
 local isEnteringDungeon = false
 local isOpeningDungeonChest = false
+local isWaitingForParty = false
+local forceStartDungeonFlag = false
 local lastDungeonEnterAttempt = 0
 local lastDungeonKeyBuyTime = 0
 local lastDungeonReviveTime = 0
@@ -469,6 +472,14 @@ local Config = {
     SelectedDungeon = "halloween",             -- "halloween" (Skull King's Crypt)
     DungeonDifficulty = "easy",               -- "easy" or "normal"
     DungeonForceSolo = true,                  -- ออกจากปาร์ตี้อื่นอัตโนมัติเพื่อให้สามารถเข้าคนเดียวได้ทันที
+    
+    -- 👥 Dungeon Party & Matchmaking
+    DungeonPartyMode = "Solo",                -- "Solo" (ลงคนเดียว) or "Party" (สร้างปาร์ตี้ลงด้วยกัน)
+    PartyTargetMembers = 2,                   -- จำนวนคนในตี้ที่ต้องการก่อนเริ่มลงดันเจี้ยน (2 - 4 คน)
+    PartyWaitTimeout = 30,                    -- เวลารอคนตอบรับเข้าตี้ (วินาที) ก่อนเริ่มสร้างห้อง
+    PartyInviteTarget = "All Server",         -- "All Server", "Friends Only", "Nearby Gate"
+    PartyAutoInvite = true,                   -- ส่งคำเชิญชวนเข้าตี้หมู่อัตโนมัติเมื่อเริ่ม
+    
     AutoBuyDungeonKey = false,
     MaxDungeonKeysToBuy = 10,
     AutoReadyDungeon = true,
@@ -1461,15 +1472,272 @@ local function executeClaimExitChest()
     isOpeningDungeonChest = false
 end
 
-local function executeDungeonEnterRoutine()
-    if not Config.AutoDungeon or isEnteringDungeon or isInsideDungeon() then return end
+-- ==================== 👥 PARTY & CO-OP MANAGEMENT SYSTEM ====================
+local function getPartyMembers()
+    local members = { LocalPlayer }
+    local seen = { [LocalPlayer] = true }
+
+    -- 1. Check PartyId / Party / PartyLeader attributes
+    pcall(function()
+        local myPartyId = LocalPlayer:GetAttribute("PartyId") or LocalPlayer:GetAttribute("Party")
+        local myLeader = LocalPlayer:GetAttribute("PartyLeader")
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and not seen[p] then
+                local pPartyId = p:GetAttribute("PartyId") or p:GetAttribute("Party")
+                local pLeader = p:GetAttribute("PartyLeader")
+                if myPartyId and pPartyId and myPartyId == pPartyId then
+                    table.insert(members, p)
+                    seen[p] = true
+                elseif pLeader and (pLeader == LocalPlayer.Name or tostring(pLeader) == tostring(LocalPlayer.UserId)) then
+                    table.insert(members, p)
+                    seen[p] = true
+                elseif myLeader and pLeader and myLeader == pLeader then
+                    table.insert(members, p)
+                    seen[p] = true
+                end
+            end
+        end
+    end)
+
+    -- 2. Check PartyJson attribute on LocalPlayer
+    pcall(function()
+        local pJson = LocalPlayer:GetAttribute("PartyJson") or LocalPlayer:GetAttribute("PartyData")
+        if pJson and type(pJson) == "string" and #pJson > 2 then
+            local decoded = HttpService:JSONDecode(pJson)
+            local list = type(decoded) == "table" and (decoded.Members or decoded.members or decoded.Players or decoded)
+            if type(list) == "table" then
+                for _, item in pairs(list) do
+                    local n = type(item) == "table" and (item.Name or item.name or item.UserId or item.userId) or item
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if (p.Name == tostring(n) or tostring(p.UserId) == tostring(n)) and not seen[p] then
+                            table.insert(members, p)
+                            seen[p] = true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 3. Check PlayerGui party UI if present
+    pcall(function()
+        local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if pGui then
+            for _, gui in ipairs(pGui:GetChildren()) do
+                if gui:IsA("ScreenGui") and (gui.Name:lower():find("party") or gui.Name:lower():find("team")) then
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
+                            for _, p in ipairs(Players:GetPlayers()) do
+                                if p ~= LocalPlayer and not seen[p] and d.Text:find(p.Name) then
+                                    table.insert(members, p)
+                                    seen[p] = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return members
+end
+
+local function createParty()
+    if not PartyAction then
+        PartyAction = Remotes and Remotes:FindFirstChild("PartyAction")
+    end
+    if not PartyAction then return false end
+    pcall(function() PartyAction:FireServer("create") end)
+    pcall(function() PartyAction:FireServer("createParty") end)
+    pcall(function() PartyAction:FireServer("make") end)
+    return true
+end
+
+local function leaveParty()
+    if not PartyAction then
+        PartyAction = Remotes and Remotes:FindFirstChild("PartyAction")
+    end
+    if not PartyAction then return false end
+    pcall(function() PartyAction:FireServer("leave") end)
+    return true
+end
+
+local function invitePlayerToParty(targetPlayer)
+    if not targetPlayer or targetPlayer == LocalPlayer then return false end
+    if not PartyAction then
+        PartyAction = Remotes and Remotes:FindFirstChild("PartyAction")
+    end
+    if not PartyAction then return false end
+
+    pcall(function() PartyAction:FireServer("invite", targetPlayer) end)
+    pcall(function() PartyAction:FireServer("invite", targetPlayer.Name) end)
+    pcall(function() PartyAction:FireServer("invite", targetPlayer.UserId) end)
+    pcall(function() PartyAction:FireServer("invitePlayer", targetPlayer) end)
+    return true
+end
+
+local function massInviteParty(filterType)
+    createParty()
+    task.wait(0.2)
+
+    local invitedCount = 0
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local shouldInvite = false
+            local f = (filterType or Config.PartyInviteTarget or "All Server"):lower()
+            if f:find("all") then
+                shouldInvite = true
+            elseif f:find("friend") then
+                pcall(function()
+                    if LocalPlayer:IsFriendsWith(p.UserId) then
+                        shouldInvite = true
+                    end
+                end)
+            elseif f:find("near") or f:find("gate") then
+                local pHrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                if hrp and pHrp and (hrp.Position - pHrp.Position).Magnitude <= 120 then
+                    shouldInvite = true
+                end
+            else
+                shouldInvite = true
+            end
+
+            if shouldInvite then
+                invitePlayerToParty(p)
+                invitedCount = invitedCount + 1
+                task.wait(0.06)
+            end
+        end
+    end
+
+    if WindUI and WindUI.Notify then
+        WindUI:Notify({
+            Title = "Party Invite Sent",
+            Content = string.format("ส่งคำเชิญเข้าปาร์ตี้ให้ผู้เล่น %d คน (%s)", invitedCount, filterType or "All"),
+            Duration = 3,
+            Icon = "user-plus"
+        })
+    end
+    return invitedCount
+end
+
+local function waitForPartyMembers(targetCount, timeoutSeconds)
+    isWaitingForParty = true
+    forceStartDungeonFlag = false
+    local startTime = os.clock()
+    local timeout = timeoutSeconds or Config.PartyWaitTimeout or 30
+    local target = targetCount or Config.PartyTargetMembers or 2
+
+    while (os.clock() - startTime) < timeout do
+        if not isScriptAlive() or forceStartDungeonFlag then break end
+        if isInsideDungeon() then break end
+
+        local currentMembers = getPartyMembers()
+        local count = #currentMembers
+        local remaining = math.max(0, math.ceil(timeout - (os.clock() - startTime)))
+
+        if count >= target then
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "👥 Party Ready!",
+                    Content = string.format("สมาชิกในปาร์ตี้ครบแล้ว (%d/%d คน)! กำลังเริ่มสร้างห้องดันเจี้ยน...", count, target),
+                    Duration = 2.5,
+                    Icon = "users"
+                })
+            end
+            isWaitingForParty = false
+            return true
+        end
+
+        if remaining % 5 == 0 or remaining <= 3 then
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "⏳ Waiting for Party",
+                    Content = string.format("สมาชิกร่วมตี้: %d/%d คน (เหลือเวลาอีก %d วินาที)\nกดปุ่ม Force Start หากต้องการเริ่มทันที", count, target, remaining),
+                    Duration = 2,
+                    Icon = "clock"
+                })
+            end
+        end
+
+        task.wait(1.0)
+    end
+
+    isWaitingForParty = false
+    local finalMembers = getPartyMembers()
+    if WindUI and WindUI.Notify then
+        WindUI:Notify({
+            Title = "🚀 Party Starting",
+            Content = string.format("เริ่มดันเจี้ยนด้วยสมาชิกปัจจุบัน (%d คน)...", #finalMembers),
+            Duration = 2.5,
+            Icon = "play"
+        })
+    end
+    return #finalMembers > 1
+end
+
+local function findDungeonGatePrompt()
+    local gatePos = Vector3.new(4.8, 5.0, 112.5)
+    local bestPrompt = nil
+    local bestDist = math.huge
+
+    -- 1. Check workspace.Map.Village
+    pcall(function()
+        local village = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Village")
+        if village then
+            for _, d in ipairs(village:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    local pPos = d.Parent and (d.Parent:IsA("BasePart") and d.Parent.Position or d.Parent:GetPivot().Position)
+                    if pPos then
+                        local dist = (pPos - gatePos).Magnitude
+                        if dist < bestDist and dist <= 25 then
+                            bestDist = dist
+                            bestPrompt = d
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 2. Fallback: Search all ProximityPrompts near gatePos
+    if not bestPrompt then
+        pcall(function()
+            for _, p in ipairs(workspace:GetDescendants()) do
+                if p:IsA("ProximityPrompt") then
+                    local pParent = p.Parent
+                    local pPos = pParent and (pParent:IsA("BasePart") and pParent.Position or pParent:GetPivot().Position)
+                    if pPos then
+                        local dist = (pPos - gatePos).Magnitude
+                        if dist <= 20 and dist < bestDist then
+                            bestDist = dist
+                            bestPrompt = p
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    return bestPrompt
+end
+
+-- ==================== 🏰 ROBUST DUNGEON ROOM CREATION & ENTRY ====================
+local function executeDungeonEnterRoutine(isManual)
+    if isEnteringDungeon or isInsideDungeon() then return end
+    if not isManual and not canScriptMoveOrWarp() then return end
+
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
     local now = os.clock()
-    if now - lastDungeonEnterAttempt < 8 then return end
+    if not isManual and (now - lastDungeonEnterAttempt) < 8 then return end
     lastDungeonEnterAttempt = now
 
     -- 1. Level check
@@ -1490,7 +1758,6 @@ local function executeDungeonEnterRoutine()
     local keys = getDungeonKeys()
     local silver = getPlayerSilver()
 
-    -- Try to buy key if 0 keys and AutoBuyDungeonKey is enabled
     if keys <= 0 and Config.AutoBuyDungeonKey then
         if silver >= 500000 then
             if WindUI and WindUI.Notify then
@@ -1537,7 +1804,7 @@ local function executeDungeonEnterRoutine()
                 Icon = "navigation"
             })
         end
-        travelToZone("Town", "Adventurer Guild / Village")
+        travelToZone("Town", "Adventurer Guild / Village", true)
         task.wait(0.5)
 
         -- Step to GateKeeper precisely
@@ -1554,61 +1821,61 @@ local function executeDungeonEnterRoutine()
         task.wait(0.5)
     end
 
-    -- 4. Trigger GateKeeper DungeonPrompt
-    local gateModel = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Village") and workspace.Map.Village:FindFirstChild("DungeonGate_Village")
-    if gateModel then
-        for _, p in ipairs(gateModel:GetDescendants()) do
-            if p:IsA("ProximityPrompt") and (p.ActionText == "Talk" or p.ObjectText:lower():find("gate") or p.Name:lower():find("dungeon")) then
-                if fireproximityprompt then
-                    fireproximityprompt(p)
-                end
-                pcall(function()
-                    local holdDur = math.max(0.2, (p.HoldDuration or 0) + 0.15)
-                    p:InputHoldBegin()
-                    task.wait(holdDur)
-                    p:InputHoldEnd()
-                end)
-                break
-            end
+    -- 4. Party Management & Member Wait
+    if Config.DungeonPartyMode == "Party" then
+        createParty()
+        task.wait(0.2)
+        if Config.PartyAutoInvite then
+            massInviteParty(Config.PartyInviteTarget)
         end
+        -- Wait for party members to join before creating the dungeon room
+        waitForPartyMembers(Config.PartyTargetMembers or 2, Config.PartyWaitTimeout or 30)
+    elseif Config.DungeonPartyMode == "Solo" and Config.DungeonForceSolo ~= false then
+        leaveParty()
+        task.wait(0.15)
     end
-    task.wait(0.6)
 
-    -- 5. Send Enter Remote (Ensures party leader / solo status and passes required difficulty)
-    pcall(function()
-        if Config.DungeonForceSolo ~= false then
-            pcall(function()
-                local PartyAction = Remotes and Remotes:FindFirstChild("PartyAction")
-                if PartyAction then
-                    PartyAction:FireServer("leave")
-                end
-            end)
-            task.wait(0.2)
+    -- 5. Trigger GateKeeper ProximityPrompt
+    local prompt = findDungeonGatePrompt()
+    if prompt then
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
         end
-
-        local dId = Config.SelectedDungeon or "halloween"
-        local rawDiff = tostring(Config.DungeonDifficulty or "easy"):lower()
-        local diff = "easy"
-        if rawDiff:find("normal") or rawDiff:find("hard") then
-            diff = "normal"
-        end
-
-        pcall(registerQueueOnTeleport)
-        if DungeonAction then
-            DungeonAction:FireServer("selectEnter", dId, diff)
-        end
-    end)
+        pcall(function()
+            local holdDur = math.max(0.2, (prompt.HoldDuration or 0) + 0.15)
+            prompt:InputHoldBegin()
+            task.wait(holdDur)
+            prompt:InputHoldEnd()
+        end)
+    end
     task.wait(0.4)
 
-    -- 6. Send Ready Remote
-    pcall(function()
-        local dId = Config.SelectedDungeon or "halloween"
-        if DungeonAction then
-            DungeonAction:FireServer("ready", dId, true)
-        end
-    end)
+    -- 6. Send selectEnter & ready with multi-attempt retry
+    local dId = Config.SelectedDungeon or "halloween"
+    local rawDiff = tostring(Config.DungeonDifficulty or "easy"):lower()
+    local diff = (rawDiff:find("normal") or rawDiff:find("hard")) and "normal" or "easy"
+    pcall(registerQueueOnTeleport)
 
-    task.wait(3.0)
+    for attempt = 1, 3 do
+        if isInsideDungeon() then break end
+
+        pcall(function()
+            if DungeonAction then
+                DungeonAction:FireServer("selectEnter", dId, diff)
+            end
+        end)
+        task.wait(0.4)
+
+        pcall(function()
+            if DungeonAction then
+                DungeonAction:FireServer("ready", dId, true)
+            end
+        end)
+        task.wait(1.6)
+        if isInsideDungeon() then break end
+    end
+
+    task.wait(2.0)
     isEnteringDungeon = false
 end
 
@@ -4751,6 +5018,121 @@ DungeonTab:Toggle({
     end,
 })
 
+DungeonTab:Section({ Title = "👥 Party & Co-op Matchmaking (ระบบปาร์ตี้ & สร้างห้องชวนเพื่อน)", Opened = true })
+
+DungeonTab:Dropdown({
+    Title = "Dungeon Mode (รูปแบบการลงดันเจี้ยน)",
+    Desc = "เลือกรูปแบบการลงดันเจี้ยน: Solo (ลงคนเดียว) หรือ Party (สร้างปาร์ตี้ลงด้วยกัน)",
+    Values = { "Solo (ลงคนเดียว)", "Party (สร้างปาร์ตี้ลงด้วยกัน)" },
+    Value = (Config.DungeonPartyMode == "Party") and "Party (สร้างปาร์ตี้ลงด้วยกัน)" or "Solo (ลงคนเดียว)",
+    Callback = function(val)
+        if val:find("Party") then
+            Config.DungeonPartyMode = "Party"
+            Config.DungeonForceSolo = false
+            WindUI:Notify({ Title = "Dungeon Mode", Content = "เปิดโหมดสร้างปาร์ตี้ (Party Mode)", Duration = 2, Icon = "users" })
+        else
+            Config.DungeonPartyMode = "Solo"
+            WindUI:Notify({ Title = "Dungeon Mode", Content = "เปิดโหมดลงคนเดียว (Solo Mode)", Duration = 2, Icon = "user" })
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Slider({
+    Title = "Target Party Members (จำนวนคนในตี้ที่ต้องการ)",
+    Desc = "สคริปต์จะรอจนกว่าสมาชิกในปาร์ตี้จะครบตามจำนวนนี้ก่อนจึงจะเริ่มสร้างห้องดันเจี้ยน (2 - 4 คน)",
+    Value = { Min = 2, Max = 4, Default = Config.PartyTargetMembers or 2 },
+    Callback = function(val)
+        Config.PartyTargetMembers = val
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Slider({
+    Title = "Party Wait Timeout (เวลารอคนเข้าตี้ - วินาที)",
+    Desc = "เวลารอให้ผู้เล่นที่เราชวนตอบรับเข้าปาร์ตี้ หากหมดเวลาจะเริ่มลงด้วยสมาชิกที่มีอยู่ทันที",
+    Value = { Min = 10, Max = 90, Default = Config.PartyWaitTimeout or 30 },
+    Callback = function(val)
+        Config.PartyWaitTimeout = val
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Dropdown({
+    Title = "Mass Invite Target (เป้าหมายคำเชิญแบบหมู่)",
+    Desc = "เลือกกลุ่มผู้เล่นที่จะส่งคำเชิญเข้าปาร์ตี้แบบหมู่",
+    Values = { "All Server (ชวนทุกคนในเซิร์ฟเวอร์)", "Friends Only (ชวนเฉพาะเพื่อน)", "Nearby Gate (ชวนคนใกล้ประตูทางเข้า)" },
+    Value = (Config.PartyInviteTarget == "Friends Only" and "Friends Only (ชวนเฉพาะเพื่อน)") or (Config.PartyInviteTarget == "Nearby Gate" and "Nearby Gate (ชวนคนใกล้ประตูทางเข้า)") or "All Server (ชวนทุกคนในเซิร์ฟเวอร์)",
+    Callback = function(val)
+        if val:find("Friend") then
+            Config.PartyInviteTarget = "Friends Only"
+        elseif val:find("Near") then
+            Config.PartyInviteTarget = "Nearby Gate"
+        else
+            Config.PartyInviteTarget = "All Server"
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Toggle({
+    Title = "Auto Invite on Enter (ชวนคนเข้าตี้หมู่อัตโนมัติเมื่อเริ่ม)",
+    Desc = "เมื่อเริ่มเข้าคิวสร้างห้อง จะทำการส่งคำเชิญปาร์ตี้ให้ผู้เล่นตามเป้าหมายที่เลือกทันที",
+    Value = Config.PartyAutoInvite ~= false,
+    Callback = function(state)
+        Config.PartyAutoInvite = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Button({
+    Title = "👑 Create Party & Mass Invite Now (สร้างปาร์ตี้ & ส่งคำเชิญหมู่ทันที)",
+    Desc = "สร้างปาร์ตี้ใหม่และส่งคำเชิญแบบหมู่ให้ผู้เล่นในเซิร์ฟเวอร์ทันที",
+    Callback = function()
+        task.spawn(function()
+            massInviteParty(Config.PartyInviteTarget)
+        end)
+    end,
+})
+
+DungeonTab:Button({
+    Title = "▶️ Force Start / Enter Now (เริ่มสร้างห้องลงดันเจี้ยนทันที)",
+    Desc = "ข้ามเวลารอสมาชิกในปาร์ตี้ และเริ่มสร้างห้องลงดันเจี้ยนทันที 100%",
+    Callback = function()
+        forceStartDungeonFlag = true
+        task.spawn(function()
+            executeDungeonEnterRoutine(true)
+        end)
+    end,
+})
+
+DungeonTab:Button({
+    Title = "📋 Check Party Members (ตรวจดูสมาชิกในตี้ปัจจุบัน)",
+    Desc = "แสดงจำนวนและรายชื่อสมาชิกในปาร์ตี้ปัจจุบัน",
+    Callback = function()
+        local members = getPartyMembers()
+        local names = {}
+        for _, p in ipairs(members) do
+            table.insert(names, p.Name)
+        end
+        WindUI:Notify({
+            Title = "Party Status (" .. #members .. " คน)",
+            Content = "สมาชิกในปาร์ตี้:\n" .. table.concat(names, ", "),
+            Duration = 4,
+            Icon = "users"
+        })
+    end,
+})
+
+DungeonTab:Button({
+    Title = "🚪 Leave Current Party (ออกจากปาร์ตี้ปัจจุบัน)",
+    Desc = "ออกจากปาร์ตี้ปัจจุบันเพื่อไปลงคนเดียวหรือสร้างปาร์ตี้ใหม่",
+    Callback = function()
+        leaveParty()
+        WindUI:Notify({ Title = "Party", Content = "ออกจากปาร์ตี้เรียบร้อย!", Duration = 2, Icon = "log-out" })
+    end,
+})
+
 DungeonTab:Section({ Title = "🔑 Key Management & Entry (การเข้า & กุญแจ)", Opened = true })
 
 DungeonTab:Toggle({
@@ -6080,16 +6462,13 @@ end))
 -- ==================== REAL-TIME DUNGEON PROMPT LISTENER ====================
 if DungeonPrompt then
     trackConn(DungeonPrompt.OnClientEvent:Connect(function(event, data)
-        if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDungeon then return end
+        if not isScriptAlive() then return end
         if event == "dungeonselect" then
-            task.wait(0.2)
+            task.wait(0.15)
             pcall(function()
-                if Config.DungeonForceSolo ~= false then
-                    local PartyAction = Remotes and Remotes:FindFirstChild("PartyAction")
-                    if PartyAction then
-                        PartyAction:FireServer("leave")
-                    end
-                    task.wait(0.15)
+                if Config.DungeonPartyMode == "Solo" and Config.DungeonForceSolo ~= false then
+                    leaveParty()
+                    task.wait(0.1)
                 end
 
                 local dId = (type(data) == "table" and data.Id) or Config.SelectedDungeon or "halloween"
@@ -6104,7 +6483,7 @@ if DungeonPrompt then
                 end
             end)
         elseif event == "readystate" or event == "ready" then
-            if Config.AutoReadyDungeon then
+            if Config.AutoReadyDungeon or Config.DungeonPartyMode == "Party" then
                 task.wait(0.15)
                 pcall(function()
                     local dId = (type(data) == "table" and data.Id) or Config.SelectedDungeon or "halloween"
