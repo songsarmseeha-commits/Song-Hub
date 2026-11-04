@@ -30,6 +30,8 @@ module.exports = {
         MODE: process.env.GETKEY_MODE || "dual",
         TOTAL_STEPS: 2, // 1 or 2 checkpoints
         KEY_DURATION_HOURS: 24, // Free key validity (24 hours)
+        MAX_HWID: 1, // Free key HWID limit (Max allowed devices)
+        MAX_SESSIONS: 1, // Free key concurrent session limit (Max simultaneous instances)
 
         // Linkvertise Configuration
         LINKVERTISE_USER_ID: process.env.LINKVERTISE_USER_ID || "9176777",
