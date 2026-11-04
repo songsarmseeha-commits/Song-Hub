@@ -28,6 +28,55 @@ local function getHardwareId()
     return "DEVICE_" .. tostring(LocalPlayer.UserId)
 end
 
+-- Active Session State & Heartbeat Loop
+local activeSessionToken = nil
+
+local function startHeartbeatLoop(sessionToken, validKey)
+    if not sessionToken then return end
+    activeSessionToken = sessionToken
+
+    task.spawn(function()
+        while task.wait(30) do
+            if not activeSessionToken or activeSessionToken ~= sessionToken then break end
+            local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+            if requestFn then
+                pcall(function()
+                    local hbRes = requestFn({
+                        Url = SERVER_HOST .. "/api/v1/heartbeat",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode({
+                            sessionToken = activeSessionToken,
+                            key = validKey or "",
+                            hwid = getHardwareId()
+                        })
+                    })
+                    if hbRes and hbRes.StatusCode == 403 then
+                        warn("[Universal Hub] ⚠️ Session terminated by server (revoked or session limit reached)!")
+                        activeSessionToken = nil
+                    end
+                end)
+            end
+        end
+    end)
+
+    pcall(function()
+        game:BindToClose(function()
+            if activeSessionToken then
+                local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+                if requestFn then
+                    pcall(requestFn, {
+                        Url = SERVER_HOST .. "/api/v1/session/close",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode({ sessionToken = activeSessionToken })
+                    })
+                end
+            end
+        end)
+    end)
+end
+
 -- ==============================================================================
 -- 1. GAME DETECTION SYSTEM (แยก MAP อัตโนมัติ)
 -- ==============================================================================
@@ -96,7 +145,9 @@ local function sendVerifyRequest(key)
         userId = LocalPlayer.UserId,
         username = LocalPlayer.Name,
         gameId = game.GameId,
-        placeId = game.PlaceId
+        placeId = game.PlaceId,
+        jobId = game.JobId or "",
+        sessionToken = activeSessionToken or ""
     })
 
     local success, response = pcall(requestFn, {
@@ -212,6 +263,9 @@ task.spawn(function()
             local keyOk, keyData = sendVerifyRequest(savedKey:gsub("%s+", ""))
             if keyOk then
                 print(string.format("[Universal Hub] 🔑 License Key Active: %s (Type: %s)", savedKey, keyData.keyType or "Active"))
+                if keyData and keyData.sessionToken then
+                    startHeartbeatLoop(keyData.sessionToken, savedKey)
+                end
                 launchGameScript(scriptFileName, gameTitle)
                 return
             end
@@ -238,6 +292,9 @@ task.spawn(function()
                             writefile(KEY_SAVE_PATH, cd.key)
                         end)
                         print(string.format("[Universal Hub] ⚡ Auto-Detected Claimed Key for HWID: %s", cd.key))
+                        if autoData and autoData.sessionToken then
+                            startHeartbeatLoop(autoData.sessionToken, cd.key)
+                        end
                         launchGameScript(scriptFileName, gameTitle)
                         return
                     end
@@ -280,7 +337,11 @@ task.spawn(function()
         end
     })
 
-    local function handleSuccessfulUnlock(validKey, msg)
+    local function handleSuccessfulUnlock(validKey, msg, resultData)
+        if resultData and resultData.sessionToken then
+            startHeartbeatLoop(resultData.sessionToken, validKey)
+        end
+
         -- Save key locally so player never has to type it again!
         pcall(function()
             if not isfolder("UniversalHub") then makefolder("UniversalHub") end
@@ -353,7 +414,7 @@ task.spawn(function()
             local ok, result = sendVerifyRequest(keyToTest)
 
             if ok then
-                handleSuccessfulUnlock(keyToTest, result.message)
+                handleSuccessfulUnlock(keyToTest, result.message, result)
             else
                 WindUI:Notify({
                     Title = "Access Denied ❌",
@@ -405,7 +466,7 @@ task.spawn(function()
                 })
                 local vOk, vData = sendVerifyRequest(cd.key)
                 if vOk then
-                    handleSuccessfulUnlock(cd.key, vData.message)
+                    handleSuccessfulUnlock(cd.key, vData.message, vData)
                 else
                     WindUI:Notify({ Title = "Error", Content = vData.message or "Key verification failed", Duration = 3, Icon = "x-circle" })
                 end
