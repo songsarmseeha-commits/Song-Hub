@@ -148,7 +148,7 @@ async function loadKeys() {
 function renderKeysTable(keys) {
     const tbody = document.getElementById('keysTableBody');
     if (!keys || keys.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No license keys found. Generate one above!</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No license keys found. Generate one above!</td></tr>`;
         return;
     }
 
@@ -161,18 +161,34 @@ function renderKeysTable(keys) {
             statusBadge = '<span class="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 text-[10px]">Suspended</span>';
         } else if (isExpired) {
             statusBadge = '<span class="px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[10px]">Expired</span>';
-        } else if (k.hwid) {
+        } else if (k.hwid || (k.bound_hwids_count && k.bound_hwids_count > 0)) {
             statusBadge = '<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">Active (Used)</span>';
         } else {
             statusBadge = '<span class="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px]">Unclaimed</span>';
         }
 
-        const hwidDisplay = k.hwid
-            ? `<div class="flex items-center gap-1 font-mono text-[11px] text-cyan-400">
-                 <span>${k.hwid.substring(0, 10)}...</span>
-                 <button onclick="resetHwid(${k.id})" title="Reset HWID" class="p-1 hover:text-white"><i data-lucide="rotate-ccw" class="w-3 h-3"></i></button>
-               </div>`
-            : '<span class="text-gray-500 italic">None (Unbound)</span>';
+        const boundCount = k.bound_hwids_count !== undefined ? k.bound_hwids_count : (k.hwid ? 1 : 0);
+        const maxHwid = k.max_hwid || 1;
+        const hwidChip = `
+            <button onclick="openHwidModal(${k.id})" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cyan-500/30 bg-cyan-950/20 text-cyan-300 font-mono text-[11px] hover:border-cyan-400 transition" title="Click to view bound devices (${boundCount}/${maxHwid})">
+                <i data-lucide="cpu" class="w-3 h-3 text-cyan-400"></i>
+                <span>${boundCount}/${maxHwid}</span>
+            </button>
+        `;
+
+        const activeSessions = k.active_sessions_count || 0;
+        const maxSessions = k.max_sessions || 1;
+        const sessionChip = activeSessions > 0
+            ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-emerald-500/30 bg-emerald-950/20 text-emerald-400 font-mono text-[11px] font-semibold" title="${activeSessions} active instance(s)">
+                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                 <span>${activeSessions}/${maxSessions} Live</span>
+               </span>`
+            : `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-brand-border bg-black/20 text-gray-400 font-mono text-[11px]" title="No active instances">
+                 <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                 <span>0/${maxSessions} Idle</span>
+               </span>`;
+
+        const userOrNote = k.claimed_by || k.note || '<span class="text-gray-500">-</span>';
 
         const expiresDisplay = k.expires_at
             ? new Date(k.expires_at * 1000).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })
@@ -187,11 +203,21 @@ function renderKeysTable(keys) {
                     </button>
                 </td>
                 <td class="px-4 py-3 font-semibold text-purple-300">${k.key_type}</td>
-                <td class="px-4 py-3">${hwidDisplay}</td>
-                <td class="px-4 py-3">${k.claimed_by || '<span class="text-gray-500">-</span>'}</td>
+                <td class="px-4 py-3">${hwidChip}</td>
+                <td class="px-4 py-3">${sessionChip}</td>
+                <td class="px-4 py-3 text-gray-300 truncate max-w-[140px]">${userOrNote}</td>
                 <td class="px-4 py-3 text-gray-400">${expiresDisplay}</td>
                 <td class="px-4 py-3">${statusBadge}</td>
                 <td class="px-4 py-3 text-right space-x-1">
+                    <button onclick="openEditKeyModal(${k.id})" class="p-1.5 rounded-lg border border-brand-border text-gray-400 hover:text-purple-400 hover:border-purple-500/40 transition" title="Edit HWID & Session Limits">
+                        <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button onclick="kickSessions(${k.id})" class="p-1.5 rounded-lg border border-brand-border text-gray-400 hover:text-orange-400 hover:border-orange-500/40 transition" title="Kick all active Roblox game sessions">
+                        <i data-lucide="zap-off" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button onclick="resetHwid(${k.id})" class="p-1.5 rounded-lg border border-brand-border text-gray-400 hover:text-cyan-400 hover:border-cyan-500/40 transition" title="Reset All Linked HWIDs">
+                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                    </button>
                     <button onclick="toggleKey(${k.id}, ${k.is_active ? 0 : 1})" class="p-1.5 rounded-lg border border-brand-border text-gray-400 hover:text-yellow-400 transition" title="${k.is_active ? 'Suspend Key' : 'Activate Key'}">
                         <i data-lucide="${k.is_active ? 'pause' : 'play'}" class="w-3.5 h-3.5"></i>
                     </button>
@@ -371,15 +397,17 @@ document.getElementById('generateKeyForm').addEventListener('submit', async (e) 
     const type = document.getElementById('genType').value;
     const count = parseInt(document.getElementById('genCount').value) || 1;
     const note = document.getElementById('genNote').value;
+    const maxHwid = parseInt(document.getElementById('genMaxHwid')?.value) || 1;
+    const maxSessions = parseInt(document.getElementById('genMaxSessions')?.value) || 1;
 
     try {
         const res = await apiRequest('/api/v1/admin/keys/generate', {
             method: 'POST',
-            body: JSON.stringify({ prefix, type, count, note })
+            body: JSON.stringify({ prefix, type, count, note, maxHwid, maxSessions })
         });
 
         if (res.success) {
-            showToast(`Generated ${res.createdCount} new license key(s)!`);
+            showToast(`Generated ${res.createdCount} new license key(s) (HWID Limit: ${maxHwid} | Session Limit: ${maxSessions})!`);
             document.getElementById('genNote').value = '';
             loadKeys();
             loadStats();
@@ -388,6 +416,172 @@ document.getElementById('generateKeyForm').addEventListener('submit', async (e) 
         showToast('Failed to generate keys', 'error');
     }
 });
+
+// Kick all active sessions for a key
+window.kickSessions = async function(id) {
+    if (!confirm('Kick all active Roblox game instances for this key?')) return;
+    try {
+        const res = await apiRequest('/api/v1/admin/keys/kick-sessions', {
+            method: 'POST',
+            body: JSON.stringify({ id })
+        });
+        if (res.success) {
+            showToast(res.message);
+            loadKeys();
+            loadStats();
+        }
+    } catch (e) {
+        showToast('Failed to kick sessions', 'error');
+    }
+};
+
+// Edit Key Modal Controller
+let currentEditingKeyId = null;
+window.openEditKeyModal = function(id) {
+    const k = allKeysCache.find(x => x.id === id);
+    if (!k) return;
+
+    currentEditingKeyId = id;
+    document.getElementById('editKeyId').value = k.id;
+    document.getElementById('editKeyString').value = k.key_string;
+    document.getElementById('editMaxHwid').value = k.max_hwid || 1;
+    document.getElementById('editMaxSessions').value = k.max_sessions || 1;
+    document.getElementById('editKeyType').value = k.key_type || '24h';
+    document.getElementById('editKeyStatus').value = k.is_active ? '1' : '0';
+    document.getElementById('editNote').value = k.note || '';
+
+    document.getElementById('editKeyModal').classList.remove('hidden');
+    safeRenderIcons();
+};
+
+window.closeEditKeyModal = function() {
+    document.getElementById('editKeyModal').classList.add('hidden');
+    currentEditingKeyId = null;
+};
+
+// Form: Save Edited Key
+const editKeyForm = document.getElementById('editKeyForm');
+if (editKeyForm) {
+    editKeyForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = currentEditingKeyId;
+        if (!id) return;
+
+        const maxHwid = parseInt(document.getElementById('editMaxHwid').value) || 1;
+        const maxSessions = parseInt(document.getElementById('editMaxSessions').value) || 1;
+        const keyType = document.getElementById('editKeyType').value;
+        const isActive = document.getElementById('editKeyStatus').value === '1';
+        const note = document.getElementById('editNote').value;
+
+        try {
+            const res = await apiRequest('/api/v1/admin/keys/edit', {
+                method: 'POST',
+                body: JSON.stringify({ id, maxHwid, maxSessions, keyType, isActive, note })
+            });
+
+            if (res.success) {
+                showToast('Key settings and limits updated!');
+                closeEditKeyModal();
+                loadKeys();
+                loadStats();
+            }
+        } catch (err) {
+            showToast('Failed to update key limits', 'error');
+        }
+    });
+}
+
+// Bound Devices (HWIDs) Modal Controller
+let currentHwidKeyId = null;
+window.openHwidModal = async function(id) {
+    currentHwidKeyId = id;
+    const k = allKeysCache.find(x => x.id === id);
+    const keyTitle = document.getElementById('modalKeyTitle');
+    const container = document.getElementById('hwidModalList');
+
+    if (keyTitle) {
+        keyTitle.textContent = k ? `${k.key_string} (Limit: ${k.max_hwid || 1})` : `Key #${id}`;
+    }
+    container.innerHTML = '<div class="p-4 text-center text-xs text-gray-500">Loading bound devices...</div>';
+    document.getElementById('hwidListModal').classList.remove('hidden');
+    safeRenderIcons();
+
+    try {
+        const res = await apiRequest(`/api/v1/admin/keys/${id}/hwids`);
+        if (res.success) {
+            renderHwidModalList(id, res.hwids || []);
+        }
+    } catch (e) {
+        container.innerHTML = '<div class="p-4 text-center text-xs text-red-400">Failed to load linked devices</div>';
+    }
+};
+
+window.closeHwidModal = function() {
+    document.getElementById('hwidListModal').classList.add('hidden');
+    currentHwidKeyId = null;
+};
+
+function renderHwidModalList(keyId, hwids) {
+    const container = document.getElementById('hwidModalList');
+    if (!hwids || hwids.length === 0) {
+        container.innerHTML = '<div class="p-4 text-center text-xs text-gray-500 italic">No devices registered for this key yet.</div>';
+        return;
+    }
+
+    container.innerHTML = hwids.map((h, idx) => {
+        const firstUsed = new Date(h.first_used_at * 1000).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+        const lastUsed = new Date(h.last_used_at * 1000).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+
+        return `
+            <div class="p-3 rounded-xl bg-black/40 border border-brand-border flex items-center justify-between text-xs">
+                <div class="space-y-1">
+                    <div class="flex items-center gap-2">
+                        <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-[10px] font-bold">#${idx + 1}</span>
+                        <code class="font-mono text-cyan-300 font-semibold truncate max-w-[200px]" title="${h.hwid}">${h.hwid}</code>
+                        ${h.username ? `<span class="text-gray-400 text-[11px]">(${h.username})</span>` : ''}
+                    </div>
+                    <div class="text-[10px] text-gray-500 flex items-center gap-3">
+                        <span>First: ${firstUsed}</span>
+                        <span>Last: ${lastUsed}</span>
+                    </div>
+                </div>
+                <button onclick="removeSpecificHwid(${keyId}, '${h.hwid}')" class="px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 text-[11px] transition" title="Unlink Device">
+                    Remove
+                </button>
+            </div>
+        `;
+    }).join('');
+
+    safeRenderIcons();
+}
+
+window.removeSpecificHwid = async function(keyId, hwid) {
+    if (!confirm(`Unlink this device from the key?`)) return;
+    try {
+        const res = await apiRequest('/api/v1/admin/keys/remove-hwid', {
+            method: 'POST',
+            body: JSON.stringify({ id: keyId, hwid })
+        });
+        if (res.success) {
+            showToast('Device unlinked successfully');
+            openHwidModal(keyId);
+            loadKeys();
+            loadStats();
+        }
+    } catch (e) {
+        showToast('Failed to unlink device', 'error');
+    }
+};
+
+const btnModalResetAll = document.getElementById('btnModalResetAllHwids');
+if (btnModalResetAll) {
+    btnModalResetAll.onclick = function() {
+        if (currentHwidKeyId) {
+            resetHwid(currentHwidKeyId);
+            closeHwidModal();
+        }
+    };
+}
 
 // Form: Add Whitelist
 document.getElementById('addWhitelistForm').addEventListener('submit', async (e) => {
