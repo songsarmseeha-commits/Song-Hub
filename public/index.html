@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Galaxies Hub | Whitelist & Key System</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            purple: '#8b5cf6',
+                            pink: '#ec4899',
+                            cyan: '#06b6d4',
+                            dark: '#09090b',
+                            card: '#121217',
+                            border: '#27272a'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-[#09090b] text-gray-100 min-h-screen flex flex-col font-sans selection:bg-purple-500 selection:text-white">
+
+    <!-- TOP NAVIGATION BAR -->
+    <header class="border-b border-brand-border bg-[#0d0d12]/80 backdrop-blur sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 via-pink-500 to-cyan-400 p-[2px] shadow-lg shadow-purple-500/20">
+                    <div class="w-full h-full bg-[#09090b] rounded-[10px] flex items-center justify-center">
+                        <i data-lucide="shield-check" class="w-5 h-5 text-purple-400"></i>
+                    </div>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent" id="navHubName">
+                        Anime Galaxies Hub
+                    </h1>
+                    <p class="text-xs text-gray-400">Whitelist & License Management Portal</p>
+                </div>
+            </div>
+
+            <!-- Header Right Menu -->
+            <div class="flex items-center space-x-3">
+                <span id="authBadge" class="hidden text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Admin Connected
+                </span>
+                <button id="logoutBtn" class="hidden text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 transition flex items-center gap-1.5">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Logout
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- LOGIN MODAL (OVERLAY WHEN NOT AUTHENTICATED) -->
+    <div id="loginModal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-[#121217] border border-brand-border rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative overflow-hidden">
+            <div class="absolute -top-24 -right-24 w-48 h-48 bg-purple-600/20 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-pink-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="text-center mb-6">
+                <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                    <i data-lucide="lock" class="w-7 h-7 text-purple-400"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white">Administrator Access</h2>
+                <p class="text-xs text-gray-400 mt-1">Please enter your master password to access the panel</p>
+            </div>
+
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-300 mb-1.5">Admin Password</label>
+                    <div class="relative">
+                        <input type="password" id="adminPasswordInput" placeholder="••••••••" required
+                            class="w-full px-4 py-2.5 bg-[#18181f] border border-brand-border rounded-xl text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 text-white placeholder-gray-500 transition">
+                        <i data-lucide="key" class="w-4 h-4 text-gray-500 absolute right-3.5 top-3"></i>
+                    </div>
+                </div>
+
+                <div id="loginError" class="hidden text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 text-center"></div>
+
+                <button type="submit" class="w-full py-2.5 rounded-xl font-medium text-sm text-white bg-gradient-to-r from-purple-600 via-pink-600 to-purple-600 hover:opacity-95 transition shadow-lg shadow-purple-600/25 flex items-center justify-center gap-2">
+                    <span>Unlock Dashboard</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </form>
+            <p class="text-[11px] text-gray-500 text-center mt-4">Default password: <code class="text-gray-400 bg-[#1c1c24] px-1.5 py-0.5 rounded">admin1234</code></p>
+        </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+        <!-- TOP STATS CARDS -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <!-- Stat 1 -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-4 sm:p-5 relative overflow-hidden group hover:border-purple-500/40 transition">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-medium text-gray-400">Total Keys</span>
+                    <span class="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20"><i data-lucide="key" class="w-4 h-4"></i></span>
+                </div>
+                <div class="text-2xl font-bold text-white" id="statTotalKeys">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">Generated licenses</div>
+            </div>
+
+            <!-- Stat 2 -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-4 sm:p-5 relative overflow-hidden group hover:border-emerald-500/40 transition">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-medium text-gray-400">Active Keys</span>
+                    <span class="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><i data-lucide="check-circle" class="w-4 h-4"></i></span>
+                </div>
+                <div class="text-2xl font-bold text-emerald-400" id="statActiveKeys">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">Unrevoked & usable</div>
+            </div>
+
+            <!-- Stat 3 -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-4 sm:p-5 relative overflow-hidden group hover:border-cyan-500/40 transition">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-medium text-gray-400">HWID Bound</span>
+                    <span class="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"><i data-lucide="cpu" class="w-4 h-4"></i></span>
+                </div>
+                <div class="text-2xl font-bold text-cyan-400" id="statBoundKeys">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">Linked to devices</div>
+            </div>
+
+            <!-- Stat 4 -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-4 sm:p-5 relative overflow-hidden group hover:border-pink-500/40 transition">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-medium text-gray-400">Direct Whitelist</span>
+                    <span class="p-2 rounded-xl bg-pink-500/10 text-pink-400 border border-pink-500/20"><i data-lucide="user-check" class="w-4 h-4"></i></span>
+                </div>
+                <div class="text-2xl font-bold text-pink-400" id="statTotalWhitelist">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">Roblox VIP/Owner bypass</div>
+            </div>
+        </div>
+
+        <!-- NAVIGATION TABS -->
+        <div class="border-b border-brand-border flex space-x-2 sm:space-x-4 overflow-x-auto pb-1 text-sm font-medium">
+            <button class="nav-tab active-tab flex items-center gap-2 px-4 py-2.5 border-b-2 font-semibold transition" data-target="tab-keys">
+                <i data-lucide="key-round" class="w-4 h-4"></i> Key System & Generator
+            </button>
+            <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-whitelist">
+                <i data-lucide="shield-alert" class="w-4 h-4"></i> Direct Whitelist (VIP)
+            </button>
+            <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-logs">
+                <i data-lucide="scroll-text" class="w-4 h-4"></i> Verification Logs
+            </button>
+            <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-integration">
+                <i data-lucide="code-2" class="w-4 h-4"></i> Luau Integration Code
+            </button>
+            <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-monetization">
+                <i data-lucide="circle-dollar-sign" class="w-4 h-4 text-emerald-400"></i> Get Key & Monetization
+            </button>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 1: KEY MANAGEMENT & GENERATOR -->
+        <!-- ================================================================== -->
+        <div id="tab-keys" class="tab-pane space-y-6">
+
+            <!-- GENERATOR & ACTIONS BAR -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <i data-lucide="plus-circle" class="w-5 h-5 text-purple-400"></i> Generate License Keys
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Create single or bulk keys with custom expiry and prefix</p>
+                    </div>
+                </div>
+
+                <form id="generateKeyForm" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Key Prefix</label>
+                        <input type="text" id="genPrefix" value="GALAXY" placeholder="GALAXY"
+                            class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white uppercase focus:outline-none focus:border-purple-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Duration / Expiry</label>
+                        <select id="genType" class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-purple-500">
+                            <option value="24h">24 Hours (Trial)</option>
+                            <option value="3d">3 Days</option>
+                            <option value="7d">7 Days (Standard)</option>
+                            <option value="30d">30 Days (Monthly)</option>
+                            <option value="Lifetime" selected>Lifetime (Permanent)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Amount</label>
+                        <input type="number" id="genCount" value="1" min="1" max="50"
+                            class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-purple-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Note / Buyer</label>
+                        <input type="text" id="genNote" placeholder="Discord User / Buyer"
+                            class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-purple-500">
+                    </div>
+
+                    <div class="flex items-end">
+                        <button type="submit" class="w-full py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 text-white font-medium text-xs rounded-xl shadow-lg shadow-purple-500/20 transition flex items-center justify-center gap-1.5 h-[36px]">
+                            <i data-lucide="sparkles" class="w-4 h-4"></i> Generate Keys
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- KEYS TABLE -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl overflow-hidden shadow-xl">
+                <div class="p-4 sm:p-5 border-b border-brand-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="database" class="w-4 h-4 text-purple-400"></i>
+                        <h4 class="text-sm font-bold text-white">Issued License Keys</h4>
+                        <span id="keysCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">0</span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <div class="relative flex-1 sm:w-64">
+                            <input type="text" id="searchKeyInput" placeholder="Search key, user or note..."
+                                class="w-full pl-8 pr-3 py-1.5 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500">
+                            <i data-lucide="search" class="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-2.5"></i>
+                        </div>
+                        <button id="refreshKeysBtn" class="p-1.5 rounded-xl border border-brand-border text-gray-400 hover:text-white hover:bg-[#18181f] transition">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-gray-300">
+                        <thead class="bg-[#18181f] text-gray-400 uppercase font-semibold text-[11px] border-b border-brand-border">
+                            <tr>
+                                <th class="px-4 py-3">License Key</th>
+                                <th class="px-4 py-3">Duration</th>
+                                <th class="px-4 py-3">HWID Status</th>
+                                <th class="px-4 py-3">Claimed By</th>
+                                <th class="px-4 py-3">Expires At</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="keysTableBody" class="divide-y divide-brand-border">
+                            <tr>
+                                <td colspan="7" class="px-4 py-8 text-center text-gray-500">Loading keys...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 2: DIRECT WHITELIST (VIP / STAFF) -->
+        <!-- ================================================================== -->
+        <div id="tab-whitelist" class="tab-pane hidden space-y-6">
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
+                <div>
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        <i data-lucide="user-plus" class="w-5 h-5 text-pink-400"></i> Add Direct Whitelisted User
+                    </h3>
+                    <p class="text-xs text-gray-400 mt-0.5">Whitelisted players bypass the key prompt entirely and get instant access</p>
+                </div>
+
+                <form id="addWhitelistForm" class="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Roblox UserID <span class="text-pink-400">*</span></label>
+                        <input type="text" id="wlUserId" placeholder="e.g. 5183921820" required
+                            class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-pink-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Roblox Username</label>
+                        <input type="text" id="wlUsername" placeholder="e.g. Hood_u7"
+                            class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-pink-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Role / Rank</label>
+                        <select id="wlRole" class="w-full px-3 py-2 bg-[#18181f] border border-brand-border rounded-xl text-xs text-white focus:outline-none focus:border-pink-500">
+                            <option value="Owner">Owner 👑</option>
+                            <option value="Admin">Admin 🛡️</option>
+                            <option value="VIP" selected>VIP ✨</option>
+                            <option value="Tester">Beta Tester 🧪</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-end">
+                        <button type="submit" class="w-full py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:opacity-90 text-white font-medium text-xs rounded-xl shadow-lg shadow-pink-500/20 transition flex items-center justify-center gap-1.5 h-[36px]">
+                            <i data-lucide="shield-check" class="w-4 h-4"></i> Whitelist Player
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- WHITELIST TABLE -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl overflow-hidden shadow-xl">
+                <div class="p-4 sm:p-5 border-b border-brand-border flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="users" class="w-4 h-4 text-pink-400"></i>
+                        <h4 class="text-sm font-bold text-white">Whitelisted Players</h4>
+                        <span id="whitelistCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20">0</span>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-gray-300">
+                        <thead class="bg-[#18181f] text-gray-400 uppercase font-semibold text-[11px] border-b border-brand-border">
+                            <tr>
+                                <th class="px-4 py-3">Roblox UserID</th>
+                                <th class="px-4 py-3">Username</th>
+                                <th class="px-4 py-3">Role</th>
+                                <th class="px-4 py-3">Added Date</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="whitelistTableBody" class="divide-y divide-brand-border">
+                            <tr>
+                                <td colspan="5" class="px-4 py-8 text-center text-gray-500">Loading whitelisted players...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 3: VERIFICATION LOGS -->
+        <!-- ================================================================== -->
+        <div id="tab-logs" class="tab-pane hidden space-y-6">
+            <div class="bg-brand-card border border-brand-border rounded-2xl overflow-hidden shadow-xl">
+                <div class="p-4 sm:p-5 border-b border-brand-border flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="activity" class="w-4 h-4 text-cyan-400"></i>
+                        <h4 class="text-sm font-bold text-white">Live Execution & Verification Stream</h4>
+                    </div>
+                    <button id="refreshLogsBtn" class="text-xs px-3 py-1.5 rounded-xl border border-brand-border text-gray-400 hover:text-white hover:bg-[#18181f] transition flex items-center gap-1.5">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh Logs
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-gray-300">
+                        <thead class="bg-[#18181f] text-gray-400 uppercase font-semibold text-[11px] border-b border-brand-border">
+                            <tr>
+                                <th class="px-4 py-3">Time</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3">User</th>
+                                <th class="px-4 py-3">Key</th>
+                                <th class="px-4 py-3">HWID / IP</th>
+                                <th class="px-4 py-3">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTableBody" class="divide-y divide-brand-border">
+                            <tr>
+                                <td colspan="6" class="px-4 py-8 text-center text-gray-500">Loading logs...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 4: LUAU SCRIPT INTEGRATION -->
+        <!-- ================================================================== -->
+        <div id="tab-integration" class="tab-pane hidden space-y-6">
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl space-y-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <i data-lucide="terminal" class="w-5 h-5 text-purple-400"></i> Luau Integration Snippet
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-1">Copy and insert this header snippet at the top of your Hub script to protect it with this Whitelist/Key System</p>
+                    </div>
+
+                    <button id="copyLuaCodeBtn" class="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-lg shadow-purple-600/20">
+                        <i data-lucide="copy" class="w-4 h-4"></i> Copy Lua Code
+                    </button>
+                </div>
+
+                <div class="relative">
+                    <pre class="bg-[#09090d] border border-brand-border p-4 rounded-xl text-xs text-purple-300 font-mono overflow-x-auto max-h-[480px]" id="luaCodeSnippet">-- Loading snippet...</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 5: GET KEY & MONETIZATION SETTINGS -->
+        <!-- ================================================================== -->
+        <div id="tab-monetization" class="tab-pane hidden space-y-6">
+
+            <!-- QUICK PORTAL LINK & STATUS -->
+            <div class="bg-gradient-to-r from-emerald-950/40 via-cyan-950/30 to-purple-950/40 border border-emerald-500/30 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/20">
+                        <i data-lucide="coins" class="w-6 h-6"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <span>Get Key Checkpoint Gateway</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Active</span>
+                        </h3>
+                        <p class="text-xs text-gray-300 mt-0.5">Players complete Linkvertise & LootLabs tasks to receive free temporary keys.</p>
+                        <div class="flex items-center gap-2 mt-2">
+                            <span class="text-xs text-gray-400">Public URL:</span>
+                            <code id="monetizeUrlPreview" class="text-xs font-mono text-emerald-300 bg-black/40 px-2 py-0.5 rounded border border-emerald-500/20">http://localhost:3000/getkey</code>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2.5 w-full md:w-auto">
+                    <a href="/getkey" target="_blank" class="flex-1 md:flex-initial px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 transition">
+                        <i data-lucide="external-link" class="w-4 h-4"></i>
+                        <span>Open User Portal</span>
+                    </a>
+                    <button onclick="navigator.clipboard.writeText(window.location.origin + '/getkey'); showToast('Get Key URL copied to clipboard!', 'success');" class="px-3.5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                        <span>Copy Link</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- MONETIZATION CONFIGURATION FORM -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl space-y-6">
+                <div>
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        <i data-lucide="sliders" class="w-5 h-5 text-emerald-400"></i> Monetization & Checkpoint Settings
+                    </h3>
+                    <p class="text-xs text-gray-400 mt-1">Configure your shortlink provider keys, ad tier levels, and checkpoint steps.</p>
+                </div>
+
+                <form id="getkeySettingsForm" class="space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- Provider Mode -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Checkpoint Mode</label>
+                            <select id="cfgGetkeyMode" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
+                                <option value="dual">Dual (Step 1: LootLabs + Step 2: Linkvertise)</option>
+                                <option value="lootlabs">LootLabs Only (1 or 2 Steps)</option>
+                                <option value="linkvertise">Linkvertise Only (1 or 2 Steps)</option>
+                            </select>
+                            <p class="text-[10px] text-gray-500 mt-1">Dual maximizes revenue across both ad networks</p>
+                        </div>
+
+                        <!-- Number of Steps -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Total Checkpoints (Steps)</label>
+                            <select id="cfgGetkeySteps" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
+                                <option value="2">2 Steps (Standard & High Revenue)</option>
+                                <option value="1">1 Step (Quick for Players)</option>
+                            </select>
+                        </div>
+
+                        <!-- Key Duration -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Free Key Duration (Hours)</label>
+                            <input id="cfgGetkeyDuration" type="number" min="1" max="168" value="24" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
+                            <p class="text-[10px] text-gray-500 mt-1">Default 24h key before player must re-checkpoint</p>
+                        </div>
+                    </div>
+
+                    <!-- API Keys Section -->
+                    <div class="pt-4 border-t border-brand-border/60 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Linkvertise User ID -->
+                        <div class="p-4 rounded-xl bg-cyan-950/20 border border-cyan-500/20 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                                    <i data-lucide="zap" class="w-4 h-4"></i> Linkvertise Provider
+                                </span>
+                                <span class="text-[10px] text-gray-400">Account ID</span>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">User ID (Publisher ID)</label>
+                                <input id="cfgLinkvertiseId" type="text" placeholder="e.g. 9176777" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs font-mono text-cyan-200 focus:outline-none focus:border-cyan-500">
+                            </div>
+                            <p class="text-[10px] text-gray-400">Used for dynamic link redirection (`link-to.net/ID/...`)</p>
+                        </div>
+
+                        <!-- LootLabs API Token -->
+                        <div class="p-4 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                                    <i data-lucide="layers" class="w-4 h-4"></i> LootLabs Provider
+                                </span>
+                                <span class="text-[10px] text-gray-400">API Bearer Token</span>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">LootLabs API Key</label>
+                                <input id="cfgLootlabsKey" type="text" placeholder="e.g. 8580e9cc7da8..." class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs font-mono text-purple-200 focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 pt-1">
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-400 mb-1">Ad Tier (1-4)</label>
+                                    <select id="cfgLootlabsTier" class="w-full bg-[#09090d] border border-brand-border rounded-lg px-2.5 py-1.5 text-xs text-gray-200">
+                                        <option value="1">Tier 1 - Trending</option>
+                                        <option value="2">Tier 2 - Gaming Offers</option>
+                                        <option value="3">Tier 3 - Profit Max</option>
+                                        <option value="4">Tier 4 - Max Profit</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-400 mb-1">Tasks Count</label>
+                                    <select id="cfgLootlabsTasks" class="w-full bg-[#09090d] border border-brand-border rounded-lg px-2.5 py-1.5 text-xs text-gray-200">
+                                        <option value="1">1 Task</option>
+                                        <option value="2">2 Tasks (Recommended)</option>
+                                        <option value="3">3 Tasks</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-2">
+                        <div class="flex items-center space-x-2">
+                            <input id="cfgGetkeyEnabled" type="checkbox" checked class="w-4 h-4 rounded border-brand-border text-emerald-600 focus:ring-emerald-500 bg-[#09090d]">
+                            <label for="cfgGetkeyEnabled" class="text-xs font-semibold text-gray-300">Enable Get Key System</label>
+                        </div>
+
+                        <button type="submit" id="saveGetkeySettingsBtn" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-black font-extrabold rounded-xl text-xs transition shadow-lg shadow-emerald-600/20 flex items-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i> Save Monetization Settings
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- RECENT GET KEY SESSIONS TABLE -->
+            <div class="bg-brand-card border border-brand-border rounded-2xl p-6 shadow-xl space-y-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <i data-lucide="history" class="w-5 h-5 text-cyan-400"></i> Recent Checkpoint Sessions
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-1">Live tracking of players completing shortlinks and generating free keys</p>
+                    </div>
+                    <button id="refreshSessionsBtn" class="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-gray-300">
+                        <thead class="bg-white/5 text-gray-400 uppercase font-semibold text-[11px]">
+                            <tr>
+                                <th class="p-3">Session ID</th>
+                                <th class="p-3">IP Address</th>
+                                <th class="p-3">Device HWID</th>
+                                <th class="p-3">Provider</th>
+                                <th class="p-3">Progress</th>
+                                <th class="p-3">Status</th>
+                                <th class="p-3">Claimed Key</th>
+                                <th class="p-3">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessionsTableBody" class="divide-y divide-brand-border">
+                            <tr>
+                                <td colspan="8" class="p-4 text-center text-gray-500">Loading sessions...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- TOAST NOTIFICATION CONTAINER -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
