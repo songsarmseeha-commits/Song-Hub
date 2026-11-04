@@ -242,6 +242,11 @@ const Database = {
         stmt.run(nextStep, sessionId);
     },
 
+    updateSessionProvider(sessionId, provider, totalSteps = 1) {
+        const stmt = db.prepare('UPDATE getkey_sessions SET provider = ?, total_steps = ?, current_step = 1 WHERE session_id = ?');
+        stmt.run(provider, totalSteps, sessionId);
+    },
+
     completeSessionWithKey(sessionId, keyString) {
         const stmt = db.prepare('UPDATE getkey_sessions SET is_completed = 1, claimed_key = ? WHERE session_id = ?');
         stmt.run(keyString, sessionId);
