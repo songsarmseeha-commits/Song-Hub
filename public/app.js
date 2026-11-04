@@ -738,6 +738,8 @@ async function loadGetkeySettings() {
             if (document.getElementById('cfgGetkeyMode')) document.getElementById('cfgGetkeyMode').value = s.mode || 'dual';
             if (document.getElementById('cfgGetkeySteps')) document.getElementById('cfgGetkeySteps').value = String(s.steps || 2);
             if (document.getElementById('cfgGetkeyDuration')) document.getElementById('cfgGetkeyDuration').value = s.durationHours || 24;
+            if (document.getElementById('cfgGetkeyMaxHwid')) document.getElementById('cfgGetkeyMaxHwid').value = s.maxHwid || 1;
+            if (document.getElementById('cfgGetkeyMaxSessions')) document.getElementById('cfgGetkeyMaxSessions').value = s.maxSessions || 1;
             if (document.getElementById('cfgLinkvertiseId')) document.getElementById('cfgLinkvertiseId').value = s.linkvertiseUserId || '';
             if (document.getElementById('cfgLootlabsKey')) document.getElementById('cfgLootlabsKey').value = s.lootlabsApiKey || '';
             if (document.getElementById('cfgLootlabsTier')) document.getElementById('cfgLootlabsTier').value = String(s.lootlabsTierId || 1);
@@ -761,6 +763,8 @@ async function saveGetkeySettings(e) {
             mode: document.getElementById('cfgGetkeyMode').value,
             steps: parseInt(document.getElementById('cfgGetkeySteps').value) || 2,
             durationHours: parseInt(document.getElementById('cfgGetkeyDuration').value) || 24,
+            maxHwid: parseInt(document.getElementById('cfgGetkeyMaxHwid')?.value) || 1,
+            maxSessions: parseInt(document.getElementById('cfgGetkeyMaxSessions')?.value) || 1,
             linkvertiseUserId: document.getElementById('cfgLinkvertiseId').value.trim(),
             lootlabsApiKey: document.getElementById('cfgLootlabsKey').value.trim(),
             lootlabsTierId: parseInt(document.getElementById('cfgLootlabsTier').value) || 1,
