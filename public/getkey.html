@@ -134,6 +134,53 @@
                 <div id="alertContent"></div>
             </div>
 
+            <!-- Provider Selection Toggle (Choose LootLabs or Linkvertise) -->
+            <div id="providerSelectContainer" class="mb-6 p-4 rounded-xl bg-black/40 border border-brand-border/70 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                        <i data-lucide="sliders-horizontal" class="w-4 h-4 text-purple-400"></i>
+                        <span>Choose Checkpoint Sponsor:</span>
+                    </span>
+                    <span class="text-[10px] text-gray-400">Select one provider to get key</span>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- LootLabs Option -->
+                    <button type="button" id="btnOptLootlabs" onclick="selectProvider('lootlabs')" class="p-3 rounded-xl border border-purple-500/60 bg-purple-950/30 text-left transition flex items-center justify-between">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                                <i data-lucide="layers" class="w-4 h-4"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs font-bold text-white flex items-center gap-1">
+                                    <span>LootLabs</span>
+                                    <span class="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-semibold">Recommended</span>
+                                </div>
+                                <div class="text-[10px] text-gray-400">1 Quick Task • Fast</div>
+                            </div>
+                        </div>
+                        <div id="dotLootlabs" class="w-4 h-4 rounded-full border-2 border-purple-500 flex items-center justify-center">
+                            <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                        </div>
+                    </button>
+
+                    <!-- Linkvertise Option -->
+                    <button type="button" id="btnOptLinkvertise" onclick="selectProvider('linkvertise')" class="p-3 rounded-xl border border-brand-border/60 bg-black/20 text-left transition flex items-center justify-between">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                                <i data-lucide="zap" class="w-4 h-4"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs font-bold text-white">Linkvertise</div>
+                                <div class="text-[10px] text-gray-400">Standard Shortener</div>
+                            </div>
+                        </div>
+                        <div id="dotLinkvertise" class="w-4 h-4 rounded-full border-2 border-gray-600 flex items-center justify-center">
+                            <div class="w-2 h-2 rounded-full bg-transparent"></div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
             <!-- STEP 1: LOOTLABS CHECKPOINT -->
             <div id="cardStep1" class="space-y-4">
                 <div class="p-5 rounded-xl bg-purple-950/20 border border-purple-500/30 relative overflow-hidden">
@@ -143,16 +190,16 @@
                                 <i data-lucide="layers" class="w-5 h-5"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-white text-base">Checkpoint 1: LootLabs Sponsor Task</h3>
-                                <p class="text-xs text-gray-400">Complete tasks on LootLabs to verify Step 1</p>
+                                <h3 id="step1Title" class="font-bold text-white text-base">Checkpoint 1: LootLabs Sponsor Task</h3>
+                                <p id="step1Desc" class="text-xs text-gray-400">Complete tasks on LootLabs to verify Step 1</p>
                             </div>
                         </div>
                         <span id="step1Badge" class="px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
                             Ready
                         </span>
                     </div>
-                    <p class="text-xs text-gray-300 mb-4 leading-relaxed">
-                        Click the button below to open LootLabs in a new tab. After finishing the quick tasks, you will be redirected automatically to Step 2.
+                    <p id="step1Note" class="text-xs text-gray-300 mb-4 leading-relaxed">
+                        Click the button below to open LootLabs in a new tab. After finishing the quick tasks, your 24-hour key will be generated!
                     </p>
                     <button id="btnStartStep1" onclick="handleStartCheckpoint(1)" class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-purple-600/30 flex items-center justify-center space-x-2 transition transform active:scale-[0.99]">
                         <i data-lucide="external-link" class="w-4 h-4"></i>
@@ -170,15 +217,15 @@
                                 <i data-lucide="zap" class="w-5 h-5"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-white text-base">Checkpoint 2: Linkvertise Task</h3>
-                                <p class="text-xs text-gray-400">Almost there! Complete this final step to unlock your key</p>
+                                <h3 id="step2Title" class="font-bold text-white text-base">Checkpoint 2: Linkvertise Task</h3>
+                                <p id="step2Desc" class="text-xs text-gray-400">Complete this step to unlock your key</p>
                             </div>
                         </div>
-                        <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        <span id="step2Badge" class="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                             Final Step
                         </span>
                     </div>
-                    <p class="text-xs text-gray-300 mb-4 leading-relaxed">
+                    <p id="step2Note" class="text-xs text-gray-300 mb-4 leading-relaxed">
                         Click below to view the Linkvertise sponsor page. Once finished, your personal 24-hour key will be generated instantly on this page!
                     </p>
                     <button id="btnStartStep2" onclick="handleStartCheckpoint(2)" class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-sm shadow-lg shadow-cyan-600/30 flex items-center justify-center space-x-2 transition transform active:scale-[0.99]">
@@ -260,16 +307,63 @@
         const sessionParam = urlParams.get('session') || '';
         const claimedParam = urlParams.get('claimed');
         const stepSuccess = urlParams.get('stepSuccess');
+        let selectedProvider = (urlParams.get('provider') || 'lootlabs').toLowerCase();
 
         if (hwidParam) {
             document.getElementById('hwidBadge').classList.remove('hidden');
             document.getElementById('hwidText').innerText = hwidParam;
         }
 
+        function updateProviderUI(p) {
+            selectedProvider = p;
+            const btnLoot = document.getElementById('btnOptLootlabs');
+            const btnLinkv = document.getElementById('btnOptLinkvertise');
+            const dotLoot = document.getElementById('dotLootlabs');
+            const dotLinkv = document.getElementById('dotLinkvertise');
+
+            if (!btnLoot || !btnLinkv) return;
+
+            if (p === 'lootlabs') {
+                btnLoot.className = 'p-3 rounded-xl border-2 border-purple-500 bg-purple-950/40 text-left transition flex items-center justify-between shadow-lg shadow-purple-500/20';
+                dotLoot.innerHTML = '<div class="w-2 h-2 rounded-full bg-purple-500"></div>';
+                dotLoot.className = 'w-4 h-4 rounded-full border-2 border-purple-500 flex items-center justify-center';
+
+                btnLinkv.className = 'p-3 rounded-xl border border-brand-border/60 bg-black/20 text-left transition flex items-center justify-between opacity-70 hover:opacity-100';
+                dotLinkv.innerHTML = '<div class="w-2 h-2 rounded-full bg-transparent"></div>';
+                dotLinkv.className = 'w-4 h-4 rounded-full border-2 border-gray-600 flex items-center justify-center';
+            } else {
+                btnLinkv.className = 'p-3 rounded-xl border-2 border-cyan-500 bg-cyan-950/40 text-left transition flex items-center justify-between shadow-lg shadow-cyan-500/20';
+                dotLinkv.innerHTML = '<div class="w-2 h-2 rounded-full bg-cyan-500"></div>';
+                dotLinkv.className = 'w-4 h-4 rounded-full border-2 border-cyan-500 flex items-center justify-center';
+
+                btnLoot.className = 'p-3 rounded-xl border border-brand-border/60 bg-black/20 text-left transition flex items-center justify-between opacity-70 hover:opacity-100';
+                dotLoot.innerHTML = '<div class="w-2 h-2 rounded-full bg-transparent"></div>';
+                dotLoot.className = 'w-4 h-4 rounded-full border-2 border-gray-600 flex items-center justify-center';
+            }
+        }
+
+        async function selectProvider(p) {
+            updateProviderUI(p);
+            if (sessionData && sessionData.sessionId && !sessionData.isCompleted) {
+                try {
+                    await fetch('/api/v1/getkey/switch-provider', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sessionId: sessionData.sessionId, provider: p })
+                    });
+                    sessionData.provider = p;
+                    sessionData.totalSteps = 1;
+                    sessionData.currentStep = 1;
+                    renderStep(1, 1);
+                } catch (e) {}
+            }
+        }
+
         // Initialize Session
         async function initSession() {
             try {
-                const res = await fetch(`/api/v1/getkey/init?hwid=${encodeURIComponent(hwidParam)}&session=${encodeURIComponent(sessionParam)}`);
+                updateProviderUI(selectedProvider);
+                const res = await fetch(`/api/v1/getkey/init?hwid=${encodeURIComponent(hwidParam)}&session=${encodeURIComponent(sessionParam)}&provider=${encodeURIComponent(selectedProvider)}`);
                 const data = await res.json();
 
                 if (!data.success) {
@@ -285,11 +379,16 @@
                     return;
                 }
 
+                if (data.provider) {
+                    selectedProvider = data.provider;
+                    updateProviderUI(data.provider);
+                }
+
                 // Case 2: Render active step
                 renderStep(data.currentStep, data.totalSteps);
 
                 if (stepSuccess) {
-                    showAlert('success', 'Checkpoint completed successfully! Proceed to the next step.');
+                    showAlert('success', 'Checkpoint completed successfully!');
                 }
             } catch (err) {
                 showAlert('error', 'Cannot reach key server. Please check your internet connection.');
@@ -297,6 +396,9 @@
         }
 
         function renderStep(currentStep, totalSteps) {
+            const provider = (sessionData && sessionData.provider) || selectedProvider;
+            updateProviderUI(provider === 'linkvertise' ? 'linkvertise' : 'lootlabs');
+
             const progressBar = document.getElementById('progressBar');
             const step1Dot = document.getElementById('step1Dot');
             const step2Dot = document.getElementById('step2Dot');
@@ -307,28 +409,52 @@
             const cardClaimed = document.getElementById('cardClaimed');
 
             if (totalSteps === 1) {
-                // Single step mode
-                document.getElementById('step2Dot').style.display = 'none';
+                // Single step mode (Either LootLabs OR Linkvertise only!)
+                step2Dot.style.display = 'none';
                 document.getElementById('step2Label').style.display = 'none';
-            }
+                document.getElementById('step1Label').innerText = provider === 'linkvertise' ? 'Linkvertise' : 'LootLabs';
 
-            if (currentStep === 1) {
-                progressBar.style.width = '20%';
-                step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30';
-                cardStep1.classList.remove('hidden');
-                cardStep2.classList.add('hidden');
-                cardClaimed.classList.add('hidden');
-            } else if (currentStep === 2) {
-                progressBar.style.width = '65%';
-                step1Dot.className = 'w-9 h-9 rounded-full bg-purple-600 border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10';
-                step1Dot.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
-                
-                step2Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-cyan-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-cyan-500/30';
-                document.getElementById('step2Label').className = 'text-cyan-400';
+                progressBar.style.width = '45%';
+                step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 ' + (provider === 'linkvertise' ? 'border-cyan-500 shadow-cyan-500/30' : 'border-purple-500 shadow-purple-500/30') + ' flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg';
 
-                cardStep1.classList.add('hidden');
-                cardStep2.classList.remove('hidden');
+                if (provider === 'linkvertise') {
+                    cardStep1.classList.add('hidden');
+                    cardStep2.classList.remove('hidden');
+                    document.getElementById('step2Title').innerText = 'Linkvertise Checkpoint';
+                    document.getElementById('step2Badge').innerText = '1 Step Only';
+                    document.getElementById('step2Desc').innerText = 'Complete Linkvertise sponsor task to receive your key!';
+                    document.getElementById('btnStartStep2').innerHTML = '<i data-lucide="external-link" class="w-4 h-4"></i><span>Start Linkvertise Checkpoint (Get 24h Key)</span>';
+                    document.getElementById('btnStartStep2').onclick = function() { handleStartCheckpoint(1); };
+                } else {
+                    cardStep1.classList.remove('hidden');
+                    cardStep2.classList.add('hidden');
+                    document.getElementById('step1Title').innerText = 'LootLabs Checkpoint';
+                    document.getElementById('step1Badge').innerText = '1 Step Only';
+                    document.getElementById('step1Desc').innerText = 'Complete quick LootLabs task to receive your key!';
+                    document.getElementById('btnStartStep1').innerHTML = '<i data-lucide="external-link" class="w-4 h-4"></i><span>Start LootLabs Checkpoint (Get 24h Key)</span>';
+                    document.getElementById('btnStartStep1').onclick = function() { handleStartCheckpoint(1); };
+                }
                 cardClaimed.classList.add('hidden');
+            } else {
+                // Dual Step mode
+                step2Dot.style.display = 'flex';
+                document.getElementById('step2Label').style.display = 'block';
+                if (currentStep === 1) {
+                    progressBar.style.width = '20%';
+                    step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30';
+                    cardStep1.classList.remove('hidden');
+                    cardStep2.classList.add('hidden');
+                    cardClaimed.classList.add('hidden');
+                } else if (currentStep === 2) {
+                    progressBar.style.width = '65%';
+                    step1Dot.className = 'w-9 h-9 rounded-full bg-purple-600 border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10';
+                    step1Dot.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
+                    step2Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-cyan-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-cyan-500/30';
+                    document.getElementById('step2Label').className = 'text-cyan-400';
+                    cardStep1.classList.add('hidden');
+                    cardStep2.classList.remove('hidden');
+                    cardClaimed.classList.add('hidden');
+                }
             }
             lucide.createIcons();
         }
