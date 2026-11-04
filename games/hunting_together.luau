@@ -357,6 +357,8 @@ local Config = {
 
     -- Auto Farm & Boss Hunter
     AutoFarm = false,
+    FarmMode = "Fly",            -- "Fly" (โหมดบินลอยตัว) or "Walk" (โหมดเดินปกติบนพื้น)
+    WalkFarmSpeed = 26,          -- ความเร็วในการเดินฟาร์มเมื่ออยู่ในโหมดเดินปกติ (Walk Mode)
     SafeFarm = true,
     SafeFarmExploit = true,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัยสมบูรณ์แบบ
     SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์ (พ้นระยะกวาดแนวนอน)
@@ -3258,6 +3260,21 @@ local function getSmartFarmOffset(target)
     local dist
     local height
 
+    -- Walk Mode: Keep feet firmly on ground level (height = 0)
+    if Config.FarmMode == "Walk" then
+        height = 0.0
+        if Config.AdaptiveDistance then
+            if isRanged then
+                dist = (isBoss or isLeader) and 15.0 or math.clamp(atkRange * 0.45, 12.0, 15.0)
+            else
+                dist = isBoss and 5.0 or (isLeader and 4.8 or math.clamp(Config.FarmDistance or 4.0, 3.2, 4.8))
+            end
+        else
+            dist = isBoss and 5.0 or math.clamp(Config.FarmDistance or 4.5, 2.5, 20.0)
+        end
+        return dist, height, isRanged
+    end
+
     if Config.AdaptiveDistance then
         if isRanged then
             -- Ranged: Stay 13.5 - 16.0 studs back (Leader slam has 11 studs radius, so 16.0 studs is safe)
@@ -3346,9 +3363,10 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
     local startPos = hrp.Position
     local targetDodgePos = targetOverridePos
     if not targetDodgePos then
-        targetDodgePos = startPos + (evadeVec * dodgeDist) + Vector3.new(0, 1.2, 0)
+        local upOffset = (Config.FarmMode == "Walk") and 0.0 or 1.2
+        targetDodgePos = startPos + (evadeVec * dodgeDist) + Vector3.new(0, upOffset, 0)
     end
-    if isInsideDungeon() then
+    if isInsideDungeon() or Config.FarmMode == "Walk" then
         local floorY = (targetOverridePos and targetOverridePos.Y) or startPos.Y
         targetDodgePos = Vector3.new(targetDodgePos.X, floorY, targetDodgePos.Z)
     end
@@ -3364,7 +3382,7 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
                 local sHrp = sourceMob:FindFirstChild("HumanoidRootPart") or sourceMob.PrimaryPart
                 if sHrp then facePos = sHrp.Position end
             end
-            if isInsideDungeon() then
+            if isInsideDungeon() or Config.FarmMode == "Walk" then
                 nextPos = Vector3.new(nextPos.X, startPos.Y, nextPos.Z)
             end
             hrp.CFrame = CFrame.lookAt(nextPos, facePos)
@@ -3374,7 +3392,7 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
         end
         if hrp and hrp.Parent then
             local floorY = (targetOverridePos and targetOverridePos.Y) or startPos.Y
-            local finalPos = isInsideDungeon() and Vector3.new(targetDodgePos.X, floorY, targetDodgePos.Z) or targetDodgePos
+            local finalPos = (isInsideDungeon() or Config.FarmMode == "Walk") and Vector3.new(targetDodgePos.X, floorY, targetDodgePos.Z) or targetDodgePos
             hrp.CFrame = CFrame.new(finalPos)
             hrp.Velocity = Vector3.zero
             hrp.AssemblyLinearVelocity = Vector3.zero
@@ -3418,8 +3436,8 @@ trackConn(RunService.Heartbeat:Connect(function()
         safeHoldReason = ""
     end
 
-    -- Zero out downward velocity during Safe Farm so player never sinks into monster hitbox
-    if Config.AutoFarm and Config.SafeFarm and not (currentSafeHoldTarget and now < safeHoldUntil) then
+    -- Zero out downward velocity during Safe Farm so player never sinks into monster hitbox (Only in Fly Mode)
+    if Config.AutoFarm and Config.SafeFarm and (Config.FarmMode ~= "Walk") and not (currentSafeHoldTarget and now < safeHoldUntil) then
         local curTgt = LocalPlayer:FindFirstChild("CurrentTarget") and LocalPlayer.CurrentTarget.Value
         if curTgt and curTgt.Parent and (curTgt:GetAttribute("HP") or 0) > 0 then
             local char = LocalPlayer.Character
@@ -4351,6 +4369,33 @@ FarmTab:Button({
                 Icon = "octagon"
             })
         end
+    end,
+})
+
+FarmTab:Dropdown({
+    Title = "Farm Movement Mode (โหมดการเคลื่อนที่)",
+    Desc = "สลับระหว่าง โหมดบินลอยตัว (Fly) หรือ โหมดเดินปกติบนพื้น (Walk)",
+    Values = { "Fly (โหมดบินลอยตัว)", "Walk (โหมดเดินปกติบนพื้น)" },
+    Value = (Config.FarmMode == "Walk" and "Walk (โหมดเดินปกติบนพื้น)") or "Fly (โหมดบินลอยตัว)",
+    Callback = function(val)
+        if val:find("Walk") then
+            Config.FarmMode = "Walk"
+            WindUI:Notify({ Title = "Farm Mode", Content = "เปิดใช้งาน: โหมดเดินปกติบนพื้น (Walk Mode)", Duration = 2.5, Icon = "footprints" })
+        else
+            Config.FarmMode = "Fly"
+            WindUI:Notify({ Title = "Farm Mode", Content = "เปิดใช้งาน: โหมดบินลอยตัว (Fly Mode)", Duration = 2.5, Icon = "feather" })
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+FarmTab:Slider({
+    Title = "Walk Mode Speed (ความเร็วเดินฟาร์ม)",
+    Desc = "ปรับความเร็วเดินของตัวละครขณะฟาร์มในโหมดเดินปกติ (Walk Speed)",
+    Value = { Min = 16, Max = 80, Default = Config.WalkFarmSpeed or 26 },
+    Callback = function(val)
+        Config.WalkFarmSpeed = val
+        if Config.AutoSave then SaveConfig(true) end
     end,
 })
 
@@ -6271,7 +6316,7 @@ task.spawn(function()
                                     farmH = 0.2
                                 end
                             elseif Config.SafeFarm then
-                                farmH = safeHeight
+                                farmH = (Config.FarmMode == "Walk") and 0.0 or safeHeight
                             end
 
                             if inDungeon and (mName:find("skull") or mName:find("king")) then
@@ -6285,8 +6330,20 @@ task.spawn(function()
                                 playerPos = getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged)
                                 targetFloorY = playerPos.Y
                             else
-                                playerPos = targetPos - (mobLook * safeDist) + Vector3.new(0, farmH, 0)
-                                targetFloorY = playerPos.Y
+                                if Config.FarmMode == "Walk" then
+                                    -- Accurate ground detection via Raycast
+                                    local rayParams = RaycastParams.new()
+                                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                    rayParams.FilterDescendantsInstances = {char, target}
+                                    local groundRay = workspace:Raycast(targetPos + Vector3.new(0, 10, 0), Vector3.new(0, -50, 0), rayParams)
+                                    local groundY = groundRay and (groundRay.Position.Y + 2.8) or targetPos.Y
+                                    playerPos = targetPos - (mobLook * safeDist)
+                                    playerPos = Vector3.new(playerPos.X, groundY, playerPos.Z)
+                                    targetFloorY = groundY
+                                else
+                                    playerPos = targetPos - (mobLook * safeDist) + Vector3.new(0, farmH, 0)
+                                    targetFloorY = playerPos.Y
+                                end
                             end
 
                             -- Danger Check: Never step into active danger zones!
@@ -6335,7 +6392,23 @@ task.spawn(function()
                                 hrp.Velocity = Vector3.zero
                                 hrp.AssemblyLinearVelocity = Vector3.zero
                                 hrp.AssemblyAngularVelocity = Vector3.zero
+                            elseif Config.FarmMode == "Walk" then
+                                -- ==================== WALK MODE MOVEMENT ====================
+                                hum.WalkSpeed = Config.WalkFarmSpeed or 26
+                                local flatDiff = Vector3.new(playerPos.X - hrp.Position.X, 0, playerPos.Z - hrp.Position.Z)
+                                local flatDist = flatDiff.Magnitude
+
+                                if flatDist > (safeDist + 1.2) then
+                                    hum:MoveTo(playerPos)
+                                elseif flatDist > 1.8 then
+                                    hum:MoveTo(playerPos)
+                                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                else
+                                    hum:Move(Vector3.zero, false)
+                                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                end
                             else
+                                -- ==================== FLY MODE MOVEMENT ====================
                                 if distToTarget > 65 then
                                     local steps = math.max(1, math.ceil(distToTarget / 45))
                                     for i = 1, steps do
