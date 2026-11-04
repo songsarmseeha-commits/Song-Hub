@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Song Hub | Free Key Checkpoint System</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            purple: '#8b5cf6',
+                            pink: '#ec4899',
+                            cyan: '#06b6d4',
+                            emerald: '#10b981',
+                            dark: '#09090b',
+                            card: '#121217',
+                            border: '#27272a'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Canvas Confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .glow-border {
+            box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.3);
+        }
+        .glow-emerald {
+            box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-[#09090b] text-gray-100 min-h-screen flex flex-col font-sans selection:bg-purple-500 selection:text-white relative overflow-x-hidden">
+
+    <!-- Ambient Background Glow -->
+    <div class="fixed top-0 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-gradient-to-r from-purple-600/20 via-cyan-500/20 to-emerald-500/20 blur-[130px] pointer-events-none rounded-full"></div>
+
+    <!-- Header Navigation -->
+    <header class="border-b border-brand-border bg-[#0d0d12]/80 backdrop-blur sticky top-0 z-40">
+        <div class="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 via-cyan-500 to-emerald-400 p-[2px] shadow-lg shadow-purple-500/25">
+                    <div class="w-full h-full bg-[#0d0d12] rounded-[10px] flex items-center justify-center">
+                        <i data-lucide="key" class="w-5 h-5 text-cyan-400"></i>
+                    </div>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+                        Song Hub | Key System
+                    </h1>
+                    <p class="text-xs text-emerald-400 font-medium flex items-center space-x-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>Free Monetized Checkpoint Gateway</span>
+                    </p>
+                </div>
+            </div>
+            <a href="https://discord.gg/your-hub-discord" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-gray-300 flex items-center space-x-2 transition">
+                <i data-lucide="message-square" class="w-4 h-4 text-purple-400"></i>
+                <span>Discord Community</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-3xl w-full mx-auto px-4 py-8 relative z-10 flex flex-col justify-center">
+
+        <!-- Card Container -->
+        <div class="bg-brand-card/90 border border-brand-border rounded-2xl p-6 md:p-8 backdrop-blur-xl glow-border">
+            
+            <!-- Hero Title -->
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-semibold uppercase tracking-wider mb-3">
+                    <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                    <span>Official Free Access Portal</span>
+                </div>
+                <h2 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+                    Get Your Free <span class="bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent">24-Hour Access Key</span>
+                </h2>
+                <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
+                    Complete quick sponsor tasks via <span class="text-purple-300 font-medium">LootLabs</span> and <span class="text-cyan-300 font-medium">Linkvertise</span> to generate your license key instantly.
+                </p>
+            </div>
+
+            <!-- Device HWID Tag (If present) -->
+            <div id="hwidBadge" class="hidden mb-6 p-3 rounded-xl bg-black/40 border border-brand-border/70 flex items-center justify-between text-xs">
+                <div class="flex items-center space-x-2.5 text-gray-400">
+                    <i data-lucide="cpu" class="w-4 h-4 text-cyan-400"></i>
+                    <span>Device HWID:</span>
+                    <code id="hwidText" class="font-mono text-gray-300 font-semibold truncate max-w-[200px] md:max-w-xs">Unknown</code>
+                </div>
+                <span class="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 font-medium border border-cyan-500/20">Auto-Linked</span>
+            </div>
+
+            <!-- Step Progress Indicator -->
+            <div id="progressContainer" class="mb-8">
+                <div class="flex items-center justify-between relative mb-2">
+                    <!-- Progress Line -->
+                    <div class="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-white/10 w-full z-0 rounded-full"></div>
+                    <div id="progressBar" class="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-gradient-to-r from-purple-500 to-cyan-500 w-0 z-0 transition-all duration-500 rounded-full"></div>
+
+                    <!-- Step 1 Dot -->
+                    <div id="step1Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30 transition">
+                        1
+                    </div>
+                    <!-- Step 2 Dot -->
+                    <div id="step2Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 z-10 transition">
+                        2
+                    </div>
+                    <!-- Claim Dot -->
+                    <div id="claimDot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 z-10 transition">
+                        <i data-lucide="check" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <div class="flex justify-between text-[11px] font-semibold text-gray-400 px-1">
+                    <span id="step1Label" class="text-purple-400">Step 1: LootLabs</span>
+                    <span id="step2Label">Step 2: Linkvertise</span>
+                    <span id="claimLabel">Claim Key</span>
+                </div>
+            </div>
+
+            <!-- Alert Box (Errors/Success) -->
+            <div id="alertBox" class="hidden mb-6 p-4 rounded-xl text-sm flex items-start space-x-3">
+                <i id="alertIcon" data-lucide="alert-circle" class="w-5 h-5 flex-shrink-0 mt-0.5"></i>
+                <div id="alertContent"></div>
+            </div>
+
+            <!-- STEP 1: LOOTLABS CHECKPOINT -->
+            <div id="cardStep1" class="space-y-4">
+                <div class="p-5 rounded-xl bg-purple-950/20 border border-purple-500/30 relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
+                                <i data-lucide="layers" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">Checkpoint 1: LootLabs Sponsor Task</h3>
+                                <p class="text-xs text-gray-400">Complete tasks on LootLabs to verify Step 1</p>
+                            </div>
+                        </div>
+                        <span id="step1Badge" class="px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Ready
+                        </span>
+                    </div>
+                    <p class="text-xs text-gray-300 mb-4 leading-relaxed">
+                        Click the button below to open LootLabs in a new tab. After finishing the quick tasks, you will be redirected automatically to Step 2.
+                    </p>
+                    <button id="btnStartStep1" onclick="handleStartCheckpoint(1)" class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-purple-600/30 flex items-center justify-center space-x-2 transition transform active:scale-[0.99]">
+                        <i data-lucide="external-link" class="w-4 h-4"></i>
+                        <span>Start Checkpoint 1 (LootLabs)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- STEP 2: LINKVERTISE CHECKPOINT -->
+            <div id="cardStep2" class="hidden space-y-4">
+                <div class="p-5 rounded-xl bg-cyan-950/20 border border-cyan-500/30 relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400">
+                                <i data-lucide="zap" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">Checkpoint 2: Linkvertise Task</h3>
+                                <p class="text-xs text-gray-400">Almost there! Complete this final step to unlock your key</p>
+                            </div>
+                        </div>
+                        <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            Final Step
+                        </span>
+                    </div>
+                    <p class="text-xs text-gray-300 mb-4 leading-relaxed">
+                        Click below to view the Linkvertise sponsor page. Once finished, your personal 24-hour key will be generated instantly on this page!
+                    </p>
+                    <button id="btnStartStep2" onclick="handleStartCheckpoint(2)" class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-sm shadow-lg shadow-cyan-600/30 flex items-center justify-center space-x-2 transition transform active:scale-[0.99]">
+                        <i data-lucide="external-link" class="w-4 h-4"></i>
+                        <span>Start Final Checkpoint (Linkvertise)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- CLAIMED KEY VICTORY CARD -->
+            <div id="cardClaimed" class="hidden space-y-6 text-center">
+                <div class="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/30">
+                    <i data-lucide="sparkles" class="w-8 h-8"></i>
+                </div>
+                <div>
+                    <h3 class="text-2xl font-black text-white">🎉 Access Granted!</h3>
+                    <p class="text-sm text-gray-400 mt-1">Your 24-Hour Free License Key is ready:</p>
+                </div>
+
+                <!-- Key Display Box -->
+                <div class="p-4 rounded-2xl bg-black/60 border-2 border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-3 glow-emerald">
+                    <div class="flex items-center space-x-3 w-full sm:w-auto">
+                        <i data-lucide="key" class="w-5 h-5 text-emerald-400 flex-shrink-0"></i>
+                        <span id="claimedKeyText" class="font-mono text-lg sm:text-xl font-black tracking-wider text-emerald-300 select-all break-all">
+                            GALAXY-XXXX-XXXX-XXXX
+                        </span>
+                    </div>
+                    <button onclick="copyClaimedKey()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-sm shadow-md shadow-emerald-500/30 flex items-center justify-center space-x-2 transition">
+                        <i data-lucide="clipboard-copy" class="w-4 h-4"></i>
+                        <span id="copyBtnText">Copy Key</span>
+                    </button>
+                </div>
+
+                <!-- Key Info & Return Action -->
+                <div class="grid grid-cols-2 gap-3 text-left text-xs">
+                    <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                        <span class="text-gray-400 block mb-0.5">Duration:</span>
+                        <span class="font-bold text-white">24 Hours Active</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                        <span class="text-gray-400 block mb-0.5">Auto-Unlock in Game:</span>
+                        <span class="font-bold text-emerald-400">Ready in Roblox!</span>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-200 text-left">
+                    💡 <strong>Pro Tip:</strong> Paste this key into the in-game Key Verification box, or simply click <strong>"⚡ Auto-Check Claimed Key"</strong> inside Roblox to unlock instantly without typing!
+                </div>
+            </div>
+
+            <!-- VIP Lifetime Skip Ad Notice -->
+            <div class="mt-8 pt-6 border-t border-brand-border/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-400">
+                <div class="flex items-center space-x-2.5">
+                    <i data-lucide="crown" class="w-5 h-5 text-amber-400 flex-shrink-0"></i>
+                    <span>Tired of checkpoints? Get <strong>Permanent VIP Whitelist</strong> to skip all keys forever.</span>
+                </div>
+                <a href="https://discord.gg/your-hub-discord" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/20 flex-shrink-0 transition">
+                    Get VIP Whitelist
+                </a>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-brand-border py-4 text-center text-xs text-gray-500">
+        &copy; 2026 Song Hub | Universal Roblox Multi-Game Automation System. All rights reserved.
+    </footer>
+
+    <!-- Client Script -->
+    <script>
+        lucide.createIcons();
+
+        // State
+        let sessionData = null;
+        const urlParams = new URLSearchParams(window.location.search);
+        const hwidParam = urlParams.get('hwid') || '';
+        const sessionParam = urlParams.get('session') || '';
+        const claimedParam = urlParams.get('claimed');
+        const stepSuccess = urlParams.get('stepSuccess');
+
+        if (hwidParam) {
+            document.getElementById('hwidBadge').classList.remove('hidden');
+            document.getElementById('hwidText').innerText = hwidParam;
+        }
+
+        // Initialize Session
+        async function initSession() {
+            try {
+                const res = await fetch(`/api/v1/getkey/init?hwid=${encodeURIComponent(hwidParam)}&session=${encodeURIComponent(sessionParam)}`);
+                const data = await res.json();
+
+                if (!data.success) {
+                    showAlert('error', data.error || 'Failed to initialize Get Key session');
+                    return;
+                }
+
+                sessionData = data;
+
+                // Case 1: Already has active key or session claimed
+                if (data.isCompleted && data.claimedKey) {
+                    showClaimedKey(data.claimedKey);
+                    return;
+                }
+
+                // Case 2: Render active step
+                renderStep(data.currentStep, data.totalSteps);
+
+                if (stepSuccess) {
+                    showAlert('success', 'Checkpoint completed successfully! Proceed to the next step.');
+                }
+            } catch (err) {
+                showAlert('error', 'Cannot reach key server. Please check your internet connection.');
+            }
+        }
+
+        function renderStep(currentStep, totalSteps) {
+            const progressBar = document.getElementById('progressBar');
+            const step1Dot = document.getElementById('step1Dot');
+            const step2Dot = document.getElementById('step2Dot');
+            const claimDot = document.getElementById('claimDot');
+
+            const cardStep1 = document.getElementById('cardStep1');
+            const cardStep2 = document.getElementById('cardStep2');
+            const cardClaimed = document.getElementById('cardClaimed');
+
+            if (totalSteps === 1) {
+                // Single step mode
+                document.getElementById('step2Dot').style.display = 'none';
+                document.getElementById('step2Label').style.display = 'none';
+            }
+
+            if (currentStep === 1) {
+                progressBar.style.width = '20%';
+                step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30';
+                cardStep1.classList.remove('hidden');
+                cardStep2.classList.add('hidden');
+                cardClaimed.classList.add('hidden');
+            } else if (currentStep === 2) {
+                progressBar.style.width = '65%';
+                step1Dot.className = 'w-9 h-9 rounded-full bg-purple-600 border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10';
+                step1Dot.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
+                
+                step2Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-cyan-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-cyan-500/30';
+                document.getElementById('step2Label').className = 'text-cyan-400';
+
+                cardStep1.classList.add('hidden');
+                cardStep2.classList.remove('hidden');
+                cardClaimed.classList.add('hidden');
+            }
+            lucide.createIcons();
+        }
+
+        async function handleStartCheckpoint(step) {
+            if (!sessionData || !sessionData.sessionId) {
+                showAlert('error', 'Session not initialized.');
+                return;
+            }
+
+            const btn = step === 1 ? document.getElementById('btnStartStep1') : document.getElementById('btnStartStep2');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>Generating Sponsor Link...</span>';
+            lucide.createIcons();
+
+            try {
+                const res = await fetch(`/api/v1/getkey/link?sessionId=${encodeURIComponent(sessionData.sessionId)}&step=${step}`);
+                const data = await res.json();
+
+                if (data.success && data.redirectUrl) {
+                    btn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i><span>Redirecting...</span>';
+                    window.location.href = data.redirectUrl;
+                } else {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i data-lucide="external-link" class="w-4 h-4"></i><span>Retry Checkpoint ${step}</span>`;
+                    showAlert('error', data.error || 'Failed to generate monetized link');
+                }
+            } catch (err) {
+                btn.disabled = false;
+                btn.innerHTML = `<i data-lucide="external-link" class="w-4 h-4"></i><span>Retry Checkpoint ${step}</span>`;
+                showAlert('error', 'Network error generating sponsor link.');
+            }
+        }
+
+        function showClaimedKey(key) {
+            document.getElementById('cardStep1').classList.add('hidden');
+            document.getElementById('cardStep2').classList.add('hidden');
+            document.getElementById('cardClaimed').classList.remove('hidden');
+            document.getElementById('claimedKeyText').innerText = key;
+
+            // Full progress bar
+            document.getElementById('progressBar').style.width = '100%';
+            document.getElementById('claimDot').className = 'w-9 h-9 rounded-full bg-emerald-600 border-2 border-emerald-400 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-emerald-500/40';
+            document.getElementById('claimLabel').className = 'text-emerald-400';
+
+            // Confetti Blast
+            if (typeof confetti === 'function') {
+                confetti({
+                    particleCount: 100,
+                    spread: 70,
+                    origin: { y: 0.6 }
+                });
+            }
+            lucide.createIcons();
+        }
+
+        function copyClaimedKey() {
+            const key = document.getElementById('claimedKeyText').innerText.trim();
+            if (!key) return;
+
+            navigator.clipboard.writeText(key).then(() => {
+                const copyBtnText = document.getElementById('copyBtnText');
+                copyBtnText.innerText = 'Copied!';
+                setTimeout(() => { copyBtnText.innerText = 'Copy Key'; }, 2500);
+            });
+        }
+
+        function showAlert(type, message) {
+            const box = document.getElementById('alertBox');
+            const icon = document.getElementById('alertIcon');
+            const content = document.getElementById('alertContent');
+
+            box.classList.remove('hidden');
+            if (type === 'error') {
+                box.className = 'mb-6 p-4 rounded-xl text-sm flex items-start space-x-3 bg-red-950/40 border border-red-500/30 text-red-300';
+                icon.setAttribute('data-lucide', 'alert-circle');
+            } else {
+                box.className = 'mb-6 p-4 rounded-xl text-sm flex items-start space-x-3 bg-emerald-950/40 border border-emerald-500/30 text-emerald-300';
+                icon.setAttribute('data-lucide', 'check-circle');
+            }
+            content.innerText = message;
+            lucide.createIcons();
+        }
+
+        // Run
+        initSession();
+    </script>
+</body>
+</html>
