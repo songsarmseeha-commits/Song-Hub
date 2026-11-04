@@ -503,8 +503,12 @@ app.get('/api/v1/getkey/init', (req, res) => {
 
     // 3. Create fresh session
     const sessionId = crypto.randomBytes(16).toString('hex');
-    const totalSteps = parseInt(db.getSetting('getkey_steps', config.GETKEY.TOTAL_STEPS)) || 2;
-    const provider = db.getSetting('getkey_mode', config.GETKEY.MODE) || 'dual';
+    let provider = (req.query.provider || '').toLowerCase().trim();
+    if (!['lootlabs', 'linkvertise', 'dual'].includes(provider)) {
+        provider = db.getSetting('getkey_mode', config.GETKEY.MODE) || 'lootlabs';
+    }
+    const defaultSteps = provider === 'dual' ? 2 : 1;
+    const totalSteps = parseInt(req.query.steps) || defaultSteps;
 
     const session = db.createGetKeySession({
         sessionId,
@@ -524,6 +528,21 @@ app.get('/api/v1/getkey/init', (req, res) => {
         isCompleted: false,
         claimedKey: null
     });
+});
+
+// Switch provider for an active uncompleted session
+app.post('/api/v1/getkey/switch-provider', (req, res) => {
+    const { sessionId, provider } = req.body;
+    if (!sessionId || !['lootlabs', 'linkvertise', 'dual'].includes(provider)) {
+        return res.status(400).json({ success: false, error: 'Invalid parameters' });
+    }
+    const session = db.findGetKeySession(sessionId);
+    if (!session || session.is_completed === 1) {
+        return res.status(400).json({ success: false, error: 'Session cannot be modified' });
+    }
+    const totalSteps = provider === 'dual' ? 2 : 1;
+    db.updateSessionProvider(sessionId, provider, totalSteps);
+    res.json({ success: true, provider, totalSteps });
 });
 
 // Generate Shortlink for current checkpoint step
