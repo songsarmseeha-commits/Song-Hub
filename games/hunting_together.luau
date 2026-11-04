@@ -96,22 +96,52 @@ local function isScriptAlive()
     return true
 end
 
-pcall(function()
-    local containers = {
-        gethui and gethui(),
-        game:GetService("CoreGui"),
-        LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    }
-    for _, c in ipairs(containers) do
-        if c then
-            for _, child in ipairs(c:GetChildren()) do
-                if child:IsA("ScreenGui") and (child.Name:find("WindUI") or child.Name:find("HuntingTogether")) then
-                    child:Destroy()
-                end
-            end
+local function safeDestroyExistingUI()
+    if getgenv then
+        if getgenv()._HT_CurrentWindow then
+            pcall(function() getgenv()._HT_CurrentWindow:Destroy() end)
+            getgenv()._HT_CurrentWindow = nil
+        end
+        if getgenv()._HT_WindUI then
+            pcall(function()
+                if getgenv()._HT_WindUI.ScreenGui then getgenv()._HT_WindUI.ScreenGui:Destroy() end
+                if getgenv()._HT_WindUI.NotificationGui then getgenv()._HT_WindUI.NotificationGui:Destroy() end
+                if getgenv()._HT_WindUI.DropdownGui then getgenv()._HT_WindUI.DropdownGui:Destroy() end
+                if getgenv()._HT_WindUI.TooltipGui then getgenv()._HT_WindUI.TooltipGui:Destroy() end
+            end)
+            getgenv()._HT_WindUI = nil
         end
     end
-end)
+
+    local containers = {}
+    pcall(function() if gethui then table.insert(containers, gethui()) end end)
+    pcall(function() table.insert(containers, game:GetService("CoreGui")) end end)
+    pcall(function()
+        if LocalPlayer then
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if pg then table.insert(containers, pg) end
+        end
+    end)
+    pcall(function() table.insert(containers, game:GetService("StarterGui")) end end)
+
+    for _, c in ipairs(containers) do
+        if c then
+            pcall(function()
+                for _, child in ipairs(c:GetChildren()) do
+                    pcall(function()
+                        if child:IsA("ScreenGui") then
+                            local n = child.Name:lower()
+                            if n:find("windui") or n:find("huntingtogether") or n:find("hunting") then
+                                child:Destroy()
+                            end
+                        end
+                    end)
+                end
+            end)
+        end
+    end
+end
+pcall(safeDestroyExistingUI)
 
 -- Forward declarations for scope stability across functions
 local currentCombatTarget = nil
@@ -510,10 +540,11 @@ local Config = {
 
 local function canScriptMoveOrWarp()
     if not isScriptAlive() then return false end
+    if isEnteringDungeon or isWaitingForParty then return true end
     if isInsideDungeon() then
         return Config.AutoDungeon == true
     else
-        return (Config.AutoFarm == true) or (Config.AutoProgression == true)
+        return (Config.AutoFarm == true) or (Config.AutoProgression == true) or (Config.AutoDungeon == true)
     end
 end
 
@@ -1793,6 +1824,7 @@ local function executeDungeonEnterRoutine(isManual)
 
     isEnteringDungeon = true
     currentCombatTarget = nil
+    stopCombatAndTargeting()
 
     -- 3. Travel to GateKeeper in Village
     local gatePos = Vector3.new(4.8, 5.0, 112.5)
@@ -1808,11 +1840,11 @@ local function executeDungeonEnterRoutine(isManual)
             })
         end
         travelToZone("Town", "Adventurer Guild / Village", true)
-        task.wait(0.5)
+        task.wait(0.6)
 
         -- Step to GateKeeper precisely
         local startP = hrp.Position
-        local steps = math.max(1, math.ceil((gatePos - startP).Magnitude / 40))
+        local steps = math.max(1, math.ceil((gatePos - startP).Magnitude / 30))
         for i = 1, steps do
             if not char or not hrp.Parent then break end
             local alpha = i / steps
@@ -1821,28 +1853,33 @@ local function executeDungeonEnterRoutine(isManual)
             task.wait(0.04)
         end
         hrp.CFrame = CFrame.new(gatePos)
+        hrp.Velocity = Vector3.zero
         task.wait(0.5)
+    else
+        hrp.CFrame = CFrame.new(gatePos)
+        hrp.Velocity = Vector3.zero
+        task.wait(0.2)
     end
 
     -- 4. Party Management & Member Wait
     if Config.DungeonPartyMode == "Party" then
         createParty()
-        task.wait(0.2)
+        task.wait(0.3)
         if Config.PartyAutoInvite then
             massInviteParty(Config.PartyInviteTarget)
         end
         -- Wait for party members to join before creating the dungeon room
-        waitForPartyMembers(Config.PartyTargetMembers or 2, Config.PartyWaitTimeout or 30)
+        waitForPartyMembers(Config.PartyTargetMembers or 2, Config.PartyWaitTimeout or 25)
     elseif Config.DungeonPartyMode == "Solo" and Config.DungeonForceSolo ~= false then
         leaveParty()
-        task.wait(0.15)
+        task.wait(0.2)
     end
 
     -- 5. Trigger GateKeeper ProximityPrompt
     local prompt = findDungeonGatePrompt()
     if prompt then
         if fireproximityprompt then
-            fireproximityprompt(prompt)
+            pcall(function() fireproximityprompt(prompt) end)
         end
         pcall(function()
             local holdDur = math.max(0.2, (prompt.HoldDuration or 0) + 0.15)
@@ -1851,7 +1888,7 @@ local function executeDungeonEnterRoutine(isManual)
             prompt:InputHoldEnd()
         end)
     end
-    task.wait(0.4)
+    task.wait(0.5)
 
     -- 6. Send selectEnter & ready with multi-attempt retry
     local dId = Config.SelectedDungeon or "halloween"
@@ -1859,27 +1896,43 @@ local function executeDungeonEnterRoutine(isManual)
     local diff = (rawDiff:find("normal") or rawDiff:find("hard")) and "normal" or "easy"
     pcall(registerQueueOnTeleport)
 
-    for attempt = 1, 3 do
-        if isInsideDungeon() then break end
+    local entered = false
+    for attempt = 1, 4 do
+        if isInsideDungeon() then
+            entered = true
+            break
+        end
 
         pcall(function()
             if DungeonAction then
                 DungeonAction:FireServer("selectEnter", dId, diff)
             end
         end)
-        task.wait(0.4)
+        task.wait(0.5)
 
         pcall(function()
             if DungeonAction then
                 DungeonAction:FireServer("ready", dId, true)
             end
         end)
-        task.wait(1.6)
-        if isInsideDungeon() then break end
+        task.wait(2.0)
+        if isInsideDungeon() then
+            entered = true
+            break
+        end
     end
 
-    task.wait(2.0)
-    isEnteringDungeon = false
+    if entered or isInsideDungeon() then
+        task.wait(1.5)
+        isEnteringDungeon = false
+    else
+        local waitElapsed = 0
+        while waitElapsed < 6 and not isInsideDungeon() do
+            task.wait(0.5)
+            waitElapsed = waitElapsed + 0.5
+        end
+        isEnteringDungeon = false
+    end
 end
 
 getPlayerLevel = function()
@@ -2352,7 +2405,7 @@ local outOfZoneTicks = 0
 local function checkAutoProgression(force)
     -- Only proceed if AutoProgression is enabled or forced
     if not Config.AutoProgression and not force then return end
-    if isInsideDungeon() then return end
+    if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if isWarpingZone or isSelling or isReturningFromBoss then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2903,7 +2956,7 @@ end
 local isLooting = false
 
 local function performAutoLoot()
-    if isLooting or isWarpingZone or isSelling then return end
+    if isLooting or isWarpingZone or isSelling or isEnteringDungeon or isWaitingForParty then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -3266,7 +3319,7 @@ local function getClosestWitchHouse()
 end
 
 local function performTrickTreat(forceVisit)
-    if isKnockingHouse or isWarpingZone or isSelling then return false end
+    if isKnockingHouse or isWarpingZone or isSelling or isEnteringDungeon or isWaitingForParty then return false end
     local candy, _ = getHalloweenInventory()
     if candy < 100 then return false end
 
@@ -4195,7 +4248,7 @@ local function getSellableItems()
 end
 
 local function executeAutoSell(silent)
-    if not canScriptMoveOrWarp() or not Config.AutoSell or isInsideDungeon() then return end
+    if not canScriptMoveOrWarp() or not Config.AutoSell or isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if isSelling then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -4539,6 +4592,17 @@ if not WindUI then
     end
 end
 
+pcall(safeDestroyExistingUI)
+
+-- Purge any residual window objects in cached WindUI
+pcall(function()
+    if WindUI and WindUI.ScreenGui and WindUI.ScreenGui:FindFirstChild("Window") then
+        for _, w in ipairs(WindUI.ScreenGui.Window:GetChildren()) do
+            pcall(function() w:Destroy() end)
+        end
+    end
+end)
+
 local initialKey = Enum.KeyCode[Config.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = WindUI:CreateWindow({
@@ -4557,6 +4621,19 @@ local Window = WindUI:CreateWindow({
         Draggable = true,
     },
 })
+
+if getgenv then
+    getgenv()._HT_CurrentWindow = Window
+    getgenv()._HT_WindUI = WindUI
+end
+
+pcall(function()
+    Window:OnDestroy(function()
+        if getgenv and getgenv()._HT_CurrentWindow == Window then
+            getgenv()._HT_CurrentWindow = nil
+        end
+    end)
+end)
 
 -- Hotkey Event Listener for Window Folding / Toggle
 local currentKeyCode = initialKey
@@ -5163,7 +5240,7 @@ DungeonTab:Button({
     Desc = "เดินไปที่ประตูและส่งคำขอเข้า Skull King's Crypt ทันที",
     Callback = function()
         task.spawn(function()
-            executeDungeonEnterRoutine()
+            executeDungeonEnterRoutine(true)
         end)
     end,
 })
@@ -6545,7 +6622,7 @@ task.spawn(function()
                 end
             else
                 -- In Town / Village: initiate enter routine if not currently doing other tasks
-                if not isWarpingZone and not isSelling and not isEnteringDungeon then
+                if not isWarpingZone and not isSelling and not isEnteringDungeon and not isWaitingForParty then
                     executeDungeonEnterRoutine()
                 end
             end
@@ -6608,7 +6685,7 @@ task.spawn(function()
                 task.wait(0.5)
                 continue
             end
-            if not inDungeon and (isWarpingZone or isSelling) then
+            if not inDungeon and (isWarpingZone or isSelling or isEnteringDungeon or isWaitingForParty) then
                 task.wait(0.2)
                 continue
             end
@@ -6996,7 +7073,7 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(2.5)
-        if isInsideDungeon() then continue end
+        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then continue end
 
         -- 1. Track last normal farm zone when in normal field
         local inBoss, bossArenaName = isPlayerInBossArena()
@@ -7025,7 +7102,7 @@ task.spawn(function()
         end
 
         -- 4. Normal Progression check (only when not actively inspecting boss and not in boss arena)
-        if Config.AutoProgression and not isCheckingBossArena and not activeBossFight and not inBoss then
+        if Config.AutoProgression and not isCheckingBossArena and not activeBossFight and not inBoss and not isEnteringDungeon and not isWaitingForParty then
             pcall(function()
                 checkAutoProgression(false)
             end)
@@ -7261,7 +7338,7 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(2.5)
-        if isInsideDungeon() then continue end
+        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then continue end
         if Config.AutoHalloween then
             -- 1. Auto Claim Event NPC Rewards & Free RonB Pet
             if Config.AutoClaimEventRewards and EventNpcAction then
