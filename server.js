@@ -203,76 +203,165 @@ async function handleVerify(req, res) {
         });
     }
 
-    // 6. HWID Verification and First-Time Activation
-    if (!keyData.hwid) {
-        // First-time activation: bind key to this HWID
-        db.activateKey(keyData.id, hwid, username, keyData.duration_seconds);
-        const updated = db.findKey(key);
+    // 6. HWID Verification (Multi-Device HWID Limit)
+    const isBound = db.isHwidBound(keyData.id, hwid);
+    const currentBoundCount = db.countKeyHwids(keyData.id);
 
-        db.logAccess({
-            keyString: key,
-            robloxUserId: userId,
-            username,
-            hwid,
-            ipAddress: ip,
-            status: 'SUCCESS',
-            message: 'First time activation & HWID bound'
-        });
-
-        return res.json({
-            success: true,
-            whitelisted: false,
-            role: 'User',
-            keyType: keyData.key_type,
-            activatedAt: updated.activated_at,
-            expiresAt: updated.expires_at,
-            message: 'License key activated and linked to this device successfully!'
-        });
+    if (isBound) {
+        db.touchKeyHwid(keyData.id, hwid, username);
     } else {
-        // Check HWID Match
-        if (hwid && keyData.hwid !== hwid) {
+        if (currentBoundCount < keyData.max_hwid) {
+            db.addKeyHwid(keyData.id, hwid, userId, username);
+            if (!keyData.activated_at) {
+                db.activateKey(keyData.id, hwid, username, keyData.duration_seconds);
+            }
+        } else {
             db.logAccess({
                 keyString: key,
                 robloxUserId: userId,
                 username,
                 hwid,
                 ipAddress: ip,
-                status: 'HWID_MISMATCH',
-                message: `HWID mismatch! Key HWID: ${keyData.hwid.substring(0, 8)}... vs Request: ${hwid.substring(0, 8)}...`
+                status: 'HWID_LIMIT_REACHED',
+                message: `HWID limit reached (${currentBoundCount}/${keyData.max_hwid} devices)`
             });
 
             return res.status(403).json({
                 success: false,
-                code: 'HWID_MISMATCH',
-                message: 'This key is already linked to another device (HWID Mismatch). Contact administrator to reset.'
+                code: 'HWID_LIMIT_REACHED',
+                message: `HWID Limit Reached (${currentBoundCount}/${keyData.max_hwid} devices). This key is already linked to the maximum allowed devices. Please reset your HWID or contact admin.`
+            });
+        }
+    }
+
+    // 7. Concurrent Session Limit Verification
+    const jobId = (req.body.jobId || req.query.jobId || 'DEFAULT_JOB').trim();
+    const placeId = req.body.placeId || req.query.placeId || '0';
+    let clientSessionToken = (req.body.sessionToken || req.query.sessionToken || '').trim();
+
+    let session = clientSessionToken ? db.findSessionByToken(clientSessionToken) : null;
+    if (!session && jobId) {
+        session = db.findSessionByHwidAndJob(keyData.id, hwid, jobId, 75);
+    }
+
+    let sessionToken = '';
+    if (session) {
+        sessionToken = session.session_token;
+        db.updateSessionHeartbeat(sessionToken);
+    } else {
+        const activeSessions = db.getActiveSessions(keyData.id, 75);
+        if (activeSessions.length >= keyData.max_sessions) {
+            db.logAccess({
+                keyString: key,
+                robloxUserId: userId,
+                username,
+                hwid,
+                ipAddress: ip,
+                status: 'SESSION_LIMIT_EXCEEDED',
+                message: `Session limit exceeded (${activeSessions.length}/${keyData.max_sessions} active instances)`
+            });
+
+            return res.status(403).json({
+                success: false,
+                code: 'SESSION_LIMIT_EXCEEDED',
+                message: `Concurrent Session Limit Reached (${activeSessions.length}/${keyData.max_sessions} active instances). Key cannot run in multiple Roblox windows simultaneously. Close other game instances or wait 60s.`
             });
         }
 
-        // Successful return
-        db.logAccess({
-            keyString: key,
-            robloxUserId: userId,
-            username,
+        sessionToken = crypto.randomBytes(24).toString('hex');
+        db.registerOrRefreshSession({
+            keyId: keyData.id,
+            sessionToken,
             hwid,
-            ipAddress: ip,
-            status: 'SUCCESS',
-            message: 'Successful verification'
-        });
-
-        return res.json({
-            success: true,
-            whitelisted: false,
-            role: 'User',
-            keyType: keyData.key_type,
-            activatedAt: keyData.activated_at,
-            expiresAt: keyData.expires_at,
-            message: 'License verified successfully!'
+            userId,
+            username,
+            jobId,
+            placeId,
+            ipAddress: ip
         });
     }
+
+    const updatedKey = db.findKey(key);
+    const activeSessionsCount = db.getActiveSessions(keyData.id, 75).length;
+    const finalBoundCount = db.countKeyHwids(keyData.id);
+
+    db.logAccess({
+        keyString: key,
+        robloxUserId: userId,
+        username,
+        hwid,
+        ipAddress: ip,
+        status: 'SUCCESS',
+        message: `Verified (HWID: ${finalBoundCount}/${updatedKey.max_hwid} | Sessions: ${activeSessionsCount}/${updatedKey.max_sessions})`
+    });
+
+    return res.json({
+        success: true,
+        whitelisted: false,
+        role: 'User',
+        keyType: updatedKey.key_type,
+        activatedAt: updatedKey.activated_at,
+        expiresAt: updatedKey.expires_at,
+        sessionToken,
+        maxHwid: updatedKey.max_hwid,
+        boundHwids: finalBoundCount,
+        maxSessions: updatedKey.max_sessions,
+        activeSessions: activeSessionsCount,
+        message: 'License verified successfully!'
+    });
 }
 
 app.post('/api/v1/verify', handleVerify);
 app.get('/api/v1/verify', handleVerify);
+
+// Heartbeat endpoint for active game sessions
+app.post('/api/v1/heartbeat', (req, res) => {
+    const { sessionToken, key } = req.body;
+    if (!sessionToken) {
+        return res.status(400).json({ success: false, error: 'Missing sessionToken' });
+    }
+
+    const session = db.findSessionByToken(sessionToken);
+    if (!session) {
+        return res.status(403).json({
+            success: false,
+            code: 'SESSION_EXPIRED',
+            message: 'Session expired or not found. Please re-authenticate.'
+        });
+    }
+
+    const keyData = db.findKeyById(session.key_id);
+    if (!keyData || keyData.is_active === 0) {
+        db.closeSession(sessionToken);
+        return res.status(403).json({
+            success: false,
+            code: 'KEY_REVOKED',
+            message: 'Key has been revoked or suspended by administrator.'
+        });
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (keyData.expires_at && now > keyData.expires_at) {
+        db.closeSession(sessionToken);
+        return res.status(403).json({
+            success: false,
+            code: 'KEY_EXPIRED',
+            message: 'Key has expired.'
+        });
+    }
+
+    db.updateSessionHeartbeat(sessionToken);
+    res.json({ success: true, active: true });
+});
+
+// Session close endpoint when client leaves game
+app.post('/api/v1/session/close', (req, res) => {
+    const { sessionToken } = req.body;
+    if (sessionToken) {
+        db.closeSession(sessionToken);
+    }
+    res.json({ success: true, message: 'Session closed' });
+});
 
 // ==============================================================================
 // 2. ADMIN API ENDPOINTS (DASHBOARD OPERATIONS)
@@ -301,13 +390,15 @@ app.get('/api/v1/admin/keys', requireAdmin, (req, res) => {
     res.json({ success: true, keys });
 });
 
-// Admin Generate Keys (Supports 1 or multiple keys)
+// Admin Generate Keys (Supports 1 or multiple keys with custom HWID & Session Limit)
 app.post('/api/v1/admin/keys/generate', requireAdmin, (req, res) => {
     const {
         count = 1,
         type = '24h',
         prefix = 'GALAXY',
-        note = ''
+        note = '',
+        maxHwid = 1,
+        maxSessions = 1
     } = req.body;
 
     const durationMap = {
@@ -322,6 +413,8 @@ app.post('/api/v1/admin/keys/generate', requireAdmin, (req, res) => {
     const generated = [];
 
     const numToCreate = Math.min(Math.max(parseInt(count) || 1, 1), 100);
+    const parsedMaxHwid = Math.min(Math.max(parseInt(maxHwid) || 1, 1), 50);
+    const parsedMaxSessions = Math.min(Math.max(parseInt(maxSessions) || 1, 1), 50);
 
     for (let i = 0; i < numToCreate; i++) {
         const keyStr = generateKey(prefix.toUpperCase().trim() || 'GALAXY');
@@ -329,12 +422,49 @@ app.post('/api/v1/admin/keys/generate', requireAdmin, (req, res) => {
             keyString: keyStr,
             keyType: type,
             durationSeconds,
-            note
+            note,
+            maxHwid: parsedMaxHwid,
+            maxSessions: parsedMaxSessions
         });
         generated.push(record);
     }
 
     res.json({ success: true, createdCount: generated.length, keys: generated });
+});
+
+// Admin Edit Key (HWID Limit, Session Limit, Note, Status)
+app.post('/api/v1/admin/keys/edit', requireAdmin, (req, res) => {
+    const { id, maxHwid, maxSessions, note, isActive, keyType } = req.body;
+    if (!id) return res.status(400).json({ success: false, error: 'Missing key id' });
+
+    const updated = db.updateKey(id, { maxHwid, maxSessions, note, isActive, keyType });
+    if (!updated) return res.status(404).json({ success: false, error: 'Key not found' });
+
+    res.json({ success: true, key: updated, message: 'Key updated successfully!' });
+});
+
+// Admin Kick all active sessions for a Key
+app.post('/api/v1/admin/keys/kick-sessions', requireAdmin, (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ success: false, error: 'Missing key id' });
+    db.kickKeySessions(id);
+    res.json({ success: true, message: 'All active sessions kicked successfully!' });
+});
+
+// Admin Get List of Bound HWIDs for a Key
+app.get('/api/v1/admin/keys/:id/hwids', requireAdmin, (req, res) => {
+    const id = req.params.id;
+    const hwids = db.getKeyHwids(id);
+    const key = db.findKeyById(id);
+    res.json({ success: true, hwids, key });
+});
+
+// Admin Remove a Specific Bound HWID from a Key
+app.post('/api/v1/admin/keys/remove-hwid', requireAdmin, (req, res) => {
+    const { id, hwid } = req.body;
+    if (!id || !hwid) return res.status(400).json({ success: false, error: 'Missing key id or hwid' });
+    db.removeKeyHwid(id, hwid);
+    res.json({ success: true, message: 'Device HWID removed successfully!' });
 });
 
 // Admin Reset HWID for a Key
