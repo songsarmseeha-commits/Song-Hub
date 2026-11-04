@@ -7,7 +7,7 @@ module.exports = {
     PORT: process.env.PORT || 3000,
 
     // Public domain/host URL for Get Key redirects (e.g. http://localhost:3000 or https://your-hub.domain.com)
-    PUBLIC_URL: process.env.PUBLIC_URL || "http://localhost:3000",
+    PUBLIC_URL: process.env.PUBLIC_URL || "https://song-hub-avp8.onrender.com",
 
     // Admin dashboard login password (CHANGE THIS in production!)
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "admin1234",
