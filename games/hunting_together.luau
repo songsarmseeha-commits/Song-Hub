@@ -197,6 +197,11 @@ local function stopCombatAndTargeting()
     currentDungeonPillar = nil
     isCheckingBossArena = false
     isWarpingZone = false
+    isReturningFromBoss = false
+    isSelling = false
+    isOpeningBox = false
+    isLooting = false
+    outOfZoneTicks = 0
 end
 
 -- Safe helper to manage target attributes & ObjectValue without crashing
@@ -410,7 +415,7 @@ local Config = {
     LootPriority = true,
     LootTeleport = false,       -- Remote vacuum prevents warping/jittering
     LootRadius = 100,
-    AutoOpenLootBox = true,
+    AutoOpenLootBox = false,    -- ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการแวบไปเปิดกล่องเอง
     
     -- Level Progression (1 - 99)
     AutoProgression = false,
@@ -450,32 +455,32 @@ local Config = {
     
     -- 🎃 Halloween Event Automation (กิจกรรมฮาโลวีน)
     AutoHalloween = true,
-    AutoTrickTreat = true,
+    AutoTrickTreat = false,       -- ปิดไว้เพื่อไม่ให้แวบไปเคาะบ้านแม่มดเอง
     TrickTreatThreshold = 100,
     TrickTreatAutoVisit = false,
     AutoHalloweenGacha = false,
     GachaPullType = "10x Pull (100 Heads)",
     HuntHalloweenPumpkins = true,
-    AutoHalloweenBoxes = true,
+    AutoHalloweenBoxes = false,   -- ปิดไว้เพื่อไม่ให้ดูดวาร์ปไปหากล่องฮาโลวีน
     AutoClaimEventRewards = true,
     
     -- 🏰 Dungeon Automation (Skull King's Crypt & Dungeons)
-    AutoDungeon = true,
+    AutoDungeon = false,          -- ปิดไว้เป็นค่าเริ่มต้น ไม่ให้แวบเข้าดันเจี้ยนเอง
     SelectedDungeon = "halloween",             -- "halloween" (Skull King's Crypt)
     DungeonDifficulty = "easy",               -- "easy" or "normal"
     DungeonForceSolo = true,                  -- ออกจากปาร์ตี้อื่นอัตโนมัติเพื่อให้สามารถเข้าคนเดียวได้ทันที
-    AutoBuyDungeonKey = true,                 -- ซื้อกุญแจดันเจี้ยนอัตโนมัติ (500k Silver) เมื่อรอบฟรีหมด
-    MaxDungeonKeysToBuy = 10,                 -- จำนวนกุญแจสูงสุดที่จะซื้อ
-    AutoReadyDungeon = true,                  -- กดพร้อม (Ready Check) อัตโนมัติทันที 100% Instant
-    AutoReviveTeammates = true,               -- วิ่งชุบชีวิตเพื่อนร่วมทีมในดันเจี้ยนอัตโนมัติ
-    PrioritizeDungeonPillars = true,          -- ตีเสาพิธีกรรม (Ritual Pillars) ทันทีที่เกิดเพื่อปลดผนึกบอส
-    AutoKickSkulls = true,                    -- เตะหัวกะโหลก Demon Skull (Dud) ที่ตกในห้องบอสใส่ Skull King อัตโนมัติ (ลดเลือด 1-2%)
-    PrioritizeDungeonBoss = true,             -- โฟกัสบอสและมินิบอสก่อนมอนทั่วไป
-    AutoClaimExitChest = true,                -- วาร์ปไปเปิดหีบสมบัติรับของ Tier VI หลังจบดันเจี้ยน
-    AutoSecretChests = true,                  -- เปิดหีบลับ & ปลดผนึกรูนในดันเจี้ยน
-    AutoLeaveOnClear = true,                  -- ออกจากดันเจี้ยนอัตโนมัติหลังรับของเสร็จ
-    AutoRepeatDungeon = true,                 -- ลงซ้ำอัตโนมัติต่อเนื่องจนกว่ารอบ/กุญแจ/เงินจะหมด
-    ReturnToFarmAfterDungeon = true,          -- หากรอบดันเจี้ยนหมด ให้กลับไปฟาร์ม Auto Farm / Auto Lv.99 อัตโนมัติ
+    AutoBuyDungeonKey = false,
+    MaxDungeonKeysToBuy = 10,
+    AutoReadyDungeon = true,
+    AutoReviveTeammates = true,
+    PrioritizeDungeonPillars = true,
+    AutoKickSkulls = true,
+    PrioritizeDungeonBoss = true,
+    AutoClaimExitChest = true,
+    AutoSecretChests = true,
+    AutoLeaveOnClear = true,
+    AutoRepeatDungeon = false,
+    ReturnToFarmAfterDungeon = false,          -- ปิดไว้เพื่อไม่ให้แอบเปิด Auto Farm เอง
     DungeonSafeHeight = 5.2,                  -- ความสูงลอยตัวเหนือกราวด์แอตแทกของบอส
     DungeonAttackDelay = 0.12,                -- ความเร็วโจมตีในดันเจี้ยน
 
@@ -1473,14 +1478,10 @@ local function executeDungeonEnterRoutine()
         if WindUI and WindUI.Notify then
             WindUI:Notify({
                 Title = "Dungeon Locked",
-                Content = "ดันเจี้ยนต้องการเลเวล 90+ (เลเวลปัจจุบัน: " .. playerLevel .. ") กำลังฟาร์มเลเวลต่อ...",
+                Content = "ดันเจี้ยนต้องการเลเวล 90+ (เลเวลปัจจุบัน: " .. playerLevel .. ")",
                 Duration = 3,
                 Icon = "alert-circle"
             })
-        end
-        if Config.AutoDungeon and Config.ReturnToFarmAfterDungeon then
-            Config.AutoFarm = true
-            Config.AutoProgression = true
         end
         return
     end
@@ -1511,14 +1512,10 @@ local function executeDungeonEnterRoutine()
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "Out of Silver & Keys",
-                    Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500k) กลับสู่โหมดฟาร์มปกติ",
+                    Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500k)",
                     Duration = 3,
                     Icon = "alert-triangle"
                 })
-            end
-            if Config.AutoDungeon and Config.ReturnToFarmAfterDungeon then
-                Config.AutoFarm = true
-                Config.AutoProgression = true
             end
             return
         end
@@ -1678,7 +1675,8 @@ local function isPlayerInBossArena()
     local pPos = hrp.Position
     for bName, bPos in pairs(ZoneCoordinates) do
         if bName:find("Boss") then
-            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 220 then
+            -- Boss arena boundary is strictly 70 studs (prevents false triggering on adjacent fields)
+            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 70 then
                 return true, bName
             end
         end
@@ -1728,8 +1726,9 @@ local function getReturnField()
     return optField, optName
 end
 
-travelToZone = function(targetField, fieldName)
+travelToZone = function(targetField, fieldName, isManual)
     if isInsideDungeon() or isWarpingZone then return end
+    if not isManual and not canScriptMoveOrWarp() and not isCheckingBossArena then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -3295,6 +3294,7 @@ end
 
 local function performDodge(reason, evadeDir, customDist, customDuration, sourceMob, targetOverridePos)
     if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge then return false end
+    if Config.FarmMode == "Walk" then return false end
 
     local inDungeon = isInsideDungeon()
     local isCombatActive = inDungeon and (Config.AutoDungeon and Config.AutoFarm) or Config.AutoFarm
@@ -4354,6 +4354,10 @@ FarmTab:Button({
         Config.AutoFarm = false
         Config.AutoDungeon = false
         Config.AutoProgression = false
+        Config.AutoBoss = false
+        Config.AutoWarpToBoss = false
+        Config.AutoOpenLootBox = false
+        Config.AutoTrickTreat = false
         if autoFarmToggle and autoFarmToggle.SetValue then
             autoFarmToggle:SetValue(false)
         elseif autoFarmToggle and autoFarmToggle.Set then
@@ -6618,8 +6622,8 @@ task.spawn(function()
             lastNormalFarmZone = Config.CurrentZone
         end
 
-        -- 2. Boss Arena Safety Watchdog: If in boss arena and no boss is alive, return immediately to normal field!
-        if (Config.AutoFarm or Config.AutoBoss) and inBoss and not isCheckingBossArena and not isReturningFromBoss and not isWarpingZone then
+        -- 2. Boss Arena Safety Watchdog: Return only if bot actively initiated world boss hunting and boss is dead
+        if Config.AutoBoss and Config.AutoWarpToBoss and inBoss and (activeBossFight ~= nil or isCheckingBossArena) and not isReturningFromBoss and not isWarpingZone then
             local aliveBoss, bMob = isAnyBossAliveInArena(bossArenaName)
             if not aliveBoss then
                 handlePostBossReturn("World Boss Area", nil)
