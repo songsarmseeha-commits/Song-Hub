@@ -458,7 +458,7 @@
                 </div>
 
                 <form id="getkeySettingsForm" class="space-y-5">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                         <!-- Provider Mode -->
                         <div>
                             <label class="block text-xs font-semibold text-gray-300 mb-1.5">Checkpoint Mode</label>
@@ -477,13 +477,34 @@
                                 <option value="2">2 Steps (Standard & High Revenue)</option>
                                 <option value="1">1 Step (Quick for Players)</option>
                             </select>
+                            <p class="text-[10px] text-gray-500 mt-1">Required tasks before key release</p>
                         </div>
 
                         <!-- Key Duration -->
                         <div>
                             <label class="block text-xs font-semibold text-gray-300 mb-1.5">Free Key Duration (Hours)</label>
                             <input id="cfgGetkeyDuration" type="number" min="1" max="168" value="24" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
-                            <p class="text-[10px] text-gray-500 mt-1">Default 24h key before player must re-checkpoint</p>
+                            <p class="text-[10px] text-gray-500 mt-1">Key validity before re-checkpointing</p>
+                        </div>
+
+                        <!-- Free Key HWID Limit -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+                                <span>Free Key HWID Limit</span>
+                                <span class="text-[10px] text-cyan-400">Devices</span>
+                            </label>
+                            <input id="cfgGetkeyMaxHwid" type="number" min="1" max="20" value="1" placeholder="1" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
+                            <p class="text-[10px] text-gray-500 mt-1">Max allowed devices per free key</p>
+                        </div>
+
+                        <!-- Free Key Session Limit -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+                                <span>Free Key Session Limit</span>
+                                <span class="text-[10px] text-emerald-400">Windows</span>
+                            </label>
+                            <input id="cfgGetkeyMaxSessions" type="number" min="1" max="20" value="1" placeholder="1" class="w-full bg-[#09090d] border border-brand-border rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500">
+                            <p class="text-[10px] text-gray-500 mt-1">Max concurrent Roblox instances</p>
                         </div>
                     </div>
 
