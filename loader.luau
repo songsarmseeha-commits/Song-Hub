@@ -12,7 +12,7 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 -- ⚙️ CONFIGURATION
-local SERVER_HOST = "http://localhost:3000" -- Change to your domain (e.g. https://your-hub.onrender.com)
+local SERVER_HOST = "https://song-hub-avp8.onrender.com" -- Worldwide Live Cloud Server (Render)
 local VERIFY_URL = SERVER_HOST .. "/api/v1/verify"
 local GET_KEY_URL = SERVER_HOST .. "/getkey"
 local KEY_SAVE_PATH = "UniversalHub/saved_key.txt"
