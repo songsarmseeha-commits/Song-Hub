@@ -28,7 +28,34 @@ db.exec(`
         is_active INTEGER DEFAULT 1,
         note TEXT DEFAULT '',
         max_resets INTEGER DEFAULT 3,
-        resets_count INTEGER DEFAULT 0
+        resets_count INTEGER DEFAULT 0,
+        max_hwid INTEGER DEFAULT 1,
+        max_sessions INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS key_hwids (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_id INTEGER NOT NULL,
+        hwid TEXT NOT NULL,
+        user_id TEXT DEFAULT NULL,
+        username TEXT DEFAULT NULL,
+        first_used_at INTEGER NOT NULL,
+        last_used_at INTEGER NOT NULL,
+        UNIQUE(key_id, hwid)
+    );
+
+    CREATE TABLE IF NOT EXISTS key_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_id INTEGER NOT NULL,
+        session_token TEXT UNIQUE NOT NULL,
+        hwid TEXT NOT NULL,
+        roblox_user_id TEXT DEFAULT NULL,
+        username TEXT DEFAULT NULL,
+        job_id TEXT DEFAULT NULL,
+        place_id TEXT DEFAULT NULL,
+        ip_address TEXT DEFAULT NULL,
+        last_heartbeat INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS whitelisted_users (
@@ -72,6 +99,26 @@ db.exec(`
     );
 `);
 
+// Safe Migrations for existing databases
+try {
+    db.exec('ALTER TABLE keys ADD COLUMN max_hwid INTEGER DEFAULT 1;');
+} catch (e) {}
+
+try {
+    db.exec('ALTER TABLE keys ADD COLUMN max_sessions INTEGER DEFAULT 1;');
+} catch (e) {}
+
+// Backfill existing keys.hwid into key_hwids
+try {
+    const keysWithHwid = db.prepare('SELECT id, hwid, claimed_by, activated_at FROM keys WHERE hwid IS NOT NULL AND length(hwid) > 0').all();
+    for (const k of keysWithHwid) {
+        db.prepare(`
+            INSERT OR IGNORE INTO key_hwids (key_id, hwid, username, first_used_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(k.id, k.hwid, k.claimed_by || '', k.activated_at || Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+    }
+} catch (e) {}
+
 // Auto-seed default owner whitelist (Jixg_G5)
 try {
     const ownerCheck = db.prepare('SELECT COUNT(*) as count FROM whitelisted_users WHERE roblox_user_id = ?').get('5026219314');
@@ -82,7 +129,7 @@ try {
     }
 } catch (e) {}
 
-// Helper Queries
+// Database Operations
 const Database = {
     // --- KEY OPERATIONS ---
     findKey(keyString) {
@@ -90,14 +137,40 @@ const Database = {
         return stmt.get(keyString);
     },
 
-    createKey({ keyString, keyType, durationSeconds, note }) {
+    findKeyById(id) {
+        const stmt = db.prepare('SELECT * FROM keys WHERE id = ?');
+        return stmt.get(id);
+    },
+
+    createKey({ keyString, keyType, durationSeconds, note, maxHwid = 1, maxSessions = 1 }) {
         const now = Math.floor(Date.now() / 1000);
+        const parsedMaxHwid = Math.max(parseInt(maxHwid) || 1, 1);
+        const parsedMaxSessions = Math.max(parseInt(maxSessions) || 1, 1);
         const stmt = db.prepare(`
-            INSERT INTO keys (key_string, key_type, duration_seconds, created_at, note)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO keys (key_string, key_type, duration_seconds, created_at, note, max_hwid, max_sessions)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
-        stmt.run(keyString, keyType, durationSeconds, now, note || '');
+        stmt.run(keyString, keyType, durationSeconds, now, note || '', parsedMaxHwid, parsedMaxSessions);
         return this.findKey(keyString);
+    },
+
+    updateKey(id, { maxHwid, maxSessions, note, isActive, keyType }) {
+        const current = this.findKeyById(id);
+        if (!current) return null;
+
+        const newMaxHwid = maxHwid !== undefined ? Math.max(parseInt(maxHwid) || 1, 1) : current.max_hwid;
+        const newMaxSessions = maxSessions !== undefined ? Math.max(parseInt(maxSessions) || 1, 1) : current.max_sessions;
+        const newNote = note !== undefined ? String(note) : current.note;
+        const newActive = isActive !== undefined ? (isActive ? 1 : 0) : current.is_active;
+        const newKeyType = keyType !== undefined ? String(keyType) : current.key_type;
+
+        const stmt = db.prepare(`
+            UPDATE keys
+            SET max_hwid = ?, max_sessions = ?, note = ?, is_active = ?, key_type = ?
+            WHERE id = ?
+        `);
+        stmt.run(newMaxHwid, newMaxSessions, newNote, newActive, newKeyType, id);
+        return this.findKeyById(id);
     },
 
     activateKey(id, hwid, username, durationSeconds) {
@@ -115,6 +188,9 @@ const Database = {
     },
 
     resetKeyHwid(id) {
+        // Clear all bound HWIDs in key_hwids
+        db.prepare('DELETE FROM key_hwids WHERE key_id = ?').run(id);
+
         const stmt = db.prepare(`
             UPDATE keys
             SET hwid = NULL, resets_count = resets_count + 1
@@ -129,13 +205,139 @@ const Database = {
     },
 
     deleteKey(id) {
+        db.prepare('DELETE FROM key_hwids WHERE key_id = ?').run(id);
+        db.prepare('DELETE FROM key_sessions WHERE key_id = ?').run(id);
         const stmt = db.prepare('DELETE FROM keys WHERE id = ?');
         stmt.run(id);
     },
 
     getAllKeys() {
-        const stmt = db.prepare('SELECT * FROM keys ORDER BY id DESC');
-        return stmt.all();
+        const now = Math.floor(Date.now() / 1000);
+        const activeThreshold = now - 75;
+        const stmt = db.prepare(`
+            SELECT k.*,
+                   (SELECT COUNT(*) FROM key_hwids kh WHERE kh.key_id = k.id) as bound_hwids_count,
+                   (SELECT COUNT(*) FROM key_sessions ks WHERE ks.key_id = k.id AND ks.last_heartbeat >= ?) as active_sessions_count
+            FROM keys k
+            ORDER BY k.id DESC
+        `);
+        return stmt.all(activeThreshold);
+    },
+
+    // --- HWID MANAGEMENT OPERATIONS ---
+    getKeyHwids(keyId) {
+        const stmt = db.prepare('SELECT * FROM key_hwids WHERE key_id = ? ORDER BY id ASC');
+        return stmt.all(keyId);
+    },
+
+    countKeyHwids(keyId) {
+        const stmt = db.prepare('SELECT COUNT(*) as count FROM key_hwids WHERE key_id = ?');
+        return stmt.get(keyId).count;
+    },
+
+    isHwidBound(keyId, hwid) {
+        if (!hwid) return false;
+        const stmt = db.prepare('SELECT id FROM key_hwids WHERE key_id = ? AND hwid = ?');
+        return !!stmt.get(keyId, hwid);
+    },
+
+    addKeyHwid(keyId, hwid, userId = null, username = null) {
+        const now = Math.floor(Date.now() / 1000);
+        const stmt = db.prepare(`
+            INSERT INTO key_hwids (key_id, hwid, user_id, username, first_used_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(key_id, hwid) DO UPDATE SET
+                last_used_at = excluded.last_used_at,
+                username = COALESCE(excluded.username, key_hwids.username),
+                user_id = COALESCE(excluded.user_id, key_hwids.user_id)
+        `);
+        stmt.run(keyId, hwid, userId ? String(userId) : null, username || null, now, now);
+
+        // Keep keys.hwid updated with the latest HWID
+        db.prepare('UPDATE keys SET hwid = ? WHERE id = ?').run(hwid, keyId);
+    },
+
+    touchKeyHwid(keyId, hwid, username = null) {
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare(`
+            UPDATE key_hwids
+            SET last_used_at = ?, username = COALESCE(?, username)
+            WHERE key_id = ? AND hwid = ?
+        `).run(now, username, keyId, hwid);
+    },
+
+    removeKeyHwid(keyId, hwid) {
+        db.prepare('DELETE FROM key_hwids WHERE key_id = ? AND hwid = ?').run(keyId, hwid);
+        // Refresh keys.hwid to first remaining HWID or NULL
+        const remaining = db.prepare('SELECT hwid FROM key_hwids WHERE key_id = ? LIMIT 1').get(keyId);
+        db.prepare('UPDATE keys SET hwid = ? WHERE id = ?').run(remaining ? remaining.hwid : null, keyId);
+    },
+
+    // --- CONCURRENT SESSION MANAGEMENT ---
+    cleanStaleSessions(thresholdSeconds = 120) {
+        const cutoff = Math.floor(Date.now() / 1000) - thresholdSeconds;
+        db.prepare('DELETE FROM key_sessions WHERE last_heartbeat < ?').run(cutoff);
+    },
+
+    getActiveSessions(keyId, thresholdSeconds = 75) {
+        this.cleanStaleSessions(120);
+        const cutoff = Math.floor(Date.now() / 1000) - thresholdSeconds;
+        const stmt = db.prepare(`
+            SELECT * FROM key_sessions
+            WHERE key_id = ? AND last_heartbeat >= ?
+            ORDER BY last_heartbeat DESC
+        `);
+        return stmt.all(keyId, cutoff);
+    },
+
+    findSessionByToken(sessionToken) {
+        if (!sessionToken) return null;
+        const stmt = db.prepare('SELECT * FROM key_sessions WHERE session_token = ?');
+        return stmt.get(sessionToken);
+    },
+
+    findSessionByHwidAndJob(keyId, hwid, jobId, thresholdSeconds = 75) {
+        if (!keyId || !hwid || !jobId) return null;
+        const cutoff = Math.floor(Date.now() / 1000) - thresholdSeconds;
+        const stmt = db.prepare(`
+            SELECT * FROM key_sessions
+            WHERE key_id = ? AND hwid = ? AND job_id = ? AND last_heartbeat >= ?
+            LIMIT 1
+        `);
+        return stmt.get(keyId, hwid, jobId, cutoff);
+    },
+
+    registerOrRefreshSession({ keyId, sessionToken, hwid, userId, username, jobId, placeId, ipAddress }) {
+        const now = Math.floor(Date.now() / 1000);
+        this.cleanStaleSessions(120);
+
+        const stmt = db.prepare(`
+            INSERT INTO key_sessions (key_id, session_token, hwid, roblox_user_id, username, job_id, place_id, ip_address, last_heartbeat, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_token) DO UPDATE SET
+                last_heartbeat = excluded.last_heartbeat,
+                ip_address = excluded.ip_address,
+                username = COALESCE(excluded.username, key_sessions.username)
+        `);
+        stmt.run(keyId, sessionToken, hwid, userId ? String(userId) : null, username || null, jobId || null, placeId ? String(placeId) : null, ipAddress || null, now, now);
+        return sessionToken;
+    },
+
+    updateSessionHeartbeat(sessionToken) {
+        if (!sessionToken) return false;
+        const now = Math.floor(Date.now() / 1000);
+        const stmt = db.prepare('UPDATE key_sessions SET last_heartbeat = ? WHERE session_token = ?');
+        stmt.run(now, sessionToken);
+        return true;
+    },
+
+    closeSession(sessionToken) {
+        if (!sessionToken) return;
+        db.prepare('DELETE FROM key_sessions WHERE session_token = ?').run(sessionToken);
+    },
+
+    kickKeySessions(keyId) {
+        db.prepare('DELETE FROM key_sessions WHERE key_id = ?').run(keyId);
     },
 
     // --- DIRECT WHITELIST OPERATIONS ---
@@ -192,12 +394,14 @@ const Database = {
     },
 
     getStats() {
+        const now = Math.floor(Date.now() / 1000);
         const totalKeys = db.prepare('SELECT COUNT(*) as count FROM keys').get().count;
         const activeKeys = db.prepare('SELECT COUNT(*) as count FROM keys WHERE is_active = 1').get().count;
         const boundKeys = db.prepare('SELECT COUNT(*) as count FROM keys WHERE hwid IS NOT NULL').get().count;
         const totalWhitelist = db.prepare('SELECT COUNT(*) as count FROM whitelisted_users').get().count;
         const totalExecutions = db.prepare("SELECT COUNT(*) as count FROM access_logs WHERE status IN ('SUCCESS', 'WHITELIST_BYPASS')").get().count;
         const totalFreeKeysClaimed = db.prepare("SELECT COUNT(*) as count FROM getkey_sessions WHERE is_completed = 1").get().count;
+        const activeSessions = db.prepare('SELECT COUNT(*) as count FROM key_sessions WHERE last_heartbeat >= ?').get(now - 75).count;
 
         return {
             totalKeys,
@@ -205,7 +409,8 @@ const Database = {
             boundKeys,
             totalWhitelist,
             totalExecutions,
-            totalFreeKeysClaimed
+            totalFreeKeysClaimed,
+            activeSessions
         };
     },
 
@@ -230,9 +435,10 @@ const Database = {
         if (!hwid) return null;
         const now = Math.floor(Date.now() / 1000);
         const stmt = db.prepare(`
-            SELECT * FROM keys
-            WHERE hwid = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > ?)
-            ORDER BY id DESC LIMIT 1
+            SELECT k.* FROM keys k
+            JOIN key_hwids kh ON kh.key_id = k.id
+            WHERE kh.hwid = ? AND k.is_active = 1 AND (k.expires_at IS NULL OR k.expires_at > ?)
+            ORDER BY k.id DESC LIMIT 1
         `);
         return stmt.get(hwid, now);
     },
@@ -285,4 +491,3 @@ const Database = {
 };
 
 module.exports = Database;
-
