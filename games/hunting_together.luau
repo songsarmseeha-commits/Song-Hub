@@ -367,7 +367,7 @@ local Config = {
     AttackDelay = 0.15,
     SelectedMonster = "All",
     AutoBoss = true,            -- Automatically hunt Bosses & Mini-Bosses
-    AutoWarpToBoss = true,      -- Automatically warp to World Boss Arenas (Boss01-05)
+    AutoWarpToBoss = false,     -- Automatically warp to World Boss Arenas (ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการวาปไปกลับเอง)
     PrioritizeBoss = true,      -- Attack Boss first when present
     BossOnly = false,           -- Farm ONLY Bosses and Mini-Bosses
     SelectedBoss = "All Bosses",-- Specific Boss or "All Bosses"
@@ -6293,8 +6293,8 @@ task.spawn(function()
                         local safeDist, safeHeight, isRanged = getSmartFarmOffset(target)
 
                         -- 1000% Flank Defense: if monster turns to face player, slip behind it while keeping weapon reach
-                        -- (Skipped in dungeon to prevent corridor wall pin, and skipped while holding green circle)
-                        if Config.AutoDodge and Config.DodgeFlank and not isHoldingSafe and not inDungeon then
+                        -- (Skipped in dungeon to prevent corridor wall pin, skipped in Walk Mode, and skipped while holding green circle)
+                        if Config.AutoDodge and Config.DodgeFlank and (Config.FarmMode ~= "Walk") and not isHoldingSafe and not inDungeon then
                             if toPlayer.Magnitude < (safeDist + 4) and (toPlayer.Magnitude > 0.1 and mobLook:Dot(toPlayer.Unit) > 0.15) then
                                 local behindPos = targetPos - (mobLook * safeDist) + Vector3.new(0, safeHeight, 0)
                                 performDodge("Combat Flank Behind", -mobLook, safeDist, 0.25, target, behindPos)
