@@ -872,7 +872,6 @@ app.listen(config.PORT, () => {
     console.log(`========================================================`);
     console.log(`✨ ${config.HUB_NAME} - Whitelist & Key System Server`);
     console.log(`🚀 Server running on: http://localhost:${config.PORT}`);
-    console.log(`🔐 Admin Panel: http://localhost:${config.PORT}/index.html`);
-    console.log(`🔑 Default Admin Password: "${config.ADMIN_PASSWORD}"`);
+    console.log(`🔐 Admin Panel: http://localhost:${config.PORT}/index.html (Protected)`);
     console.log(`========================================================`);
 });
