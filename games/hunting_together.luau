@@ -4987,14 +4987,14 @@ end)
 local initialKey = Enum.KeyCode[Config.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = WindUI:CreateWindow({
-    Title = "Hunting Together | All-in-One Auto Hub [v3.5 - Latest]",
+    Title = "👑 Song Hub | Hunting Together [v3.5 - Latest]",
     Icon = "swords",
     Folder = "HuntingTogether_UltimateHub",
     Size = UDim2.fromOffset(600, 490),
     Theme = "Dark",
     ToggleKey = initialKey,
     OpenButton = {
-        Title = "Hunting Hub",
+        Title = "Song Hub",
         Icon = "swords",
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
@@ -8825,8 +8825,8 @@ pcall(function()
 end)
 
 WindUI:Notify({
-    Title = "Hunting Together [v3.5]",
-    Content = "อัปเดตเวอร์ชันล่าสุด [v3.5] สำเร็จ!\n- เลือกสกิลที่จะใช้\n- Alt Account รับตี้ออโต้\n- ปิด Auto Lv.99 เมื่อเปิดดันเจี้ยน",
+    Title = "👑 Song Hub | Hunting Together",
+    Content = "โหลด Song Hub [v3.5] สำเร็จ!\n- ธีมดันเจี้ยน & พื้นหลังเคลื่อนไหว\n- ระบบฟาร์ม & ดันเจี้ยนอัตโนมัติครบวงจร",
     Duration = 4,
     Icon = "check-circle",
 })
