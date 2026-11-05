@@ -4076,6 +4076,27 @@ TabConfig:Button({
     end
 })
 
+TabConfig:Section({ Title = "🌐 Song Hub Community & Support" })
+
+TabConfig:Button({
+    Title = "💬 Join Discord Community",
+    Desc = "Copy Discord invite link to your clipboard (https://discord.gg/cecytf4MHE)",
+    Icon = "message-circle",
+    Callback = function()
+        pcall(function()
+            if typeof(setclipboard) == "function" then
+                setclipboard("https://discord.gg/cecytf4MHE")
+            end
+            WindUI:Notify({
+                Title = "Discord Link Copied! 💬",
+                Content = "https://discord.gg/cecytf4MHE\nJoin Song Hub Discord for support, updates & keys!",
+                Duration = 4,
+                Icon = "clipboard-check"
+            })
+        end)
+    end
+})
+
 -- ==============================================================================
 -- ATTACH DYNAMIC MOVING ANIMATION ENGINE & FX
 -- ==============================================================================
