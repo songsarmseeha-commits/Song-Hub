@@ -70,6 +70,19 @@ local PartyAction = getRemote("PartyAction", 1)
 -- Graceful thread termination & instance cleanup
 local currentRunId = (getgenv and getgenv()._HT_ScriptRunId or 0) + 1
 if getgenv then
+    local now = os.clock()
+    -- 1. If script is already running healthy with its window active, skip duplicate execution!
+    if getgenv()._HuntingTogetherRunning == true and getgenv()._HT_CurrentWindow and (now - (getgenv()._HT_LastStartTime or 0)) < 8 then
+        print("[Hunting Together] 🛡️ Script is already running with active UI. Skipping duplicate startup.")
+        return
+    end
+    -- 2. If another thread launched less than 5 seconds ago, block this thread to prevent UI flicker / open-close loop!
+    if getgenv()._HT_LastStartTime and (now - getgenv()._HT_LastStartTime) < 5 then
+        print("[Hunting Together] ⚠️ Duplicate startup blocked (launched " .. string.format("%.1f", now - getgenv()._HT_LastStartTime) .. "s ago).")
+        return
+    end
+    getgenv()._HT_LastStartTime = now
+
     getgenv()._HT_ScriptRunId = currentRunId
     getgenv()._HuntingTogetherRunning = false
     if getgenv()._HT_Connections then
@@ -602,12 +615,18 @@ _G.HT_Config = Config
 if getgenv then getgenv().HT_Config = Config end
 
 -- ==================== AUTO EXECUTE ON TELEPORT ====================
+local hasRegisteredQueue = false
 local function registerQueueOnTeleport()
     if not Config.AutoExecuteOnTeleport then return end
+    if hasRegisteredQueue then return end -- Guard: Only queue once per game session to prevent multiple executions
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if queue then
+        hasRegisteredQueue = true
         local execCode = [[
-            task.wait(1.5)
+            task.wait(2.0)
+            if getgenv and (getgenv()._HuntingTogetherRunning or getgenv()._UniversalLoaderLoading) then
+                return
+            end
             local sOk, code = pcall(game.HttpGet, game, "https://song-hub-avp8.onrender.com/loader.luau?v=" .. tostring(tick()))
             if sOk and code and #code > 50 then
                 local fn = loadstring(code)
