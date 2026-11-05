@@ -412,48 +412,48 @@ Config = {
     AutoSave = true,
     AutoExecuteOnTeleport = true,
 
-    -- Auto Farm & Boss Hunter
+    -- Auto Farm & Boss Hunter (ปิดทั้งหมดเป็นค่าเริ่มต้น)
     AutoFarm = false,
     FarmMode = "Warp",            -- "Fly" (โหมดบินลอยตัว) or "Walk" (โหมดเดินปกติบนพื้น)
     WalkFarmSpeed = 26,          -- ความเร็วในการเดินฟาร์มเมื่ออยู่ในโหมดเดินปกติ (Walk Mode)
     SafeFarm = false,
-    SafeFarmExploit = true,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัยสมบูรณ์แบบ
-    SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์ (พ้นระยะกวาดแนวนอน)
-    AdaptiveDistance = false,     -- ปรับระยะห่างตามอาวุธ (Archer/Mage 14 studs, Melee 5.8 studs)
+    SafeFarmExploit = false,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัย
+    SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์
+    AdaptiveDistance = false,     -- ปรับระยะห่างตามอาวุธ
     FarmDistance = 14.0,         -- ค่าตั้งต้นระยะฟาร์ม
     AttackDelay = 0.08,
     SelectedMonster = "All",
-    AutoBoss = true,            -- Automatically hunt Bosses & Mini-Bosses
-    AutoWarpToBoss = false,     -- Automatically warp to World Boss Arenas (ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการวาปไปกลับเอง)
-    PrioritizeBoss = true,      -- Attack Boss first when present
+    AutoBoss = false,            -- Automatically hunt Bosses & Mini-Bosses (ปิดไว้เป็นค่าเริ่มต้น)
+    AutoWarpToBoss = false,     -- Automatically warp to World Boss Arenas (ปิดไว้เป็นค่าเริ่มต้น)
+    PrioritizeBoss = false,      -- Attack Boss first when present (ปิดไว้เป็นค่าเริ่มต้น)
     BossOnly = false,           -- Farm ONLY Bosses and Mini-Bosses
     SelectedBoss = "All Bosses",-- Specific Boss or "All Bosses"
-    ReturnToProgressionAfterBoss = true, -- ตีบอสเสร็จกลับไปฟาร์มตาม Auto Lv.99 ทันที
+    ReturnToProgressionAfterBoss = false, -- ตีบอสเสร็จกลับไปฟาร์มตาม Auto Lv.99 ทันที
     BossCheckInterval = 75,     -- Seconds between periodic Boss Arena inspections
     KillAura = false,
     KillAuraRadius = 20,
     MaxTargetDistance = 70,     -- Keep search strictly within active field
-    AutoUseSkills = true,
-    AutoUseBuffs = true,
+    AutoUseSkills = false,       -- ปิดไว้เป็นค่าเริ่มต้น
+    AutoUseBuffs = false,        -- ปิดไว้เป็นค่าเริ่มต้น
     SelectedSkillSlots = { "ช่อง 1 (Slot 1)", "ช่อง 2 (Slot 2)", "ช่อง 3 (Slot 3)", "ช่อง 4 (Slot 4)", "ช่อง 5 (Slot 5)", "ช่อง 6 (Slot 6)", "ช่อง 7 (Slot 7)" },
     ServerHopAuto = false,
     ServerHopInterval = 15, -- minutes
     
-    -- Auto Equip & Gear
-    AutoEquipBest = true,
-    AutoEquipBestWeapon = true,
-    AutoEquipCards = true,
+    -- Auto Equip & Gear (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoEquipBest = false,
+    AutoEquipBestWeapon = false,
+    AutoEquipCards = false,
     AutoRefine = false,
     
-    -- Auto Sell System (เลือกระดับได้)
-    AutoSell = true,
-    AutoSellOnFull = true,
+    -- Auto Sell System (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoSell = false,
+    AutoSellOnFull = false,
     AutoSellPeriodic = false,
     AutoSellInterval = 120,
-    AutoSellQuickVisit = true,  -- Mandatory for non-premium players so server accepts BagSell
-    SellTier1 = true,
-    SellTier2 = true,
-    SellTier3 = true,
+    AutoSellQuickVisit = false,
+    SellTier1 = false,
+    SellTier2 = false,
+    SellTier3 = false,
     SellTier4 = false,
     SellTier5 = false,
     MaxSellTier = "Up to Tier 3",
@@ -463,104 +463,104 @@ Config = {
         "Uncommon (ไม่ธรรมดา / เขียว)",
         "Rare (หายาก / ฟ้า)",
     },
-    SellWeapons = true,
-    SellArmors = true,
-    SellAccessories = true,
-    SellJunkDrops = true,
+    SellWeapons = false,
+    SellArmors = false,
+    SellAccessories = false,
+    SellJunkDrops = false,
     ProtectRefined = true,
     ProtectBestGear = true,
     
-    -- Auto Loot (Stealth Magnet Vacuum - Zero Character Teleport)
-    AutoLoot = true,
-    LootPriority = true,
-    StealthMagnetLoot = true,   -- ดูดไอเทมลอยเข้าหาตัวละครแบบเนียนๆ ไม่ต้องวาร์ปตัวละคร
-    LootTeleport = false,       -- ปิดการวาร์ปตัวละครไปเก็บของถาวร
+    -- Auto Loot (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoLoot = false,
+    LootPriority = false,
+    StealthMagnetLoot = false,
+    LootTeleport = false,
     LootRadius = 120,
-    AutoOpenLootBox = false,    -- ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการแวบไปเปิดกล่องเอง
+    AutoOpenLootBox = false,
     
     -- Level Progression (1 - 99)
     AutoProgression = false,
     CurrentZone = "",
     
-    -- Auto Stats & Skills
-    AutoUpgradeSkills = true,
-    AutoAllocateStats = true,
+    -- Auto Stats & Skills (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoUpgradeSkills = false,
+    AutoAllocateStats = false,
     StatPreset = "Auto (Detect by Job)",
     
-    -- Rewards & Quests
-    AutoClaimQuests = true,
-    AutoClaimDaily = true,
-    AutoClaimAchieve = true,
-    AutoPet = true,
+    -- Rewards & Quests (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoClaimQuests = false,
+    AutoClaimDaily = false,
+    AutoClaimAchieve = false,
+    AutoPet = false,
     
-    -- Survival & Potions
-    AutoHpPotion = true,
+    -- Survival & Potions (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoHpPotion = false,
     HpThreshold = 55,
-    AutoSpPotion = true,
+    AutoSpPotion = false,
     SpThreshold = 30,
-    AutoRespawn = true,
+    AutoRespawn = false,
     
-    -- Auto Dodge & Evasion (หลบหลีกอัตโนมัติ 1000% Pre-Hit System)
-    AutoDodge = true,
-    DodgeBossTelegraph = true,
-    DodgeGreenCircle = true,      -- เข้าไปหลบในวงกลมสีเขียว (Safe Zone) ทันทีที่มีวงเขียวขึ้นมา
-    DodgeProjectiles = true,
-    DodgeMonsterAttack = true,    -- หลบการง้างตีของมอนสเตอร์ล่วงหน้า 1000% (AnimAttack Telegraph)
-    DodgeMonsterSkill = true,     -- หลบการร่ายสกิลของมอนสเตอร์ล่วงหน้า (AnimSkill Telegraph)
-    DodgeOnHurt = true,
-    DodgeFlank = true,
+    -- Auto Dodge & Evasion (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoDodge = false,
+    DodgeBossTelegraph = false,
+    DodgeGreenCircle = false,
+    DodgeProjectiles = false,
+    DodgeMonsterAttack = false,
+    DodgeMonsterSkill = false,
+    DodgeOnHurt = false,
+    DodgeFlank = false,
     DodgeDistance = 18,
     DodgeCooldown = 0.25,
     DodgeDuration = 0.45,
     DodgeNotify = false,
     
-    -- 🎃 Halloween Event Automation (กิจกรรมฮาโลวีน)
-    AutoHalloween = true,
-    AutoTrickTreat = false,       -- ปิดไว้เพื่อไม่ให้แวบไปเคาะบ้านแม่มดเอง
+    -- 🎃 Halloween Event Automation (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoHalloween = false,
+    AutoTrickTreat = false,
     TrickTreatThreshold = 100,
     TrickTreatAutoVisit = false,
     AutoHalloweenGacha = false,
     GachaPullType = "10x Pull (100 Heads)",
-    HuntHalloweenPumpkins = true,
-    AutoHalloweenBoxes = false,   -- ปิดไว้เพื่อไม่ให้ดูดวาร์ปไปหากล่องฮาโลวีน
-    AutoClaimEventRewards = true,
+    HuntHalloweenPumpkins = false,
+    AutoHalloweenBoxes = false,
+    AutoClaimEventRewards = false,
     
-    -- 🏰 Dungeon Automation (Skull King's Crypt & Dungeons)
-    AutoDungeon = false,          -- ปิดไว้เป็นค่าเริ่มต้น ไม่ให้แวบเข้าดันเจี้ยนเอง
-    SelectedDungeon = "halloween",             -- "halloween" (Skull King's Crypt)
-    DungeonDifficulty = "easy",               -- "easy" or "normal"
-    DungeonForceSolo = true,                  -- ออกจากปาร์ตี้อื่นอัตโนมัติเพื่อให้สามารถเข้าคนเดียวได้ทันที
+    -- 🏰 Dungeon Automation (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    AutoDungeon = false,
+    SelectedDungeon = "halloween",
+    DungeonDifficulty = "easy",
+    DungeonForceSolo = false,
     
-    -- 👥 Dungeon Party & Matchmaking
-    DungeonPartyMode = "Solo",                -- "Solo" (ลงคนเดียว) or "Party" (สร้างปาร์ตี้ลงด้วยกัน)
-    PartyTargetMembers = 2,                   -- จำนวนคนในตี้ที่ต้องการก่อนเริ่มลงดันเจี้ยน (2 - 4 คน)
-    PartyWaitTimeout = 30,                    -- เวลารอคนตอบรับเข้าตี้ (วินาที) ก่อนเริ่มสร้างห้อง
-    PartyInviteTarget = "All Server",         -- "All Server", "Friends Only", "Nearby Gate"
-    PartyAutoInvite = true,                   -- ส่งคำเชิญชวนเข้าตี้หมู่อัตโนมัติเมื่อเริ่ม
-    AutoAcceptParty = true,                   -- ตอบรับคำเชิญเข้าปาร์ตี้อัตโนมัติ (สำหรับตัวเด็ก / Alt account)
-    PartyAcceptFilter = "Anyone",             -- "Anyone", "Friends Only", "Whitelist"
-    PartyWhitelistUsers = "",                 -- รายชื่อไอดีหลัก เช่น "MainAcc1, MainAcc2"
+    -- 👥 Dungeon Party & Matchmaking (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    DungeonPartyMode = "Solo",
+    PartyTargetMembers = 2,
+    PartyWaitTimeout = 30,
+    PartyInviteTarget = "All Server",
+    PartyAutoInvite = false,
+    AutoAcceptParty = false,
+    PartyAcceptFilter = "Anyone",
+    PartyWhitelistUsers = "",
     
     AutoBuyDungeonKey = false,
     MaxDungeonKeysToBuy = 10,
-    AutoReadyDungeon = true,
-    AutoReviveTeammates = true,
-    PrioritizeDungeonPillars = true,
-    AutoKickSkulls = true,
-    PrioritizeDungeonBoss = true,
-    AutoClaimExitChest = true,
-    AutoSecretChests = true,
-    AutoLeaveOnClear = true,
+    AutoReadyDungeon = false,
+    AutoReviveTeammates = false,
+    PrioritizeDungeonPillars = false,
+    AutoKickSkulls = false,
+    PrioritizeDungeonBoss = false,
+    AutoClaimExitChest = false,
+    AutoSecretChests = false,
+    AutoLeaveOnClear = false,
     AutoRepeatDungeon = false,
-    ReturnToFarmAfterDungeon = false,          -- ปิดไว้เพื่อไม่ให้แอบเปิด Auto Farm เอง
-    DungeonSafeHeight = 5.2,                  -- ความสูงลอยตัวเหนือกราวด์แอตแทกของบอส
-    DungeonAttackDelay = 0.08,                -- ความเร็วโจมตีในดันเจี้ยน
+    ReturnToFarmAfterDungeon = false,
+    DungeonSafeHeight = 5.2,
+    DungeonAttackDelay = 0.08,
 
     -- 🎥 Streamer Mode (โหมดสตรีมเมอร์ & ปกปิดชื่อ)
     StreamerMode = false,
     StreamerFakeName = "Protected Player",
-    HideOverheadName = true,
-    SpoofUIAndLeaderboard = true,
+    HideOverheadName = false,
+    SpoofUIAndLeaderboard = false,
     HideOthersNames = false,
 
     -- 🎨 UI Dungeon Theme & Animated Background
@@ -570,9 +570,9 @@ Config = {
     UIAnimationSpeed = 10,
     UIGlassTransparency = 28,
 
-    -- Misc & Performance
-    InfiniteStamina = true,
-    AntiAFK = true,
+    -- Misc & Performance (ปิดทั้งหมดเป็นค่าเริ่มต้น)
+    InfiniteStamina = false,
+    AntiAFK = false,
     FastMode = false,
 }
 
