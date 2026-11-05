@@ -1775,6 +1775,140 @@ local function findDungeonGatePrompt()
 end
 
 -- ==================== 🏰 ROBUST DUNGEON ROOM CREATION & ENTRY ====================
+local function buyDungeonKey(silent)
+    local silver = getPlayerSilver()
+    if silver < 500000 then
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "Silver ไม่เพียงพอ ⚠️",
+                Content = string.format("ต้องใช้ 500,000 Silver ในการซื้อกุญแจ (มีอยู่: %s)", tostring(silver)),
+                Duration = 3,
+                Icon = "alert-triangle"
+            })
+        end
+        return false, "Not enough silver"
+    end
+
+    local inDungeon = isInsideDungeon()
+    if inDungeon then
+        local bKeys = getDungeonKeys()
+        pcall(function()
+            if DungeonAction then
+                DungeonAction:FireServer("replayBuyKey")
+            end
+        end)
+        task.wait(1.0)
+        local aKeys = getDungeonKeys()
+        if aKeys > bKeys then
+            if not silent and WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "ซื้อกุญแจสำเร็จ! 🗝️",
+                    Content = string.format("ซื้อกุญแจรีเพลย์สำเร็จ! กุญแจปัจจุบัน: %d ดอก", aKeys),
+                    Duration = 3,
+                    Icon = "key"
+                })
+            end
+            return true
+        end
+        return false
+    end
+
+    local char = LocalPlayer.Character or workspace:FindFirstChild(LocalPlayer.Name)
+    local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+    if not hrp then return false, "No HRP" end
+
+    local gatePos = Vector3.new(4.8, 5.0, 112.5)
+    local origPos = hrp.Position
+    local distToGate = (hrp.Position - gatePos).Magnitude
+    local needsWarpBack = false
+
+    -- 1. Warp / Travel to Gate if not near (server requires player within 60 studs)
+    if distToGate > 30 then
+        needsWarpBack = true
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "ซื้อกุญแจดันเจี้ยน 🗝️",
+                Content = "กำลังไปที่ประตูทางเข้าดันเจี้ยนเพื่อทำรายการซื้อ...",
+                Duration = 2,
+                Icon = "navigation"
+            })
+        end
+        hrp.CFrame = CFrame.new(gatePos)
+        hrp.Velocity = Vector3.zero
+        task.wait(0.4)
+    end
+
+    -- 2. Trigger DungeonGate Prompt to ensure server gate session is open
+    local prompt = findDungeonGatePrompt()
+    if prompt and fireproximityprompt then
+        pcall(function() fireproximityprompt(prompt) end)
+        task.wait(0.6)
+    end
+
+    local beforeKeys = getDungeonKeys()
+    local beforeSilver = getPlayerSilver()
+
+    -- 3. Fire buy action on server
+    pcall(function()
+        if DungeonAction then
+            DungeonAction:FireServer("selectBuyKey")
+        end
+    end)
+    task.wait(1.0)
+
+    local afterKeys = getDungeonKeys()
+    local afterSilver = getPlayerSilver()
+
+    -- 4. Fallback click simulation if not yet registered
+    if afterKeys <= beforeKeys and afterSilver == beforeSilver then
+        local gui = LocalPlayer.PlayerGui:FindFirstChild("HuntDungeonSelect")
+        local buyBtn = gui and gui:FindFirstChild("BuyKey", true)
+        if buyBtn and getconnections then
+            for _, conn in ipairs(getconnections(buyBtn.MouseButton1Click)) do
+                pcall(function() conn:Fire() end)
+            end
+        end
+        pcall(function()
+            if DungeonAction then
+                DungeonAction:FireServer("selectBuyKey")
+            end
+        end)
+        task.wait(1.0)
+        afterKeys = getDungeonKeys()
+        afterSilver = getPlayerSilver()
+    end
+
+    local success = (afterKeys > beforeKeys) or ((beforeSilver - afterSilver) >= 500000)
+
+    if success then
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "ซื้อกุญแจสำเร็จ! 🗝️",
+                Content = string.format("ซื้อกุญแจดันเจี้ยนเรียบร้อย! กุญแจปัจจุบัน: %d ดอก (เหลือ Silver: %s)", afterKeys, string.format("%.1fM", afterSilver / 1000000)),
+                Duration = 3,
+                Icon = "key"
+            })
+        end
+    else
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "ซื้อกุญแจไม่สำเร็จ ⚠️",
+                Content = "เซิร์ฟเวอร์ยังไม่ตอบรับการซื้อ กรุณาลองใหม่อีกครั้ง",
+                Duration = 3,
+                Icon = "alert-circle"
+            })
+        end
+    end
+
+    -- 5. Return to original spot if manual buy
+    if needsWarpBack and not Config.AutoDungeon then
+        hrp.CFrame = CFrame.new(origPos)
+        hrp.Velocity = Vector3.zero
+    end
+
+    return success
+end
+
 local function executeDungeonEnterRoutine(isManual)
     if isEnteringDungeon or isInsideDungeon() then return end
     if not isManual and not canScriptMoveOrWarp() then return end
@@ -1815,40 +1949,6 @@ local function executeDungeonEnterRoutine(isManual)
             })
         end
         return
-    end
-
-    -- 2. Keys & Free Runs Check
-    local keys = getDungeonKeys()
-    local silver = getPlayerSilver()
-
-    if keys <= 0 and Config.AutoBuyDungeonKey then
-        if silver >= 500000 then
-            if WindUI and WindUI.Notify then
-                WindUI:Notify({
-                    Title = "Auto Buy Key",
-                    Content = "กำลังซื้อกุญแจดันเจี้ยน (500,000 Silver)...",
-                    Duration = 2.5,
-                    Icon = "key"
-                })
-            end
-            pcall(function()
-                if DungeonAction then
-                    DungeonAction:FireServer("selectBuyKey")
-                end
-            end)
-            task.wait(1.0)
-            keys = getDungeonKeys()
-        else
-            if WindUI and WindUI.Notify then
-                WindUI:Notify({
-                    Title = "Out of Silver & Keys",
-                    Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500k)",
-                    Duration = 3,
-                    Icon = "alert-triangle"
-                })
-            end
-            return
-        end
     end
 
     isEnteringDungeon = true
@@ -1917,7 +2017,53 @@ local function executeDungeonEnterRoutine(isManual)
             prompt:InputHoldEnd()
         end)
     end
-    task.wait(0.5)
+    task.wait(0.6)
+
+    -- 5.1 Keys & Free Runs Check (Right at the Gate where server allows buy)
+    local keys = getDungeonKeys()
+    local silver = getPlayerSilver()
+    if keys <= 0 and Config.AutoBuyDungeonKey then
+        if silver >= 500000 then
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Auto Buy Key 🗝️",
+                    Content = "กำลังซื้อกุญแจดันเจี้ยนที่ประตู (500,000 Silver)...",
+                    Duration = 2.5,
+                    Icon = "key"
+                })
+            end
+            pcall(function()
+                if DungeonAction then
+                    DungeonAction:FireServer("selectBuyKey")
+                end
+            end)
+            task.wait(1.0)
+            keys = getDungeonKeys()
+            if keys <= 0 then
+                -- Fallback via UI button click
+                local gui = LocalPlayer.PlayerGui:FindFirstChild("HuntDungeonSelect")
+                local buyBtn = gui and gui:FindFirstChild("BuyKey", true)
+                if buyBtn and getconnections then
+                    for _, conn in ipairs(getconnections(buyBtn.MouseButton1Click)) do
+                        pcall(function() conn:Fire() end)
+                    end
+                end
+                task.wait(1.0)
+                keys = getDungeonKeys()
+            end
+        else
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Out of Silver & Keys ⚠️",
+                    Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500,000 Silver)",
+                    Duration = 3,
+                    Icon = "alert-triangle"
+                })
+            end
+            isEnteringDungeon = false
+            return
+        end
+    end
 
     -- 6. Send selectEnter & ready with multi-attempt retry
     local dId = Config.SelectedDungeon or "halloween"
@@ -5550,13 +5696,10 @@ DungeonTab:Button({
 
 DungeonTab:Button({
     Title = "Buy 1x Dungeon Key Now (ซื้อกุญแจ 1 ดอก - 500k Silver)",
-    Desc = "ซื้อกุญแจดันเจี้ยนผ่านเซิร์ฟเวอร์ทันที",
+    Desc = "ซื้อกุญแจดันเจี้ยนผ่านเซิร์ฟเวอร์ทันที (หากอยู่นอกเมืองจะเดินไปทำรายการที่ประตูให้)",
     Callback = function()
-        pcall(function()
-            if DungeonAction then
-                DungeonAction:FireServer("selectBuyKey")
-                WindUI:Notify({ Title = "Dungeon Key", Content = "ส่งคำสั่งซื้อกุญแจเรียบร้อย!", Duration = 2, Icon = "check" })
-            end
+        task.spawn(function()
+            buyDungeonKey(false)
         end)
     end,
 })
