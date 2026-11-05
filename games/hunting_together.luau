@@ -269,6 +269,7 @@ local function setClientCurrentTarget(tgt)
         LocalPlayer:SetAttribute("TargetLocked", tgt ~= nil)
         if tgt ~= nil then
             LocalPlayer:SetAttribute("AutoOn", true)
+            LocalPlayer:SetAttribute("BotUseSkills", false)
         else
             if not Config.AutoFarm and not (Config.AutoDungeon and isInsideDungeon()) then
                 LocalPlayer:SetAttribute("AutoOn", false)
@@ -2609,6 +2610,85 @@ local function getHotbarSkillInSlot(slotNum)
     return nil
 end
 
+local function isSkillAllowedToCast(skillId)
+    if not skillId or skillId == "" then return false end
+
+    -- 1. Check if this skill is equipped in any Hotbar Slot 1-7
+    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+    if hotbarRaw and hotbarRaw ~= "" then
+        local ok, hotbar = pcall(function() return HttpService:JSONDecode(hotbarRaw) end)
+        if ok and hotbar then
+            for slot = 1, 7 do
+                local item = hotbar[tostring(slot)]
+                if item and type(item) == "string" and item:find("^skill:") then
+                    local sname = item:sub(7)
+                    if sname:lower() == skillId:lower() then
+                        return isSlotSelected(slot)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. If it is NOT in any Hotbar Slot 1-7:
+    -- Only allow if it's a known class buff AND Config.AutoUseBuffs is ON
+    local buffList = { vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true }
+    if Config.AutoUseBuffs and buffList[skillId:lower()] then
+        return true
+    end
+
+    -- Deselected or unequipped skill is blocked 100%
+    return false
+end
+
+-- Suppress the game's native bot from automatically firing unwanted skills
+pcall(function()
+    LocalPlayer:SetAttribute("BotUseSkills", false)
+    LocalPlayer:SetAttribute("AutoSkill", false)
+    if trackConn then
+        trackConn(LocalPlayer:GetAttributeChangedSignal("BotUseSkills"):Connect(function()
+            if LocalPlayer:GetAttribute("BotUseSkills") == true then
+                LocalPlayer:SetAttribute("BotUseSkills", false)
+            end
+        end))
+        trackConn(LocalPlayer:GetAttributeChangedSignal("AutoSkill"):Connect(function()
+            if LocalPlayer:GetAttribute("AutoSkill") == true then
+                LocalPlayer:SetAttribute("AutoSkill", false)
+            end
+        end))
+    end
+end)
+
+-- Network-level barrier: Intercept and block unselected skills from ever firing via UseSkill
+pcall(function()
+    if hookmetamethod and UseSkill then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if self == UseSkill and (method == "FireServer" or method == "fireServer") then
+                local args = {...}
+                local sId = tostring(args[1] or "")
+                if not isSkillAllowedToCast(sId) then
+                    return
+                end
+            end
+            return oldNamecall(self, ...)
+        end))
+    end
+end)
+
+pcall(function()
+    if hookfunction and UseSkill and UseSkill.FireServer then
+        local oldFireServer
+        oldFireServer = hookfunction(UseSkill.FireServer, newcclosure(function(self, sId, ...)
+            if not isSkillAllowedToCast(tostring(sId or "")) then
+                return
+            end
+            return oldFireServer(self, sId, ...)
+        end))
+    end
+end)
+
 local SkillCooldownDefaults = {
     twinfang = 0.55,
     venomknife = 7.0,
@@ -2634,6 +2714,7 @@ local SkillCooldownDefaults = {
 
 local function castSmartSkill(skillId, target)
     if not skillId or skillId == "" then return false end
+    if not isSkillAllowedToCast(skillId) then return false end
     local now = os.clock()
     local cd = SkillCooldownDefaults[skillId] or 3.0
 
