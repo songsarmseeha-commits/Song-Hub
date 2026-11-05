@@ -6828,15 +6828,17 @@ TeleportTab:Toggle({
 TeleportTab:Slider({
     Title = "Server Hop Interval (รอบเวลาในการย้ายเซิร์ฟ)",
     Desc = "ตั้งเวลาว่าจะให้บอทย้ายเซิร์ฟเวอร์คนน้อยทุกๆ กี่นาที (เช่น 10, 15, 30 นาที)",
-    Min = 1,
-    Max = 120,
-    Default = tonumber(Config.ServerHopInterval) or 15,
+    Value = {
+        Min = 1,
+        Max = 120,
+        Default = tonumber(Config.ServerHopInterval) or 15,
+    },
     Step = 1,
     Suffix = " นาที (mins)",
     Callback = function(val)
-        Config.ServerHopInterval = val
+        Config.ServerHopInterval = tonumber(val) or 15
         if Config.ServerHopAuto then
-            serverHopNextTick = os.clock() + (val * 60)
+            serverHopNextTick = os.clock() + ((tonumber(val) or 15) * 60)
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
