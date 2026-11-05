@@ -857,5 +857,118 @@ window.addEventListener('DOMContentLoaded', () => {
     initDashboard();
 });
 
+// ==============================================================================
+// DATABASE CLOUD PERSISTENCE & BACKUP CONTROLLER
+// ==============================================================================
+
+// Download Database JSON Backup
+async function downloadDatabaseBackup() {
+    try {
+        showToast('Preparing database backup...', 'success');
+        const res = await fetch(`${API_BASE}/api/v1/admin/database/backup`, {
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+        if (!res.ok) throw new Error('Backup download failed: HTTP ' + res.status);
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `song_hub_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        showToast('Backup downloaded successfully!', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Restore Database from JSON file
+async function handleBackupFileSelected(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('restoreStatus');
+    if (statusEl) {
+        statusEl.classList.remove('hidden');
+        statusEl.textContent = 'Reading and importing backup file...';
+        statusEl.className = 'text-xs text-yellow-400 mt-2';
+    }
+
+    try {
+        const text = await file.text();
+        const json = JSON.parse(text);
+
+        const res = await apiRequest('/api/v1/admin/database/restore?replace=true', {
+            method: 'POST',
+            body: JSON.stringify(json)
+        });
+
+        if (res.success) {
+            showToast(res.message || 'Database restored successfully!', 'success');
+            if (statusEl) {
+                statusEl.textContent = res.message;
+                statusEl.className = 'text-xs text-emerald-400 mt-2';
+            }
+            // Refresh keys and whitelist lists
+            if (typeof loadAllKeys === 'function') loadAllKeys();
+            if (typeof loadWhitelistUsers === 'function') loadWhitelistUsers();
+            if (typeof loadStats === 'function') loadStats();
+        } else {
+            throw new Error(res.error || 'Restore failed');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+        if (statusEl) {
+            statusEl.textContent = 'Error: ' + err.message;
+            statusEl.className = 'text-xs text-red-400 mt-2';
+        }
+    } finally {
+        event.target.value = '';
+    }
+}
+
+// Force Sync to Cloud Secret Gist
+async function forceSyncCloud() {
+    const btn = document.getElementById('btnForceCloudSync');
+    if (btn) btn.disabled = true;
+    showToast('Syncing database to Cloud Storage...', 'success');
+    try {
+        const res = await apiRequest('/api/v1/admin/database/sync-cloud', { method: 'POST' });
+        if (res.success) {
+            showToast(res.message, 'success');
+        } else {
+            throw new Error(res.error || 'Cloud sync failed');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// Force Pull from Cloud Secret Gist
+async function forcePullCloud() {
+    const btn = document.getElementById('btnForceCloudPull');
+    if (btn) btn.disabled = true;
+    showToast('Pulling snapshot from Cloud Storage...', 'success');
+    try {
+        const res = await apiRequest('/api/v1/admin/database/pull-cloud', { method: 'POST' });
+        if (res.success) {
+            showToast(res.message, 'success');
+            if (typeof loadAllKeys === 'function') loadAllKeys();
+            if (typeof loadWhitelistUsers === 'function') loadWhitelistUsers();
+            if (typeof loadStats === 'function') loadStats();
+        } else {
+            throw new Error(res.error || 'Pull failed');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 
 
