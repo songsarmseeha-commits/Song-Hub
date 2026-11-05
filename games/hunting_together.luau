@@ -8872,6 +8872,26 @@ ConfigTab:Button({
     end,
 })
 
+ConfigTab:Section({ Title = "🌐 Song Hub Community & Support", Opened = true })
+
+ConfigTab:Button({
+    Title = "💬 Join Discord Community",
+    Desc = "Copy Discord invite link to your clipboard (https://discord.gg/cecytf4MHE)",
+    Callback = function()
+        pcall(function()
+            if typeof(setclipboard) == "function" then
+                setclipboard("https://discord.gg/cecytf4MHE")
+            end
+            WindUI:Notify({
+                Title = "Discord Link Copied! 💬",
+                Content = "https://discord.gg/cecytf4MHE\nJoin Song Hub Discord for support, updates & keys!",
+                Duration = 4,
+                Icon = "clipboard-check"
+            })
+        end)
+    end,
+})
+
 -- ==================== TAB 11: MISC & BOOST ====================
 MiscTab:Section({ Title = "Movement & Stamina Boost", Opened = true })
 
