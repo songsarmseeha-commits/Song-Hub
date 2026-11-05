@@ -362,11 +362,16 @@ local function updateParagraph(para, title, desc)
     end)
     pcall(function()
         if para.ElementFrame then
+            local labels = {}
             for _, d in ipairs(para.ElementFrame:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Text ~= title and d.Text ~= "Locked" then
-                    d.Text = desc
-                    break
+                if d:IsA("TextLabel") and d.Text ~= "Locked" then
+                    table.insert(labels, d)
                 end
+            end
+            if #labels >= 2 then
+                labels[2].Text = desc
+            elseif #labels == 1 and labels[1].Text ~= title then
+                labels[1].Text = desc
             end
         end
     end)
@@ -2102,23 +2107,32 @@ TabAutomation:Button({
 
 TabAutomation:Section({ Title = "Locker Rolling & Purchase (Multi-Select Filters)" })
 
-local initPlot = getMyPlot()
-local initRollPart = initPlot and initPlot:FindFirstChild("Systems")
-    and initPlot.Systems:FindFirstChild("RollStation")
-    and initPlot.Systems.RollStation:FindFirstChild("ConveyorPart")
-local initBox = (initRollPart and initRollPart:GetAttribute("BoxName")) or "None"
-local initVar = (initRollPart and initRollPart:GetAttribute("Variant")) or "Normal"
-local initPrice = 0
-if initRollPart and initBox ~= "None" and initBox ~= "" then
-    initPrice = getConveyorLockerPrice(initBox, initVar, initRollPart)
-end
-local initCash = getCashAmount()
-
 LockerStatusParagraph = TabAutomation:Paragraph({
     Title = "Locker Rolling & Purchase Status",
-    Desc = string.format("• Status: Idle 💤\n• Station Locker: %s (%s)\n• Price: $%s\n• Current Cash: $%s",
-        tostring(initBox), tostring(initVar), formatNumber(initPrice), formatNumber(initCash))
+    Desc = "• Status: Loading live status...\n• Station Locker: Scanning...\n• Price: $0\n• Current Cash: Loading..."
 })
+
+task.spawn(function()
+    task.wait(0.3)
+    pcall(function()
+        if LockerStatusParagraph then
+            local plot = getMyPlot()
+            local rollPart = plot and plot:FindFirstChild("Systems")
+                and plot.Systems:FindFirstChild("RollStation")
+                and plot.Systems.RollStation:FindFirstChild("ConveyorPart")
+            local curBox = (rollPart and rollPart:GetAttribute("BoxName")) or "None"
+            local curVar = (rollPart and rollPart:GetAttribute("Variant")) or "Normal"
+            local price = 0
+            if rollPart and curBox ~= "None" and curBox ~= "" then
+                price = getConveyorLockerPrice(curBox, curVar, rollPart)
+            end
+            local cash = getCashAmount()
+            local desc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
+                lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
+            updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", desc)
+        end
+    end)
+end)
 
 UIElements.autoRollLocker = TabAutomation:Toggle({
     Title = "Auto Roll Locker (Roll Station)",
