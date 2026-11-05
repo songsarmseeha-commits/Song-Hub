@@ -1092,6 +1092,8 @@ local function disablePlotGamepassButtons()
     end)
 end
 
+local lastAdminHouseKnockedTick = 0
+
 -- Helper: Get Admin House (Boss House) status and 1-hour cooldown
 local function getAdminHouseStatus()
     local adminHouse = workspace:FindFirstChild("HouseModelAdmin", true)
@@ -1110,20 +1112,47 @@ local function getAdminHouseStatus()
     local formatted = "00:00"
     local now = workspace:GetServerTimeNow()
 
+    -- 1. Check local session knock tracker (guarantees immediate 1-hour cooldown registration upon knocking)
+    if lastAdminHouseKnockedTick > 0 then
+        local elapsed = os.clock() - lastAdminHouseKnockedTick
+        if elapsed < 3600 then
+            onCooldown = true
+            secLeft = math.max(secLeft, math.ceil(3600 - elapsed))
+        end
+    end
+
+    -- 2. Check ClientDataManager persisted HouseKnocks (syncs across reconnects / server sessions)
+    if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
+        local ok, data = pcall(ClientDataManager.GetData)
+        if ok and data and data.Events and data.Events.Halloween_2026 and data.Events.Halloween_2026.HouseKnocks then
+            local serverKnockTime = tonumber(data.Events.Halloween_2026.HouseKnocks.HouseModelAdmin) or 0
+            if serverKnockTime > 0 and (now - serverKnockTime) < 3600 then
+                onCooldown = true
+                secLeft = math.max(secLeft, math.ceil(3600 - (now - serverKnockTime)))
+            end
+        end
+    end
+
+    -- 3. Check HalloweenService Cooldown End
     if HalloweenService and typeof(HalloweenService.GetHouseCooldownEnd) == "function" then
         local ok, cdEnd = pcall(HalloweenService.GetHouseCooldownEnd, LocalPlayer, "HouseModelAdmin")
         if ok and cdEnd and cdEnd > now then
             onCooldown = true
-            secLeft = math.max(0, math.ceil(cdEnd - now))
-            formatted = string.format("%02d:%02d", math.floor(secLeft / 60), secLeft % 60)
+            secLeft = math.max(secLeft, math.ceil(cdEnd - now))
         end
     end
 
+    -- 4. Check HalloweenService IsHouseOnCooldown
     if not onCooldown and HalloweenService and typeof(HalloweenService.IsHouseOnCooldown) == "function" then
         local ok, cd = pcall(HalloweenService.IsHouseOnCooldown, LocalPlayer, "HouseModelAdmin")
         if ok and cd == true then
             onCooldown = true
+            if secLeft <= 0 then secLeft = 3600 end
         end
+    end
+
+    if secLeft > 0 then
+        formatted = string.format("%02d:%02d", math.floor(secLeft / 60), secLeft % 60)
     end
 
     return {
@@ -1131,7 +1160,7 @@ local function getAdminHouseStatus()
         onCooldown = onCooldown,
         secLeft = secLeft,
         formatted = formatted,
-        ready = not onCooldown
+        ready = (not onCooldown) and (adminHouse ~= nil)
     }
 end
 
@@ -1762,6 +1791,8 @@ TabEvents:Button({
                 end
                 task.wait(4.0)
                 sweepAllCandies(doorPos, 65)
+                lastAdminHouseKnockedTick = os.clock()
+                locallyKnockedHouses["HouseModelAdmin"] = os.clock()
                 isInteractingHalloween = false
                 WindUI:Notify({
                     Title = "Admin House Knocked! 🎃",
@@ -4646,9 +4677,10 @@ local locallyKnockedHouses = {}
 
 local function getClosestAvailableHouse(currentPos)
     -- 1. High Priority: Admin House (Boss House with 1-hour cooldown and massive Candy drop)
+    -- Only prioritized when it is ACTUALLY ready and off cooldown!
     if prioritizeAdminHouse then
         local adminStatus = getAdminHouseStatus()
-        if adminStatus.ready and adminStatus.house then
+        if adminStatus.ready and not adminStatus.onCooldown and adminStatus.house then
             local doorRig = adminStatus.house:FindFirstChild("Door_Rig")
             local primaryPart = doorRig and (doorRig.PrimaryPart or doorRig:FindFirstChild("RootPart"))
             if primaryPart then
@@ -4657,6 +4689,7 @@ local function getClosestAvailableHouse(currentPos)
         end
     end
 
+    -- 2. When Admin House is on cooldown (or if not prioritized), search all other 84 houses!
     local allHouses = CollectionService:GetTagged("HouseSystemModel")
     if #allHouses == 0 and workspace:FindFirstChild("Map") then
         for _, c in ipairs(workspace.Map:GetChildren()) do
@@ -4670,15 +4703,24 @@ local function getClosestAvailableHouse(currentPos)
     local bestDist = math.huge
 
     for _, house in ipairs(allHouses) do
-        -- Skip HouseModelAdmin here since it is handled by the priority check
-        if house.Name ~= "HouseModelAdmin" then
+        local isThisAdmin = (house.Name == "HouseModelAdmin" or string.find(house.Name:lower(), "admin") ~= nil)
+        local canCheckThis = (not isThisAdmin) or (not prioritizeAdminHouse)
+
+        if canCheckThis then
             local onCooldown = false
-            if locallyKnockedHouses[house.Name] and (os.clock() - locallyKnockedHouses[house.Name]) < 305 then
-                onCooldown = true
-            elseif HalloweenService and typeof(HalloweenService.IsHouseOnCooldown) == "function" then
-                local ok, cd = pcall(HalloweenService.IsHouseOnCooldown, LocalPlayer, house.Name)
-                if ok and cd == true then
+            if isThisAdmin then
+                local adminStatus = getAdminHouseStatus()
+                if adminStatus.onCooldown or not adminStatus.ready then
                     onCooldown = true
+                end
+            else
+                if locallyKnockedHouses[house.Name] and (os.clock() - locallyKnockedHouses[house.Name]) < 305 then
+                    onCooldown = true
+                elseif HalloweenService and typeof(HalloweenService.IsHouseOnCooldown) == "function" then
+                    local ok, cd = pcall(HalloweenService.IsHouseOnCooldown, LocalPlayer, house.Name)
+                    if ok and cd == true then
+                        onCooldown = true
+                    end
                 end
             end
 
@@ -4748,7 +4790,11 @@ task.spawn(function()
                             lastKnockServerTime = workspace:GetServerTimeNow()
                             locallyKnockedHouses[targetHouse.Name] = os.clock()
 
-                            local isBoss = (targetHouse.Name == "HouseModelAdmin")
+                            local isBoss = (targetHouse.Name == "HouseModelAdmin" or string.find(targetHouse.Name:lower(), "admin") ~= nil)
+                            if isBoss then
+                                lastAdminHouseKnockedTick = os.clock()
+                            end
+
                             local prompt = doorRig:FindFirstChildWhichIsA("ProximityPrompt", true)
                             if prompt and prompt.Enabled and typeof(fireproximityprompt) == "function" then
                                 pcall(function()
@@ -4769,7 +4815,7 @@ task.spawn(function()
                             if isBoss then
                                 WindUI:Notify({
                                     Title = "Admin House Knocked! 🎃",
-                                    Content = "Collected massive candy burst from the giant Admin Pumpkin House!",
+                                    Content = "Collected massive candy burst from the giant Admin Pumpkin House!\nNow proceeding to other houses...",
                                     Duration = 4,
                                     Icon = "sparkles"
                                 })
