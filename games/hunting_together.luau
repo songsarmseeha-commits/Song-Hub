@@ -414,7 +414,7 @@ Config = {
 
     -- Auto Farm & Boss Hunter
     AutoFarm = false,
-    FarmMode = "Fly",            -- "Fly" (โหมดบินลอยตัว) or "Walk" (โหมดเดินปกติบนพื้น)
+    FarmMode = "Warp",            -- "Fly" (โหมดบินลอยตัว) or "Walk" (โหมดเดินปกติบนพื้น)
     WalkFarmSpeed = 26,          -- ความเร็วในการเดินฟาร์มเมื่ออยู่ในโหมดเดินปกติ (Walk Mode)
     SafeFarm = false,
     SafeFarmExploit = true,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัยสมบูรณ์แบบ
@@ -825,17 +825,24 @@ local function getNearestDungeonWaypoint(pos)
 end
 
 local function getDungeonWallInstances()
-    local h = workspace:FindFirstChild("Halloween")
     local walls = {}
+    local h = workspace:FindFirstChild("Halloween")
     if h then
-        local w = h:FindFirstChild("Wall")
-        if w then table.insert(walls, w) end
-        local b = h:FindFirstChild("Blockers")
+        for _, name in ipairs({ "Wall", "Blockers", "Cave", "Barriers", "Throne", "BossDoor", "Decor" }) do
+            local item = h:FindFirstChild(name)
+            if item then table.insert(walls, item) end
+        end
+    end
+    -- Also include all objects tagged DungeonLosWall by the native game engine
+    local CollectionService = game:GetService("CollectionService")
+    for _, item in ipairs(CollectionService:GetTagged("DungeonLosWall")) do
+        table.insert(walls, item)
+    end
+    -- Also look for any map folder with barriers or obstacles
+    local map = workspace:FindFirstChild("Map")
+    if map then
+        local b = map:FindFirstChild("Barriers") or map:FindFirstChild("BlockFields")
         if b then table.insert(walls, b) end
-        local c = h:FindFirstChild("Cave")
-        if c then table.insert(walls, c) end
-        local barriers = h:FindFirstChild("Barriers")
-        if barriers then table.insert(walls, barriers) end
     end
     return walls
 end
@@ -848,8 +855,11 @@ local function hasDungeonLineOfSight(pos1, pos2)
     rayParams.FilterType = Enum.RaycastFilterType.Include
     rayParams.FilterDescendantsInstances = wallInstances
 
-    local p1 = Vector3.new(pos1.X, 62.0, pos1.Z)
-    local p2 = Vector3.new(pos2.X, 62.0, pos2.Z)
+    -- Use character eye/chest height at actual positions (never hardcoded)
+    local y1 = (pos1.Y or 60) + 1.8
+    local y2 = (pos2.Y or 60) + 1.8
+    local p1 = Vector3.new(pos1.X, y1, pos1.Z)
+    local p2 = Vector3.new(pos2.X, y2, pos2.Z)
     local dir = p2 - p1
     if dir.Magnitude < 1.0 then return true end
 
@@ -859,34 +869,35 @@ end
 
 local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar)
     local wallInstances = getDungeonWallInstances()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-    -- Optimal melee combat distance in dungeon: 3.6 - 4.2 studs (100% weapon reach, never clips into center)
-    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 14.0) or 3.8
+    -- Optimal melee combat distance in dungeon: 3.4 - 3.6 studs (100% weapon reach, never clips inside monster or wall)
+    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 13.0) or 3.5
 
     -- Accurate ground detection excluding characters and monsters
-    local floorY = 62.8
+    local floorY = targetPos.Y
     pcall(function()
         local rayParamsFloor = RaycastParams.new()
         rayParamsFloor.FilterType = Enum.RaycastFilterType.Exclude
-        local char = LocalPlayer.Character
-do
-    local monstersFolder = workspace:FindFirstChild("Monsters")
         local ignore = { char }
+        local monstersFolder = workspace:FindFirstChild("Monsters")
         if monstersFolder then table.insert(ignore, monstersFolder) end
         rayParamsFloor.FilterDescendantsInstances = ignore
-        local floorRay = workspace:Raycast(Vector3.new(targetPos.X, 75.0, targetPos.Z), Vector3.new(0, -40.0, 0), rayParamsFloor)
+        local floorRay = workspace:Raycast(Vector3.new(targetPos.X, targetPos.Y + 15.0, targetPos.Z), Vector3.new(0, -35.0, 0), rayParamsFloor)
         if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
             floorY = floorRay.Position.Y + 2.8
-end
-end
+        end
     end)
 
-    -- If fly mode (not Walk), add slight vertical hover within melee hit range
-    if Config.FarmMode ~= "Walk" then
-        local hover = (isBoss or isPillar) and 2.5 or 1.2
+    -- If fly / warp mode (not Walk), keep slight hover
+    local isWalk = (Config.FarmMode == "Walk")
+    if not isWalk then
+        local hover = (isBoss or isPillar) and 2.5 or 0.8
         floorY = floorY + hover
     end
 
+    -- If no wall instances detected in game, default safely in front of monster
     if #wallInstances == 0 then
         local p = targetPos - (mobLook * effectiveDist)
         return Vector3.new(p.X, floorY, p.Z)
@@ -896,51 +907,94 @@ end
     rayParams.FilterType = Enum.RaycastFilterType.Include
     rayParams.FilterDescendantsInstances = wallInstances
 
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local toPlayer = hrp and (hrp.Position - targetPos) or -mobLook
-    local flatToPlayer = Vector3.new(toPlayer.X, 0, toPlayer.Z)
-    local primaryDir = flatToPlayer.Magnitude > 0.5 and flatToPlayer.Unit or -mobLook
+    -- Raycast center height at monster/player chest level
+    local rayY = floorY + 1.8
+    local rayOrigin = Vector3.new(targetPos.X, rayY, targetPos.Z)
 
-    -- 1. Try to keep current facing direction to prevent jittery spinning around the monster
-    local checkDist = effectiveDist + 2.0
-    local rayOrigin = Vector3.new(targetPos.X, 62.0, targetPos.Z)
-    local hitPrimary = workspace:Raycast(rayOrigin, primaryDir * checkDist, rayParams)
-    if not hitPrimary or hitPrimary.Distance >= (effectiveDist + 1.2) then
-        local candidatePos = targetPos + (primaryDir * effectiveDist)
-        return Vector3.new(candidatePos.X, floorY, candidatePos.Z)
+    -- Direction towards the open hallway (nearest waypoint)
+    local nearestWp = getNearestDungeonWaypoint(targetPos)
+    local hallwayDir = nil
+    if nearestWp then
+        local flatHw = Vector3.new(nearestWp.X - targetPos.X, 0, nearestWp.Z - targetPos.Z)
+        if flatHw.Magnitude > 0.5 then
+            hallwayDir = flatHw.Unit
+        end
     end
 
-    -- 2. Fallback candidate directions only if primary direction is wall-blocked
-    local candidateDirs = {
-        -mobLook,
-        Vector3.new(-mobLook.Z, 0, mobLook.X),
-        Vector3.new(mobLook.Z, 0, -mobLook.X),
-        -primaryDir,
-    }
+    -- Current direction from monster to player
+    local toPlayer = hrp and (hrp.Position - targetPos) or -mobLook
+    local flatToPlayer = Vector3.new(toPlayer.X, 0, toPlayer.Z)
+    local currentDir = flatToPlayer.Magnitude > 0.5 and flatToPlayer.Unit or -mobLook
 
+    -- Sample 12 radial directions around the monster (every 30 degrees)
+    -- We want to find the direction that is completely unobstructed, has clear LOS, and has maximum clearance behind
     local bestPos = nil
-    local bestClearance = -1
+    local bestScore = -math.huge
 
-    for _, dir in ipairs(candidateDirs) do
-        local hit = workspace:Raycast(rayOrigin, dir * checkDist, rayParams)
-        local clearance = hit and hit.Distance or checkDist
+    for angleDeg = 0, 330, 30 do
+        local rad = math.rad(angleDeg)
+        local cosA, sinA = math.cos(rad), math.sin(rad)
+        local dir = Vector3.new(cosA, 0, sinA)
 
-        if clearance >= (effectiveDist + 1.5) then
-            local candidatePos = targetPos + (dir * effectiveDist)
-            return Vector3.new(candidatePos.X, floorY, candidatePos.Z)
-        elseif clearance > bestClearance then
-            bestClearance = clearance
-            local clampedDist = math.max(2.8, math.min(effectiveDist, clearance - 1.5))
-            bestPos = targetPos + (dir * clampedDist)
+        -- 1. Raycast from monster towards candidate direction up to effectiveDist + 3.5 studs
+        local checkDist = effectiveDist + 3.5
+        local hitWall = workspace:Raycast(rayOrigin, dir * checkDist, rayParams)
+        local wallDist = hitWall and hitWall.Distance or checkDist
+
+        -- If a wall is right next to the monster (< 2.2 studs), discard this direction
+        if wallDist >= 2.2 then
+            -- Maximum safe distance the player can stand along this direction without touching the wall
+            -- Giving at least 1.8 studs buffer from the wall surface
+            local maxAllowedDist = math.max(2.4, wallDist - 1.8)
+            local standDist = math.min(effectiveDist, maxAllowedDist)
+
+            local candPos = Vector3.new(targetPos.X + dir.X * standDist, floorY, targetPos.Z + dir.Z * standDist)
+            local candRayPos = Vector3.new(candPos.X, rayY, candPos.Z)
+
+            -- 2. Line of sight check: from candPos to targetPos
+            local toTarget = rayOrigin - candRayPos
+            local losHit = workspace:Raycast(candRayPos, toTarget, rayParams)
+
+            -- Must have 100% clean line of sight (no wall between player and monster!)
+            if not losHit then
+                -- 3. Check clearance behind player (cast 2.5 studs behind player)
+                local behindHit = workspace:Raycast(candRayPos, dir * 2.5, rayParams)
+                local behindClearance = behindHit and behindHit.Distance or 2.5
+
+                if behindClearance >= 1.0 then
+                    -- Scoring:
+                    -- + Clearance behind player (open room = huge bonus)
+                    -- + Alignment with open hallway / waypoint (hallwayDir)
+                    -- + Alignment with player's current direction (currentDir) to prevent spinning
+                    local score = wallDist * 10 + behindClearance * 20
+                    if hallwayDir then
+                        score = score + (dir:Dot(hallwayDir) * 25)
+                    end
+                    if currentDir then
+                        score = score + (dir:Dot(currentDir) * 15)
+                    end
+
+                    if score > bestScore then
+                        bestScore = score
+                        bestPos = candPos
+                    end
+                end
+            end
         end
     end
 
     if bestPos then
-        return Vector3.new(bestPos.X, floorY, bestPos.Z)
+        return bestPos
     end
 
-    local fallback = targetPos - (mobLook * 3.8)
+    -- Ultimate Fail-safe: Stand between monster and the nearest dungeon hallway waypoint!
+    -- Since waypoints are always in the open center of corridors, (hallwayDir * 3.4) is GUARANTEED to be inside the room!
+    if hallwayDir then
+        local safeHallwayPos = Vector3.new(targetPos.X + hallwayDir.X * 3.4, floorY, targetPos.Z + hallwayDir.Z * 3.4)
+        return safeHallwayPos
+    end
+
+    local fallback = targetPos - (mobLook * 3.4)
     return Vector3.new(fallback.X, floorY, fallback.Z)
 end
 
@@ -1065,7 +1119,8 @@ local function getDungeonTarget()
                 end
 
                 -- Line of sight wall penalty: only deprioritize far-away mobs (> 35 studs) behind walls
-                if not isPillar and dist > 35 and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
+                -- Line of sight wall penalty: any mob behind a wall gets penalized heavily so we clear current room/corridor first
+                if not isPillar and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
                     score = score - 60000
                 end
 
@@ -6051,17 +6106,17 @@ FarmTab:Button({
 })
 
 FarmTab:Dropdown({
-    Title = "Farm Movement Mode (โหมดการเคลื่อนที่)",
-    Desc = "สลับระหว่าง โหมดบินลอยตัว (Fly) หรือ โหมดเดินปกติบนพื้น (Walk)",
-    Values = { "Fly (โหมดบินลอยตัว)", "Walk (โหมดเดินปกติบนพื้น)" },
-    Value = (Config.FarmMode == "Walk" and "Walk (โหมดเดินปกติบนพื้น)") or "Fly (โหมดบินลอยตัว)",
+    Title = "Movement Mode (รูปแบบการเข้าหามอนสเตอร์)",
+    Desc = "เลือกรูปแบบการเคลื่อนที่: วาร์ปทันที (⚡ Warp - ตีเร็วที่สุด) หรือ เดินบนพื้นปกติ (🚶 Walk)",
+    Values = { "⚡ Warp (วาร์ปไปหามอนสเตอร์ทันที - ตีเร็วสุด)", "🚶 Walk (เดินไปหามอนสเตอร์บนพื้น)" },
+    Value = (Config.FarmMode == "Walk" and "🚶 Walk (เดินไปหามอนสเตอร์บนพื้น)") or "⚡ Warp (วาร์ปไปหามอนสเตอร์ทันที - ตีเร็วสุด)",
     Callback = function(val)
         if val:find("Walk") then
             Config.FarmMode = "Walk"
-            WindUI:Notify({ Title = "Farm Mode", Content = "เปิดใช้งาน: โหมดเดินปกติบนพื้น (Walk Mode)", Duration = 2.5, Icon = "footprints" })
+            WindUI:Notify({ Title = "Movement Mode", Content = "เปิดใช้งาน: โหมดเดินปกติบนพื้น (Walk Mode)", Duration = 2.5, Icon = "footprints" })
         else
-            Config.FarmMode = "Fly"
-            WindUI:Notify({ Title = "Farm Mode", Content = "เปิดใช้งาน: โหมดบินลอยตัว (Fly Mode)", Duration = 2.5, Icon = "feather" })
+            Config.FarmMode = "Warp"
+            WindUI:Notify({ Title = "Movement Mode", Content = "เปิดใช้งาน: โหมดวาร์ปทันที (Warp Mode - ตีเร็วที่สุด)", Duration = 2.5, Icon = "zap" })
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
@@ -6731,6 +6786,23 @@ DungeonTab:Toggle({
     end,
 })
 
+DungeonTab:Dropdown({
+    Title = "Dungeon Movement Mode (การเคลื่อนที่ในดันเจี้ยน)",
+    Desc = "เลือกรูปแบบการเข้าหามอนสเตอร์ในดันเจี้ยน: วาร์ปทันที (⚡ Warp - ตีเร็วที่สุด) หรือ เดินบนพื้นปกติ (🚶 Walk)",
+    Values = { "⚡ Warp (วาร์ปไปหามอนสเตอร์ทันที - ตีเร็วสุด)", "🚶 Walk (เดินไปหามอนสเตอร์บนพื้น)" },
+    Value = (Config.FarmMode == "Walk" and "🚶 Walk (เดินไปหามอนสเตอร์บนพื้น)") or "⚡ Warp (วาร์ปไปหามอนสเตอร์ทันที - ตีเร็วสุด)",
+    Callback = function(val)
+        if val:find("Walk") then
+            Config.FarmMode = "Walk"
+            WindUI:Notify({ Title = "Dungeon Movement", Content = "เปิดใช้งาน: โหมดเดินปกติบนพื้น (Walk Mode)", Duration = 2.5, Icon = "footprints" })
+        else
+            Config.FarmMode = "Warp"
+            WindUI:Notify({ Title = "Dungeon Movement", Content = "เปิดใช้งาน: โหมดวาร์ปทันที (Warp Mode - ตีเร็วที่สุด)", Duration = 2.5, Icon = "zap" })
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
 DungeonTab:Slider({
     Title = "Dungeon Safe Height (ความสูงลอยตัวหลบกราวด์แอตแทก)",
     Value = { Min = 3.5, Max = 10, Default = Config.DungeonSafeHeight },
@@ -6742,7 +6814,9 @@ DungeonTab:Slider({
 
 DungeonTab:Slider({
     Title = "Dungeon Attack Delay (ความเร็วโจมตี)",
-    Value = { Min = 0.05, Max = 0.35, Default = Config.DungeonAttackDelay },
+    Desc = "ความเร็วในการโจมตีมอนสเตอร์ (ค่า 0.05 หรือน้อยกว่าจะโจมตีเร็วสุดตาม ASPD จริง)",
+    Value = { Min = 0.02, Max = 0.35, Default = Config.DungeonAttackDelay or 0.05 },
+    Step = 0.01,
     Callback = function(val)
         Config.DungeonAttackDelay = val
         if Config.AutoSave then SaveConfig(true) end
@@ -8525,19 +8599,8 @@ task.spawn(function()
                                     hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
                                 end
                             else
-                                -- ==================== FLY / TELEPORT MODE (DUNGEON & FIELD) ====================
-                                if distToTarget > 60 then
-                                    local steps = math.max(1, math.ceil(distToTarget / 40))
-                                    for i = 1, steps do
-                                        if not char or not hrp.Parent then break end
-                                        local alpha = i / steps
-                                        local intermediate = hrp.Position:Lerp(playerPos, alpha)
-                                        hrp.CFrame = CFrame.lookAt(intermediate, targetPos + Vector3.new(0, 0.6, 0))
-                                        hrp.Velocity = Vector3.zero
-                                        task.wait(0.015)
-                                    end
-                                end
-
+                                -- ==================== WARP / TELEPORT MODE (DUNGEON & FIELD) ====================
+                                -- Instant zero-latency warp straight to safe combat position (never clipped into wall)
                                 hrp.CFrame = CFrame.lookAt(playerPos, targetPos + Vector3.new(0, 0.6, 0))
                                 hrp.Velocity = Vector3.zero
                                 hrp.AssemblyLinearVelocity = Vector3.zero
