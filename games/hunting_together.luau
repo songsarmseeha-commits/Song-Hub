@@ -552,6 +552,8 @@ Config = {
     AutoSecretChests = false,
     AutoLeaveOnClear = false,
     AutoRepeatDungeon = false,
+    AutoConfirmReplay = true,
+    AutoBuyDungeonKey = true,
     ReturnToFarmAfterDungeon = false,
     DungeonSafeHeight = 5.2,
     DungeonAttackDelay = 0.08,
@@ -1689,9 +1691,176 @@ local function advanceDungeonPath()
     end
 end
 
+local function clickGuiButton(btn)
+    if not btn then return false end
+    local fired = false
+    pcall(function()
+        if getconnections then
+            local actConns = getconnections(btn.Activated)
+            if actConns and #actConns > 0 then
+                for _, conn in ipairs(actConns) do
+                    pcall(function() conn:Fire() end)
+                    fired = true
+                end
+            end
+            local clickConns = getconnections(btn.MouseButton1Click)
+            if clickConns and #clickConns > 0 then
+                for _, conn in ipairs(clickConns) do
+                    pcall(function() conn:Fire() end)
+                    fired = true
+                end
+            end
+            local downConns = getconnections(btn.MouseButton1Down)
+            if downConns and #downConns > 0 then
+                for _, conn in ipairs(downConns) do
+                    pcall(function() conn:Fire() end)
+                    fired = true
+                end
+            end
+            local upConns = getconnections(btn.MouseButton1Up)
+            if upConns and #upConns > 0 then
+                for _, conn in ipairs(upConns) do
+                    pcall(function() conn:Fire() end)
+                    fired = true
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        if vim and btn.AbsolutePosition and btn.AbsoluteSize then
+            local pos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+            task.wait(0.04)
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+            fired = true
+        end
+    end)
+    return fired
+end
+
+local function handleAutoReplayUi(pg)
+    if not pg or not Config.AutoRepeatDungeon then return end
+
+    -- 1. Check LumiDungeonClear: ClearDim.ClearPanel.ReplayDungeon
+    local clearGui = pg:FindFirstChild("LumiDungeonClear")
+    if clearGui and clearGui.Enabled then
+        local replayBtn = clearGui:FindFirstChild("ReplayDungeon", true)
+        if replayBtn and replayBtn.Visible then
+            clickGuiButton(replayBtn)
+            pcall(function()
+                if DungeonAction then
+                    DungeonAction:FireServer("replayStart")
+                end
+            end)
+        end
+    end
+
+    -- 2. Check LumiDungeonReplay: ReplayPop
+    local replayGui = pg:FindFirstChild("LumiDungeonReplay")
+    if replayGui and replayGui.Enabled then
+        if Config.AutoBuyDungeonKey then
+            local buyKeyBtn = replayGui:FindFirstChild("ReplayBuyKey", true)
+            if buyKeyBtn and buyKeyBtn.Visible then
+                clickGuiButton(buyKeyBtn)
+                pcall(function()
+                    if DungeonAction then
+                        DungeonAction:FireServer("replayBuyKey")
+                    end
+                end)
+            end
+        end
+        if Config.AutoConfirmReplay ~= false then
+            local acceptBtn = replayGui:FindFirstChild("ReplayAccept", true)
+            if acceptBtn and acceptBtn.Visible then
+                clickGuiButton(acceptBtn)
+                pcall(function()
+                    if DungeonAction then
+                        DungeonAction:FireServer("replayVote", true)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- 3. Check LumiDungeonWindows: ReadyCheck & Modals
+    local winGui = pg:FindFirstChild("LumiDungeonWindows")
+    if winGui then
+        local readyCheck = winGui:FindFirstChild("ReadyCheck")
+        if readyCheck and readyCheck.Visible then
+            for _, b in ipairs(readyCheck:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible then
+                    clickGuiButton(b)
+                end
+            end
+            pcall(function()
+                local dId = workspace:GetAttribute("DungeonId") or Config.SelectedDungeon or "halloween"
+                if DungeonAction then
+                    DungeonAction:FireServer("ready", dId, true)
+                end
+            end)
+        end
+
+        local resultWin = winGui:FindFirstChild("DungeonResult")
+        if resultWin and resultWin.Visible then
+            local closeBtn = resultWin:FindFirstChild("Close", true)
+            if closeBtn then clickGuiButton(closeBtn) end
+        end
+
+        local leaveConfirm = winGui:FindFirstChild("LeaveConfirm")
+        if leaveConfirm and leaveConfirm.Visible then
+            local stayBtn = leaveConfirm:FindFirstChild("BtnBlue", true)
+            if stayBtn then clickGuiButton(stayBtn) end
+        end
+    end
+end
+
+local function executeAutoReplayDungeon()
+    local startTime = os.clock()
+    local maxWait = 25
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+
+    if WindUI and WindUI.Notify then
+        WindUI:Notify({
+            Title = "Auto Replay 🔁",
+            Content = "กำลังตรวจสอบหน้าต่างจบดันเจี้ยนและกดยืนยัน Replay...",
+            Duration = 3,
+            Icon = "rotate-cw"
+        })
+    end
+
+    local lastRemoteAttempt = 0
+    while (os.clock() - startTime) < maxWait and isScriptAlive() and isInsideDungeon() do
+        local now = os.clock()
+        handleAutoReplayUi(pg)
+
+        -- Direct Remote Sync backup every 1.5s
+        if (now - lastRemoteAttempt) >= 1.5 then
+            lastRemoteAttempt = now
+            pcall(function()
+                if DungeonAction then
+                    DungeonAction:FireServer("replayStart")
+                    DungeonAction:FireServer("replayVote", true)
+                    local dId = workspace:GetAttribute("DungeonId") or Config.SelectedDungeon or "halloween"
+                    DungeonAction:FireServer("ready", dId, true)
+                end
+            end)
+        end
+
+        local dState = getDungeonState()
+        local dStep = tonumber(workspace:GetAttribute("DungeonStep") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonStep"))) or 0
+        if dState == "running" and dStep == 1 then
+            break
+        end
+
+        task.wait(0.4)
+    end
+end
+
 local function executeClaimExitChest()
     if not canScriptMoveOrWarp() then return end
-    if not Config.AutoClaimExitChest and not Config.AutoLeaveOnClear then return end
+    if not Config.AutoClaimExitChest and not Config.AutoLeaveOnClear and not Config.AutoRepeatDungeon then return end
     if isOpeningDungeonChest then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1876,8 +2045,18 @@ local function executeClaimExitChest()
     task.wait(1.0)
     sweepCurrentDrops(8, "Loot Verification 🎁", "กำลังตรวจสอบไอเทมดรอปทั้งหมดให้หมดก่อนออกจากดัน...")
 
-    -- ==================== STAGE 4: Safe Dungeon Exit ====================
-    if Config.AutoLeaveOnClear then
+    -- ==================== STAGE 4: Safe Dungeon Exit or Replay ====================
+    if Config.AutoRepeatDungeon then
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "Auto Replay 🔁",
+                Content = "เคลียร์ดันเจี้ยนและรับของครบแล้ว กำลังกด Replay เพื่อเริ่มรอบใหม่...",
+                Duration = 3,
+                Icon = "rotate-cw"
+            })
+        end
+        executeAutoReplayDungeon()
+    elseif Config.AutoLeaveOnClear then
         if WindUI and WindUI.Notify then
             WindUI:Notify({
                 Title = "Dungeon Complete! 🏆",
@@ -7130,6 +7309,36 @@ DungeonTab:Toggle({
     end,
 })
 
+DungeonTab:Toggle({
+    Title = "Auto Replay Dungeon (กด Replay ลงซ้ำอัตโนมัติ)",
+    Desc = "เมื่อเคลียร์ดันเจี้ยนและรับของเสร็จ จะกด Replay เพื่อเริ่มรอบใหม่อัตโนมัติ",
+    Value = Config.AutoRepeatDungeon,
+    Callback = function(state)
+        Config.AutoRepeatDungeon = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Toggle({
+    Title = "Auto Confirm Replay & Ready (ยืนยันเข้าดันเจี้ยนอัตโนมัติ)",
+    Desc = "กดยืนยันปุ่ม Accept และ Ready ทุกขั้นตอนเพื่อเข้าสู่ดันเจี้ยนรอบต่อไปทันที",
+    Value = Config.AutoConfirmReplay,
+    Callback = function(state)
+        Config.AutoConfirmReplay = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Toggle({
+    Title = "Auto Buy Dungeon Key (ซื้อกุญแจอัตโนมัติเมื่อหมด)",
+    Desc = "กดซื้อกุญแจดันเจี้ยนอัตโนมัติ (500k Silver) ในหน้า Replay เมื่อรอบฟรีหมด",
+    Value = Config.AutoBuyDungeonKey,
+    Callback = function(state)
+        Config.AutoBuyDungeonKey = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
 DungeonTab:Button({
     Title = "Teleport to Exit Chest Now (วาร์ปไปเปิดหีบทันที)",
     Desc = "วาร์ปไปที่หีบสมบัติของผู้เล่นและกดเปิดทันที",
@@ -8567,12 +8776,21 @@ if DungeonPrompt then
                 end
             end)
         elseif event == "readystate" or event == "ready" then
-            if Config.AutoReadyDungeon or Config.DungeonPartyMode == "Party" or Config.AutoAcceptParty then
+            if Config.AutoReadyDungeon or Config.DungeonPartyMode == "Party" or Config.AutoAcceptParty or Config.AutoRepeatDungeon then
                 task.wait(0.15)
                 pcall(function()
                     local dId = (type(data) == "table" and data.Id) or Config.SelectedDungeon or "halloween"
                     if DungeonAction then
                         DungeonAction:FireServer("ready", dId, true)
+                    end
+                end)
+            end
+        elseif event == "replay" or event == "replayStart" or event == "replayVote" then
+            if Config.AutoRepeatDungeon and Config.AutoConfirmReplay ~= false then
+                task.wait(0.15)
+                pcall(function()
+                    if DungeonAction then
+                        DungeonAction:FireServer("replayVote", true)
                     end
                 end)
             end
@@ -8655,8 +8873,11 @@ task.spawn(function()
             if isInsideDungeon() then
                 local state = getDungeonState()
                 if state == "cleared" then
-                    if Config.AutoClaimExitChest or Config.AutoLeaveOnClear then
+                    if Config.AutoClaimExitChest or Config.AutoLeaveOnClear or Config.AutoRepeatDungeon then
                         executeClaimExitChest()
+                    end
+                    if Config.AutoRepeatDungeon then
+                        handleAutoReplayUi(LocalPlayer:FindFirstChild("PlayerGui"))
                     end
                     task.wait(1.5)
                 elseif state == "running" or state == "countdown" or state == "starting" then
