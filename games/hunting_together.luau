@@ -1113,6 +1113,19 @@ local function getDungeonTarget()
     local bestScore = -math.huge
 
     local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
+    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or ""):lower()
+    if dObj:find("clear all monster") or dObj:find("kill monster") then
+        dStep = 1
+    elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+        dStep = 2
+    elseif dObj:find("mini boss") or dObj:find("witch") then
+        dStep = 3
+    elseif dObj:find("defeat the boss") or dObj:find("skull king") then
+        dStep = 4
+    end
+
+    local inBossArena = (hrp.Position.X >= -4100 and hrp.Position.Z <= -240)
+    local inWitchLair = (hrp.Position.X <= -4150 and hrp.Position.Z >= -60 and hrp.Position.Z <= 40)
     local inPlazaOrBeyond = (hrp.Position.X < -3880)
 
     for _, mob in ipairs(candidateMobs) do
@@ -1123,29 +1136,37 @@ local function getDungeonTarget()
                 local mName = mob.Name:lower()
                 local mId = tostring(mob:GetAttribute("MonsterId") or "")
                 local isPillar = (mName:find("pillar") ~= nil or mName:find("ritual") ~= nil or mName:find("seal") ~= nil or mId == "dgn_ritual_pillar")
-                local isBoss = (mob:GetAttribute("IsBoss") == true or mob:GetAttribute("IsMiniBoss") == true or mName:find("boss") or mName:find("crypt") or mName:find("witch") or mId:find("boss") or mId:find("witch"))
+                local isWitch = (mName:find("witch") ~= nil or mId:find("witch") ~= nil or mob:GetAttribute("IsMiniBoss") == true)
+                local isBoss = (mob:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mName:find("crypt") or mId:find("boss") or mId:find("skull"))
                 local score = 1000 - dist
 
                 -- 1. Pillar priority: ABSOLUTE TOP PRIORITY if alive pillars exist
                 if isPillar then
                     score = 1000000 - dist
-                -- 2. Boss & Mini-Boss priority (only when unshielded and no pillars alive)
-                elseif isBoss and (Config.PrioritizeDungeonBoss or Config.PrioritizeBoss) and (dist <= 65 or inPlazaOrBeyond) then
+                -- 2. Mini Boss (Potion Witch) priority during Step 3 or when in/near Witch Lair
+                elseif isWitch and (dStep == 3 or inWitchLair or (Config.PrioritizeDungeonBoss or Config.PrioritizeBoss)) then
                     if alivePillarCount > 0 then
-                        score = -1000000 -- NEVER target boss while pillars exist!
+                        score = -1000000
                     else
-                        score = 50000 - dist
+                        score = 500000 - dist
                     end
-                -- 3. Close aggro monsters along corridor (clears corridor cleanly without wall snag)
+                -- 3. Final Boss (Skull King) priority during Step 4 or when in Boss Arena
+                elseif isBoss and (dStep >= 4 or inBossArena or (Config.PrioritizeDungeonBoss or Config.PrioritizeBoss)) then
+                    if alivePillarCount > 0 then
+                        score = -1000000
+                    else
+                        score = 500000 - dist
+                    end
+                -- 4. Close aggro monsters along corridor (clears corridor cleanly without wall snag)
                 elseif dist <= 35 then
                     score = 30000 - dist
                 elseif dist <= 75 then
                     score = 15000 - dist
                 end
 
-                -- Line of sight wall penalty: only deprioritize far-away mobs (> 35 studs) behind walls
-                -- Line of sight wall penalty: any mob behind a wall gets penalized heavily so we clear current room/corridor first
-                if not isPillar and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
+                -- Line of sight wall penalty: exempt pillars, witch in step 3/lair, and boss in step 4/arena
+                local exemptLos = isPillar or (isWitch and (dStep == 3 or inWitchLair)) or (isBoss and (dStep >= 4 or inBossArena))
+                if not exemptLos and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
                     score = score - 60000
                 end
 
@@ -1483,15 +1504,77 @@ local function advanceDungeonPath()
         end
     end
 
-    -- Sync waypoint index with physical position if player moved significantly backward (e.g. chasing a monster)
-    currentDungeonWpIndex = currentDungeonWpIndex or 2
-    if closestIdx > currentDungeonWpIndex then
-        currentDungeonWpIndex = closestIdx
-    elseif (currentDungeonWpIndex - closestIdx) >= 2 then
-        currentDungeonWpIndex = closestIdx + 1
+    local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
+    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or ""):lower()
+    if dObj:find("clear all monster") or dObj:find("kill monster") then
+        dStep = 1
+    elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+        dStep = 2
+    elseif dObj:find("mini boss") or dObj:find("witch") then
+        dStep = 3
+    elseif dObj:find("defeat the boss") or dObj:find("skull king") then
+        dStep = 4
     end
 
-    local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
+    local maxAllowedWp = 37
+    if dStep == 1 then
+        maxAllowedWp = 12
+    elseif dStep == 2 then
+        maxAllowedWp = 14
+    elseif dStep == 3 then
+        maxAllowedWp = 21
+    end
+
+    -- ==================== STEP-BASED BOUNDARY ENFORCEMENT & AUTO-RECOVERY ====================
+    if dStep == 1 then
+        if closestIdx > 12 then
+            currentDungeonWpIndex = 3
+            local sweepWp = DungeonPathWaypoints[3]
+            hrp.CFrame = CFrame.new(sweepWp.X, 62.5, sweepWp.Z)
+            hrp.Velocity = Vector3.zero
+            return
+        elseif currentDungeonWpIndex > 12 then
+            currentDungeonWpIndex = 12
+        end
+    elseif dStep == 2 then
+        if closestIdx > 14 then
+            currentDungeonWpIndex = 14
+            local plazaWp = DungeonPathWaypoints[14]
+            hrp.CFrame = CFrame.new(plazaWp.X, 62.5, plazaWp.Z)
+            hrp.Velocity = Vector3.zero
+            return
+        elseif currentDungeonWpIndex > 14 then
+            currentDungeonWpIndex = 14
+        end
+    elseif dStep == 3 then
+        -- Bot walked or warped past locked Witch Door into South Corridor or Boss Arena!
+        -- IMMEDIATELY WARP BACK TO WITCH LAIR (WP 21)!
+        if closestIdx > 21 then
+            currentDungeonWpIndex = 21
+            local witchWp = DungeonPathWaypoints[21]
+            hrp.CFrame = CFrame.new(witchWp.X, 62.8, witchWp.Z)
+            hrp.Velocity = Vector3.zero
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Mini Boss Required! 🧙‍♀️",
+                    Content = "พบ Potion Witch ยังไม่ถูกกำจัด! กำลังวาร์ปกลับห้องแม่มดทันที...",
+                    Duration = 2.5,
+                    Icon = "skull"
+                })
+            end
+            return
+        elseif currentDungeonWpIndex > 21 then
+            currentDungeonWpIndex = 21
+        end
+    end
+
+    -- Sync waypoint index with physical position (clamped by maxAllowedWp)
+    currentDungeonWpIndex = math.clamp(currentDungeonWpIndex or 2, 1, maxAllowedWp)
+    if closestIdx > currentDungeonWpIndex then
+        currentDungeonWpIndex = math.min(closestIdx, maxAllowedWp)
+    elseif (currentDungeonWpIndex - closestIdx) >= 2 then
+        currentDungeonWpIndex = math.min(closestIdx + 1, maxAllowedWp)
+    end
 
     -- Gate progression on active objectives:
     local mFolder = workspace:FindFirstChild("Monsters")
@@ -1513,26 +1596,35 @@ local function advanceDungeonPath()
         end
     end
 
-    -- If still in Step 1 (Entrance Corridor) and player reached the locked Plaza gate with no mobs streamed in, sweep back to entrance!
-    if dStep == 1 and currentDungeonWpIndex >= 12 then
-        if aliveMobsCount == 0 then
-            currentDungeonWpIndex = 3
-            local sweepWp = DungeonPathWaypoints[3]
-            hrp.CFrame = CFrame.new(sweepWp.X, 62.5, sweepWp.Z)
-            hrp.Velocity = Vector3.zero
-            return
-        else
-            currentDungeonWpIndex = 12
-        end
+    -- If still in Step 1 and player reached locked Plaza gate with no mobs streamed in, sweep back
+    if dStep == 1 and currentDungeonWpIndex >= 12 and aliveMobsCount == 0 then
+        currentDungeonWpIndex = 3
+        local sweepWp = DungeonPathWaypoints[3]
+        hrp.CFrame = CFrame.new(sweepWp.X, 62.5, sweepWp.Z)
+        hrp.Velocity = Vector3.zero
+        return
     end
 
-    -- Gate progression on active objectives:
-    -- Plaza Ritual Pillars gate: only applies while in/before Section 2 (WP <= 18)
-    if hasAlivePillars and currentDungeonWpIndex <= 18 and currentDungeonWpIndex > 14 then
-        currentDungeonWpIndex = 14
-    -- Witch Lair gate: only applies while in/before Section 3 (WP <= 24)
-    elseif hasAliveWitch and currentDungeonWpIndex > 21 then
-        currentDungeonWpIndex = 21
+    -- Boss Room Activity: During Skull King phase, if no active combat target, kick dud skulls and step on braziers
+    if dStep >= 4 and closestIdx >= 35 and not currentCombatTarget then
+        if Config.AutoKickSkulls then
+            pcall(checkKickDudSkulls)
+        end
+        pcall(function()
+            local h = workspace:FindFirstChild("Halloween")
+            local b = h and h:FindFirstChild("Braziers")
+            if b then
+                for _, pad in ipairs(b:GetChildren()) do
+                    if pad.Name == "Pad" and pad:IsA("BasePart") then
+                        if firetouchinterest then
+                            firetouchinterest(hrp, pad, 0)
+                            task.wait(0.01)
+                            firetouchinterest(hrp, pad, 1)
+                        end
+                    end
+                end
+            end
+        end)
     end
 
     local targetWp = DungeonPathWaypoints[currentDungeonWpIndex]
@@ -1543,11 +1635,13 @@ local function advanceDungeonPath()
     local dist = (flatTarget - flatPlayer).Magnitude
 
     if dist <= 14 then
-        local nextIdx = math.min(#DungeonPathWaypoints, currentDungeonWpIndex + 1)
+        local nextIdx = math.min(maxAllowedWp, currentDungeonWpIndex + 1)
         local canAdvance = true
-        if hasAlivePillars and currentDungeonWpIndex <= 18 and nextIdx > 14 then
+        if dStep == 1 and nextIdx > 12 then
             canAdvance = false
-        elseif hasAliveWitch and nextIdx > 21 then
+        elseif (dStep == 2 or hasAlivePillars) and nextIdx > 14 then
+            canAdvance = false
+        elseif (dStep == 3 or hasAliveWitch) and nextIdx > 21 then
             canAdvance = false
         end
         if canAdvance then
@@ -1564,7 +1658,14 @@ local function advanceDungeonPath()
         hum.WalkSpeed = Config.WalkFarmSpeed or 28
         hum:MoveTo(targetWp)
         if dist <= 8 then
-            currentDungeonWpIndex = math.min(#DungeonPathWaypoints, currentDungeonWpIndex + 1)
+            local nextIdx = math.min(maxAllowedWp, currentDungeonWpIndex + 1)
+            local canAdvance = true
+            if dStep == 1 and nextIdx > 12 then canAdvance = false
+            elseif (dStep == 2 or hasAlivePillars) and nextIdx > 14 then canAdvance = false
+            elseif (dStep == 3 or hasAliveWitch) and nextIdx > 21 then canAdvance = false end
+            if canAdvance then
+                currentDungeonWpIndex = nextIdx
+            end
         end
     else
         local dir = (flatTarget - flatPlayer).Unit
@@ -1576,7 +1677,14 @@ local function advanceDungeonPath()
         hrp.Velocity = Vector3.zero
         hrp.AssemblyLinearVelocity = Vector3.zero
         if dist <= 10 then
-            currentDungeonWpIndex = math.min(#DungeonPathWaypoints, currentDungeonWpIndex + 1)
+            local nextIdx = math.min(maxAllowedWp, currentDungeonWpIndex + 1)
+            local canAdvance = true
+            if dStep == 1 and nextIdx > 12 then canAdvance = false
+            elseif (dStep == 2 or hasAlivePillars) and nextIdx > 14 then canAdvance = false
+            elseif (dStep == 3 or hasAliveWitch) and nextIdx > 21 then canAdvance = false end
+            if canAdvance then
+                currentDungeonWpIndex = nextIdx
+            end
         end
     end
 end
