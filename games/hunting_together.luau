@@ -63,19 +63,19 @@ local function getRemote(name, timeout)
 end
 
 -- Core Remotes
-local SetTarget = getRemote("SetTarget", 3)
-local AttackAnim = getRemote("AttackAnim", 3)
+local SetTarget = getRemote("SetTarget")
+local AttackAnim = getRemote("AttackAnim")
 local AttackAnimU = getRemote("AttackAnimU")
-local UseSkill = getRemote("UseSkill", 3)
-local LearnSkill = getRemote("LearnSkill", 3)
+local UseSkill = getRemote("UseSkill")
+local LearnSkill = getRemote("LearnSkill")
 local SetAutoSkill = getRemote("SetAutoSkill")
-local AllocateStat = getRemote("AllocateStat", 3)
-local UseItem = getRemote("UseItem", 3)
-local PickupDrop = getRemote("PickupDrop", 3)
-local DungeonAction = getRemote("DungeonAction", 1)
-local DungeonPrompt = getRemote("DungeonPrompt", 1)
-local PartyAction = getRemote("PartyAction", 1)
-local PartyInvite = getRemote("PartyInvite", 1)
+local AllocateStat = getRemote("AllocateStat")
+local UseItem = getRemote("UseItem")
+local PickupDrop = getRemote("PickupDrop")
+local DungeonAction = getRemote("DungeonAction")
+local DungeonPrompt = getRemote("DungeonPrompt")
+local PartyAction = getRemote("PartyAction")
+local PartyInvite = getRemote("PartyInvite")
 
 -- Graceful thread termination & instance cleanup
 local currentRunId = (getgenv and getgenv()._HT_ScriptRunId or 0) + 1
@@ -531,6 +531,13 @@ local Config = {
     HideOverheadName = true,
     SpoofUIAndLeaderboard = true,
     HideOthersNames = false,
+
+    -- 🎨 UI Dungeon Theme & Animated Background
+    UITheme = "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
+    UIBackgroundAnimation = true,
+    UIAnimationStyle = "Auto (ตามธีมดันเจี้ยน)",
+    UIAnimationSpeed = 10,
+    UIGlassTransparency = 28,
 
     -- Misc & Performance
     InfiniteStamina = true,
@@ -5049,6 +5056,742 @@ StreamerTab = EventTab
 ConfigTab = SettingsTab
 MiscTab = SettingsTab
 
+-- ==================== 🎨 DUNGEON THEMES & ANIMATED BACKGROUND ENGINE ====================
+;(function()
+    local THEME_PRESETS = {
+        ["🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)"] = {
+            Id = "Dungeon_SkullKing",
+            Effect = "Embers",
+            Accent = "#1F1135",
+            Background = "#0C0716",
+            Dialog = "#150C26",
+            Outline = "#FF7A18",
+            Text = "#FFF7ED",
+            Placeholder = "#B794F4",
+            Button = "#391E5A",
+            Icon = "#FB923C",
+            Toggle = "#F97316",
+            Slider = "#F97316",
+            SliderIcon = "#FDBA74",
+            Checkbox = "#F97316",
+            Primary = "#F97316",
+            ElementBackground = "#211238",
+            PanelBackground = "#170C29",
+            LabelBackground = "#090410",
+            Grad1 = Color3.fromHex("#0D0618"),
+            Grad2 = Color3.fromHex("#23103A"),
+            Grad3 = Color3.fromHex("#2A1119"),
+            Orb1 = Color3.fromHex("#FF6B1A"),
+            Orb2 = Color3.fromHex("#9333EA"),
+            Orb3 = Color3.fromHex("#E11D48"),
+            Particle1 = Color3.fromHex("#FF8A00"),
+            Particle2 = Color3.fromHex("#C084FC"),
+            RuneColor = Color3.fromHex("#FB923C"),
+        },
+        ["🩸 Blood Moon Abyss (ห้วงเหวจันทร์สีเลือด)"] = {
+            Id = "Dungeon_BloodMoon",
+            Effect = "BloodMist",
+            Accent = "#2A0912",
+            Background = "#110408",
+            Dialog = "#1C060C",
+            Outline = "#FF1E42",
+            Text = "#FFF1F2",
+            Placeholder = "#FDA4AF",
+            Button = "#4C0D1D",
+            Icon = "#FB7185",
+            Toggle = "#E11D48",
+            Slider = "#F43F5E",
+            SliderIcon = "#FDA4AF",
+            Checkbox = "#E11D48",
+            Primary = "#E11D48",
+            ElementBackground = "#2D0A14",
+            PanelBackground = "#1F060D",
+            LabelBackground = "#0C0205",
+            Grad1 = Color3.fromHex("#110307"),
+            Grad2 = Color3.fromHex("#300813"),
+            Grad3 = Color3.fromHex("#1F050B"),
+            Orb1 = Color3.fromHex("#FF1E42"),
+            Orb2 = Color3.fromHex("#9F1239"),
+            Orb3 = Color3.fromHex("#FB7185"),
+            Particle1 = Color3.fromHex("#FF2A55"),
+            Particle2 = Color3.fromHex("#FCA5A5"),
+            RuneColor = Color3.fromHex("#F43F5E"),
+        },
+        ["❄️ Soulfrost Catacombs (สุสานน้ำแข็งวิญญาณ)"] = {
+            Id = "Dungeon_Soulfrost",
+            Effect = "Snowfall",
+            Accent = "#0C223B",
+            Background = "#06101E",
+            Dialog = "#0A192F",
+            Outline = "#38BDF8",
+            Text = "#F0F9FF",
+            Placeholder = "#7DD3FC",
+            Button = "#15365C",
+            Icon = "#38BDF8",
+            Toggle = "#0EA5E9",
+            Slider = "#38BDF8",
+            SliderIcon = "#BAE6FD",
+            Checkbox = "#0EA5E9",
+            Primary = "#0EA5E9",
+            ElementBackground = "#0F2744",
+            PanelBackground = "#0A1B30",
+            LabelBackground = "#040B14",
+            Grad1 = Color3.fromHex("#050E1A"),
+            Grad2 = Color3.fromHex("#0D2847"),
+            Grad3 = Color3.fromHex("#091E36"),
+            Orb1 = Color3.fromHex("#00E5FF"),
+            Orb2 = Color3.fromHex("#0284C7"),
+            Orb3 = Color3.fromHex("#7DD3FC"),
+            Particle1 = Color3.fromHex("#E0F2FE"),
+            Particle2 = Color3.fromHex("#38BDF8"),
+            RuneColor = Color3.fromHex("#38BDF8"),
+        },
+        ["🔮 Shadow Monarch's Sanctum (วิหารจักรพรรดิเงา)"] = {
+            Id = "Dungeon_ShadowMonarch",
+            Effect = "ShadowAura",
+            Accent = "#180E36",
+            Background = "#080514",
+            Dialog = "#110926",
+            Outline = "#A855F7",
+            Text = "#FAF5FF",
+            Placeholder = "#C084FC",
+            Button = "#2E1663",
+            Icon = "#C084FC",
+            Toggle = "#9333EA",
+            Slider = "#A855F7",
+            SliderIcon = "#E9D5FF",
+            Checkbox = "#9333EA",
+            Primary = "#9333EA",
+            ElementBackground = "#1C103D",
+            PanelBackground = "#120A29",
+            LabelBackground = "#06030F",
+            Grad1 = Color3.fromHex("#070412"),
+            Grad2 = Color3.fromHex("#1E0F42"),
+            Grad3 = Color3.fromHex("#11183D"),
+            Orb1 = Color3.fromHex("#A855F7"),
+            Orb2 = Color3.fromHex("#4F46E5"),
+            Orb3 = Color3.fromHex("#C084FC"),
+            Particle1 = Color3.fromHex("#A855F7"),
+            Particle2 = Color3.fromHex("#60A5FA"),
+            RuneColor = Color3.fromHex("#C084FC"),
+        },
+        ["🐉 Tempest Dragon Shrine (วิหารมังกรวายุคลั่ง)"] = {
+            Id = "Dungeon_TempestDragon",
+            Effect = "WindStream",
+            Accent = "#0B2922",
+            Background = "#051310",
+            Dialog = "#081F1A",
+            Outline = "#10B981",
+            Text = "#ECFDF5",
+            Placeholder = "#6EE7B7",
+            Button = "#13473B",
+            Icon = "#34D399",
+            Toggle = "#10B981",
+            Slider = "#34D399",
+            SliderIcon = "#A7F3D0",
+            Checkbox = "#10B981",
+            Primary = "#10B981",
+            ElementBackground = "#0E3028",
+            PanelBackground = "#09211B",
+            LabelBackground = "#030D0A",
+            Grad1 = Color3.fromHex("#04100D"),
+            Grad2 = Color3.fromHex("#0D332A"),
+            Grad3 = Color3.fromHex("#08222B"),
+            Orb1 = Color3.fromHex("#10B981"),
+            Orb2 = Color3.fromHex("#0D9488"),
+            Orb3 = Color3.fromHex("#6EE7B7"),
+            Particle1 = Color3.fromHex("#34D399"),
+            Particle2 = Color3.fromHex("#99F6E4"),
+            RuneColor = Color3.fromHex("#34D399"),
+        },
+        ["🌋 Infernal Magma Core (แกนกลางลาวานรก)"] = {
+            Id = "Dungeon_MagmaCore",
+            Effect = "MagmaSparks",
+            Accent = "#2B1309",
+            Background = "#120804",
+            Dialog = "#1F0D06",
+            Outline = "#F97316",
+            Text = "#FFFBEB",
+            Placeholder = "#FDBA74",
+            Button = "#4D200E",
+            Icon = "#FB923C",
+            Toggle = "#EA580C",
+            Slider = "#F97316",
+            SliderIcon = "#FDE047",
+            Checkbox = "#EA580C",
+            Primary = "#EA580C",
+            ElementBackground = "#30150A",
+            PanelBackground = "#210E07",
+            LabelBackground = "#0D0502",
+            Grad1 = Color3.fromHex("#120703"),
+            Grad2 = Color3.fromHex("#331408"),
+            Grad3 = Color3.fromHex("#290B08"),
+            Orb1 = Color3.fromHex("#F97316"),
+            Orb2 = Color3.fromHex("#DC2626"),
+            Orb3 = Color3.fromHex("#FACC15"),
+            Particle1 = Color3.fromHex("#FB923C"),
+            Particle2 = Color3.fromHex("#FDE047"),
+            RuneColor = Color3.fromHex("#F97316"),
+        },
+        ["🏛️ Pharaoh's Golden Vault (มหาพีระมิดฟาโรห์ทองคำ)"] = {
+            Id = "Dungeon_GoldenVault",
+            Effect = "GoldenStarlight",
+            Accent = "#291F09",
+            Background = "#120D04",
+            Dialog = "#1C1506",
+            Outline = "#F59E0B",
+            Text = "#FEFCE8",
+            Placeholder = "#FDE047",
+            Button = "#47350F",
+            Icon = "#FBBF24",
+            Toggle = "#D97706",
+            Slider = "#F59E0B",
+            SliderIcon = "#FEF08A",
+            Checkbox = "#D97706",
+            Primary = "#F59E0B",
+            ElementBackground = "#2E230A",
+            PanelBackground = "#1F1707",
+            LabelBackground = "#0A0802",
+            Grad1 = Color3.fromHex("#120D03"),
+            Grad2 = Color3.fromHex("#2E2208"),
+            Grad3 = Color3.fromHex("#1F1408"),
+            Orb1 = Color3.fromHex("#F59E0B"),
+            Orb2 = Color3.fromHex("#CA8A04"),
+            Orb3 = Color3.fromHex("#FDE047"),
+            Particle1 = Color3.fromHex("#FDE047"),
+            Particle2 = Color3.fromHex("#F59E0B"),
+            RuneColor = Color3.fromHex("#FBBF24"),
+        },
+        ["🌸 Cursed Sakura Shrine (ศาลเจ้าซากุระต้องสาป)"] = {
+            Id = "Dungeon_CursedSakura",
+            Effect = "SakuraPetals",
+            Accent = "#2B0F24",
+            Background = "#120610",
+            Dialog = "#1F0A1A",
+            Outline = "#EC4899",
+            Text = "#FDF2F8",
+            Placeholder = "#F9A8D4",
+            Button = "#4D1940",
+            Icon = "#F472B6",
+            Toggle = "#DB2777",
+            Slider = "#EC4899",
+            SliderIcon = "#FBCFE8",
+            Checkbox = "#DB2777",
+            Primary = "#EC4899",
+            ElementBackground = "#301129",
+            PanelBackground = "#210B1C",
+            LabelBackground = "#0A0308",
+            Grad1 = Color3.fromHex("#12050F"),
+            Grad2 = Color3.fromHex("#2E0E27"),
+            Grad3 = Color3.fromHex("#1F0924"),
+            Orb1 = Color3.fromHex("#EC4899"),
+            Orb2 = Color3.fromHex("#9333EA"),
+            Orb3 = Color3.fromHex("#F9A8D4"),
+            Particle1 = Color3.fromHex("#F9A8D4"),
+            Particle2 = Color3.fromHex("#F43F5E"),
+            RuneColor = Color3.fromHex("#F472B6"),
+        },
+        ["🌑 Classic Dark (สีดำคลาสสิก)"] = {
+            Id = "Dark",
+            Effect = "GoldenStarlight",
+            Grad1 = Color3.fromHex("#0E0E10"),
+            Grad2 = Color3.fromHex("#18181C"),
+            Grad3 = Color3.fromHex("#121216"),
+            Orb1 = Color3.fromHex("#3B82F6"),
+            Orb2 = Color3.fromHex("#6366F1"),
+            Orb3 = Color3.fromHex("#60A5FA"),
+            Particle1 = Color3.fromHex("#93C5FD"),
+            Particle2 = Color3.fromHex("#A5B4FC"),
+            RuneColor = Color3.fromHex("#60A5FA"),
+        },
+    }
+
+    local THEME_NAMES = {
+        "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
+        "🩸 Blood Moon Abyss (ห้วงเหวจันทร์สีเลือด)",
+        "❄️ Soulfrost Catacombs (สุสานน้ำแข็งวิญญาณ)",
+        "🔮 Shadow Monarch's Sanctum (วิหารจักรพรรดิเงา)",
+        "🐉 Tempest Dragon Shrine (วิหารมังกรวายุคลั่ง)",
+        "🌋 Infernal Magma Core (แกนกลางลาวานรก)",
+        "🏛️ Pharaoh's Golden Vault (มหาพีระมิดฟาโรห์ทองคำ)",
+        "🌸 Cursed Sakura Shrine (ศาลเจ้าซากุระต้องสาป)",
+        "🌑 Classic Dark (สีดำคลาสสิก)",
+    }
+
+    local STYLE_MAP = {
+        ["Auto (ตามธีมดันเจี้ยน)"] = "Auto",
+        ["🔥 Soul Embers & Runes (ไฟวิญญาณ & รูนเวท)"] = "Embers",
+        ["🩸 Blood Moon Mist (ละอองจันทร์สีเลือด)"] = "BloodMist",
+        ["❄️ Soulfrost Blizzard (พายุหิมะน้ำแข็ง)"] = "Snowfall",
+        ["🔮 Shadow Monarch Aura (ออร่าจักรพรรดิเงา)"] = "ShadowAura",
+        ["🐉 Tempest Wind Stream (สายลมมังกรวายุ)"] = "WindStream",
+        ["🌋 Molten Magma Sparks (สะเก็ดลาวานรก)"] = "MagmaSparks",
+        ["✨ Celestial Starlight (ละอองดาวทองคำ)"] = "GoldenStarlight",
+        ["🌸 Cursed Sakura Petals (กลีบซากุระต้องสาป)"] = "SakuraPetals",
+    }
+
+    local STYLE_NAMES = {
+        "Auto (ตามธีมดันเจี้ยน)",
+        "🔥 Soul Embers & Runes (ไฟวิญญาณ & รูนเวท)",
+        "🩸 Blood Moon Mist (ละอองจันทร์สีเลือด)",
+        "❄️ Soulfrost Blizzard (พายุหิมะน้ำแข็ง)",
+        "🔮 Shadow Monarch Aura (ออร่าจักรพรรดิเงา)",
+        "🐉 Tempest Wind Stream (สายลมมังกรวายุ)",
+        "🌋 Molten Magma Sparks (สะเก็ดลาวานรก)",
+        "✨ Celestial Starlight (ละอองดาวทองคำ)",
+        "🌸 Cursed Sakura Petals (กลีบซากุระต้องสาป)",
+    }
+
+    -- Register all custom themes in WindUI
+    for _, preset in pairs(THEME_PRESETS) do
+        if preset.Id ~= "Dark" then
+            pcall(function()
+                WindUI:AddTheme({
+                    Name = preset.Id,
+                    Accent = Color3.fromHex(preset.Accent),
+                    Background = Color3.fromHex(preset.Background),
+                    Dialog = Color3.fromHex(preset.Dialog),
+                    Outline = Color3.fromHex(preset.Outline),
+                    Text = Color3.fromHex(preset.Text),
+                    Placeholder = Color3.fromHex(preset.Placeholder),
+                    Button = Color3.fromHex(preset.Button),
+                    Icon = Color3.fromHex(preset.Icon),
+                    Toggle = Color3.fromHex(preset.Toggle),
+                    Slider = Color3.fromHex(preset.Slider),
+                    SliderIcon = Color3.fromHex(preset.SliderIcon),
+                    Checkbox = Color3.fromHex(preset.Checkbox),
+                    Primary = Color3.fromHex(preset.Primary),
+                    ElementBackground = Color3.fromHex(preset.ElementBackground),
+                    ElementBackgroundTransparency = (tonumber(Config.UIGlassTransparency) or 28) / 100,
+                    PanelBackground = Color3.fromHex(preset.PanelBackground),
+                    PanelBackgroundTransparency = 0.86,
+                    LabelBackground = Color3.fromHex(preset.LabelBackground),
+                    LabelBackgroundTransparency = 0.75,
+                })
+            end)
+        end
+    end
+
+    -- Build Procedural Animated Background Canvas inside Window.UIElements.Main
+    local mainWinFrame = Window and Window.UIElements and Window.UIElements.Main
+    local animCanvas = nil
+    local bgGrad = nil
+    local borderStroke = nil
+    local borderGrad = nil
+    local orbs = {}
+    local outerRing, innerRing, runeDiamond = nil, nil, nil
+    local outerStroke, innerStroke, diamondStroke = nil, nil, nil
+    local particles = {}
+    local activePreset = THEME_PRESETS[Config.UITheme] or THEME_PRESETS["🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)"]
+
+    if mainWinFrame then
+        pcall(function()
+            local old = mainWinFrame:FindFirstChild("DungeonAnimCanvas")
+            if old then old:Destroy() end
+
+            animCanvas = Instance.new("Frame")
+            animCanvas.Name = "DungeonAnimCanvas"
+            animCanvas.Size = UDim2.fromScale(1, 1)
+            animCanvas.Position = UDim2.fromScale(0, 0)
+            animCanvas.BackgroundColor3 = Color3.new(1, 1, 1)
+            animCanvas.BackgroundTransparency = 0.08
+            animCanvas.BorderSizePixel = 0
+            animCanvas.ClipsDescendants = true
+            animCanvas.ZIndex = 5
+            animCanvas.Visible = (Config.UIBackgroundAnimation ~= false)
+            animCanvas.Parent = mainWinFrame
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 12)
+            corner.Parent = animCanvas
+
+            bgGrad = Instance.new("UIGradient")
+            bgGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, activePreset.Grad1),
+                ColorSequenceKeypoint.new(0.52, activePreset.Grad2),
+                ColorSequenceKeypoint.new(1, activePreset.Grad3),
+            })
+            bgGrad.Rotation = 35
+            bgGrad.Parent = animCanvas
+
+            -- Glowing Animated Window Border Stroke
+            borderStroke = Instance.new("UIStroke")
+            borderStroke.Thickness = 1.6
+            borderStroke.Transparency = 0.35
+            borderStroke.Color = Color3.new(1, 1, 1)
+            borderStroke.Parent = animCanvas
+
+            borderGrad = Instance.new("UIGradient")
+            borderGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, activePreset.Orb1),
+                ColorSequenceKeypoint.new(0.5, activePreset.Orb2),
+                ColorSequenceKeypoint.new(1, activePreset.Orb3),
+            })
+            borderGrad.Rotation = 0
+            borderGrad.Parent = borderStroke
+
+            -- 3 Soft Breathing Ambient Glow Orbs
+            local orbConfigs = {
+                { Pos = UDim2.fromScale(0.18, 0.22), Size = UDim2.fromOffset(270, 270), Col = activePreset.Orb1 },
+                { Pos = UDim2.fromScale(0.82, 0.78), Size = UDim2.fromOffset(300, 300), Col = activePreset.Orb2 },
+                { Pos = UDim2.fromScale(0.62, 0.28), Size = UDim2.fromOffset(230, 230), Col = activePreset.Orb3 },
+            }
+            for idx, oc in ipairs(orbConfigs) do
+                local orb = Instance.new("Frame")
+                orb.Name = "AuraOrb_" .. idx
+                orb.AnchorPoint = Vector2.new(0.5, 0.5)
+                orb.Position = oc.Pos
+                orb.Size = oc.Size
+                orb.BackgroundColor3 = oc.Col
+                orb.BackgroundTransparency = 0.87
+                orb.BorderSizePixel = 0
+                orb.ZIndex = 6
+                orb.Parent = animCanvas
+
+                local oCorner = Instance.new("UICorner")
+                oCorner.CornerRadius = UDim.new(1, 0)
+                oCorner.Parent = orb
+
+                local oGrad = Instance.new("UIGradient")
+                oGrad.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 0.15),
+                    NumberSequenceKeypoint.new(0.65, 0.55),
+                    NumberSequenceKeypoint.new(1, 1),
+                })
+                oGrad.Parent = orb
+
+                table.insert(orbs, {
+                    Frame = orb,
+                    BaseX = oc.Pos.X.Scale,
+                    BaseY = oc.Pos.Y.Scale,
+                    Phase = idx * 2.1,
+                })
+            end
+
+            -- Arcane Dungeon Magic Seal (Counter-Rotating Rings + Rune Diamond behind content)
+            local sealCenter = UDim2.new(0.66, 0, 0.54, 0)
+
+            outerRing = Instance.new("Frame")
+            outerRing.Name = "ArcaneOuterRing"
+            outerRing.AnchorPoint = Vector2.new(0.5, 0.5)
+            outerRing.Position = sealCenter
+            outerRing.Size = UDim2.fromOffset(250, 250)
+            outerRing.BackgroundTransparency = 1
+            outerRing.ZIndex = 6
+            outerRing.Parent = animCanvas
+            local orCorner = Instance.new("UICorner")
+            orCorner.CornerRadius = UDim.new(1, 0)
+            orCorner.Parent = outerRing
+            outerStroke = Instance.new("UIStroke")
+            outerStroke.Thickness = 1.5
+            outerStroke.Transparency = 0.76
+            outerStroke.Color = activePreset.RuneColor
+            outerStroke.Parent = outerRing
+            local orGrad = Instance.new("UIGradient")
+            orGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.1),
+                NumberSequenceKeypoint.new(0.5, 0.85),
+                NumberSequenceKeypoint.new(1, 0.1),
+            })
+            orGrad.Parent = outerStroke
+
+            innerRing = Instance.new("Frame")
+            innerRing.Name = "ArcaneInnerRing"
+            innerRing.AnchorPoint = Vector2.new(0.5, 0.5)
+            innerRing.Position = sealCenter
+            innerRing.Size = UDim2.fromOffset(175, 175)
+            innerRing.BackgroundTransparency = 1
+            innerRing.ZIndex = 6
+            innerRing.Parent = animCanvas
+            local irCorner = Instance.new("UICorner")
+            irCorner.CornerRadius = UDim.new(1, 0)
+            irCorner.Parent = innerRing
+            innerStroke = Instance.new("UIStroke")
+            innerStroke.Thickness = 1.2
+            innerStroke.Transparency = 0.78
+            innerStroke.Color = activePreset.Orb1
+            innerStroke.Parent = innerRing
+            local irGrad = Instance.new("UIGradient")
+            irGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.75),
+                NumberSequenceKeypoint.new(0.5, 0.1),
+                NumberSequenceKeypoint.new(1, 0.75),
+            })
+            irGrad.Parent = innerStroke
+
+            runeDiamond = Instance.new("Frame")
+            runeDiamond.Name = "ArcaneRuneDiamond"
+            runeDiamond.AnchorPoint = Vector2.new(0.5, 0.5)
+            runeDiamond.Position = sealCenter
+            runeDiamond.Size = UDim2.fromOffset(122, 122)
+            runeDiamond.Rotation = 45
+            runeDiamond.BackgroundTransparency = 1
+            runeDiamond.ZIndex = 6
+            runeDiamond.Parent = animCanvas
+            local rdCorner = Instance.new("UICorner")
+            rdCorner.CornerRadius = UDim.new(0, 14)
+            rdCorner.Parent = runeDiamond
+            diamondStroke = Instance.new("UIStroke")
+            diamondStroke.Thickness = 1.2
+            diamondStroke.Transparency = 0.80
+            diamondStroke.Color = activePreset.Particle2
+            diamondStroke.Parent = runeDiamond
+
+            -- 28 Pooled Procedural Theme Particles
+            for i = 1, 28 do
+                local p = Instance.new("Frame")
+                p.Name = "ThemeParticle_" .. i
+                p.AnchorPoint = Vector2.new(0.5, 0.5)
+                local sz = math.random(4, 9)
+                p.Size = UDim2.fromOffset(sz, sz)
+                p.Position = UDim2.fromScale(math.random() * 0.96 + 0.02, math.random())
+                p.BackgroundColor3 = (i % 2 == 0) and activePreset.Particle1 or activePreset.Particle2
+                p.BackgroundTransparency = 0.35 + (math.random() * 0.35)
+                p.BorderSizePixel = 0
+                p.ZIndex = 7
+                p.Parent = animCanvas
+
+                local pCorner = Instance.new("UICorner")
+                pCorner.CornerRadius = UDim.new(1, 0)
+                pCorner.Parent = p
+
+                local pStroke = Instance.new("UIStroke")
+                pStroke.Thickness = 1.2
+                pStroke.Transparency = 0.55
+                pStroke.Color = (i % 2 == 0) and activePreset.Orb1 or activePreset.Orb2
+                pStroke.Parent = p
+
+                table.insert(particles, {
+                    Frame = p,
+                    Corner = pCorner,
+                    Stroke = pStroke,
+                    X = math.random() * 0.96 + 0.02,
+                    Y = math.random(),
+                    Speed = 0.045 + math.random() * 0.085,
+                    SwayAmp = 0.015 + math.random() * 0.035,
+                    SwayFreq = 1.2 + math.random() * 2.2,
+                    Phase = math.random() * 6.28,
+                    BaseSize = sz,
+                })
+            end
+        end)
+    end
+
+    local function applyGlassTransparency()
+        if not mainWinFrame then return end
+        local glassAlpha = math.clamp((tonumber(Config.UIGlassTransparency) or 28) / 100, 0, 0.75)
+        if Config.UIBackgroundAnimation == false then
+            glassAlpha = 0
+        end
+        pcall(function()
+            local bgImg = mainWinFrame:FindFirstChild("Background")
+            if bgImg and bgImg:IsA("ImageLabel") then
+                bgImg.ImageTransparency = (Config.UIBackgroundAnimation ~= false) and 0.18 or 0
+            end
+            for _, d in ipairs(mainWinFrame:GetDescendants()) do
+                if d.Name == "GlassBackground" and d:IsA("ImageLabel") then
+                    d.ImageTransparency = glassAlpha
+                end
+            end
+        end)
+    end
+
+    local function getActiveEffectStyle()
+        local chosen = Config.UIAnimationStyle or "Auto (ตามธีมดันเจี้ยน)"
+        local mapped = STYLE_MAP[chosen] or "Auto"
+        if mapped == "Auto" then
+            return (activePreset and activePreset.Effect) or "Embers"
+        end
+        return mapped
+    end
+
+    local function updateParticleLook()
+        local eff = getActiveEffectStyle()
+        for i, pt in ipairs(particles) do
+            pcall(function()
+                pt.Frame.BackgroundColor3 = (i % 2 == 0) and activePreset.Particle1 or activePreset.Particle2
+                pt.Stroke.Color = (i % 2 == 0) and activePreset.Orb1 or activePreset.Orb2
+                if eff == "WindStream" then
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize * 3.2, math.max(2, math.floor(pt.BaseSize * 0.45)))
+                    pt.Frame.Rotation = -16
+                    pt.Corner.CornerRadius = UDim.new(1, 0)
+                elseif eff == "SakuraPetals" then
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize * 1.4, pt.BaseSize * 0.85)
+                    pt.Corner.CornerRadius = UDim.new(0.45, 0)
+                else
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize, pt.BaseSize)
+                    pt.Frame.Rotation = 0
+                    pt.Corner.CornerRadius = UDim.new(1, 0)
+                end
+            end)
+        end
+    end
+
+    local function applyDungeonTheme(themeLabel, notifyUser)
+        local preset = THEME_PRESETS[themeLabel] or THEME_PRESETS["🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)"]
+        activePreset = preset
+        Config.UITheme = themeLabel
+
+        pcall(function()
+            if WindUI and WindUI.Themes and WindUI.Themes[preset.Id] then
+                WindUI.Themes[preset.Id].ElementBackgroundTransparency = (Config.UIBackgroundAnimation ~= false) and ((tonumber(Config.UIGlassTransparency) or 28) / 100) or 0
+            end
+            WindUI:SetTheme(preset.Id)
+        end)
+
+        pcall(function()
+            if bgGrad then
+                bgGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, preset.Grad1),
+                    ColorSequenceKeypoint.new(0.52, preset.Grad2),
+                    ColorSequenceKeypoint.new(1, preset.Grad3),
+                })
+            end
+            if borderGrad then
+                borderGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, preset.Orb1),
+                    ColorSequenceKeypoint.new(0.5, preset.Orb2),
+                    ColorSequenceKeypoint.new(1, preset.Orb3),
+                })
+            end
+            if orbs[1] then orbs[1].Frame.BackgroundColor3 = preset.Orb1 end
+            if orbs[2] then orbs[2].Frame.BackgroundColor3 = preset.Orb2 end
+            if orbs[3] then orbs[3].Frame.BackgroundColor3 = preset.Orb3 end
+            if outerStroke then outerStroke.Color = preset.RuneColor end
+            if innerStroke then innerStroke.Color = preset.Orb1 end
+            if diamondStroke then diamondStroke.Color = preset.Particle2 end
+            updateParticleLook()
+            applyGlassTransparency()
+        end)
+
+        if notifyUser and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "🎨 Dungeon Theme Applied",
+                Content = "เปลี่ยนธีม UI เป็น: " .. tostring(themeLabel),
+                Duration = 2.5,
+                Icon = "palette",
+            })
+        end
+    end
+
+    -- Real-time 60 FPS RenderStepped Animation Loop (Auto-pauses when window is minimized/closed)
+    local animClock = 0
+    trackConn(RunService.RenderStepped:Connect(function(dt)
+        if not isScriptAlive() then return end
+        if not animCanvas or not Config.UIBackgroundAnimation then return end
+        if Window.Closed or not mainWinFrame or not mainWinFrame.Visible then return end
+
+        local speedMult = math.clamp((tonumber(Config.UIAnimationSpeed) or 10) / 10, 0.1, 3.5)
+        local step = math.min(dt, 0.05) * speedMult
+        animClock = animClock + step
+
+        -- 1. Smoothly oscillate & rotate background & border gradients
+        if bgGrad then
+            bgGrad.Rotation = 35 + math.sin(animClock * 0.45) * 28
+        end
+        if borderGrad then
+            borderGrad.Rotation = (animClock * 42) % 360
+        end
+
+        -- 2. Breathe & drift ambient aura orbs
+        for idx, ob in ipairs(orbs) do
+            local ox = ob.BaseX + math.sin(animClock * 0.55 + ob.Phase) * 0.08
+            local oy = ob.BaseY + math.cos(animClock * 0.42 + ob.Phase) * 0.08
+            ob.Frame.Position = UDim2.fromScale(ox, oy)
+            ob.Frame.BackgroundTransparency = 0.86 + math.sin(animClock * 1.3 + ob.Phase) * 0.045
+        end
+
+        -- 3. Counter-rotate Arcane Dungeon Magic Seal rings
+        if outerRing then
+            outerRing.Rotation = (animClock * 14) % 360
+        end
+        if innerRing then
+            innerRing.Rotation = (-animClock * 22) % 360
+        end
+        if runeDiamond then
+            runeDiamond.Rotation = (45 + animClock * 9) % 360
+            local pulse = 122 + math.sin(animClock * 1.8) * 8
+            runeDiamond.Size = UDim2.fromOffset(pulse, pulse)
+        end
+
+        -- 4. Animate pooled particles according to active style
+        local eff = getActiveEffectStyle()
+        for i, pt in ipairs(particles) do
+            if eff == "Snowfall" then
+                pt.Y = pt.Y + step * pt.Speed * 0.85
+                pt.X = pt.X + step * 0.025
+                if pt.Y > 1.06 then pt.Y = -0.06; pt.X = math.random() * 0.96 + 0.02 end
+                if pt.X > 1.04 then pt.X = -0.04 end
+                local px = pt.X + math.sin(animClock * pt.SwayFreq + pt.Phase) * pt.SwayAmp
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                pt.Frame.BackgroundTransparency = 0.35 + math.sin(animClock * 2.2 + pt.Phase) * 0.22
+            elseif eff == "WindStream" then
+                pt.X = pt.X + step * pt.Speed * 2.6
+                pt.Y = pt.Y - step * pt.Speed * 0.55
+                if pt.X > 1.08 or pt.Y < -0.06 then
+                    pt.X = -0.08
+                    pt.Y = math.random() * 0.95 + 0.05
+                end
+                local py = pt.Y + math.sin(animClock * pt.SwayFreq + pt.Phase) * (pt.SwayAmp * 0.5)
+                pt.Frame.Position = UDim2.fromScale(pt.X, py)
+                pt.Frame.BackgroundTransparency = 0.42 + math.sin(animClock * 3.0 + pt.Phase) * 0.25
+            elseif eff == "SakuraPetals" then
+                pt.Y = pt.Y + step * pt.Speed * 0.75
+                pt.X = pt.X - step * pt.Speed * 0.45
+                if pt.Y > 1.06 or pt.X < -0.06 then
+                    pt.Y = -0.06
+                    pt.X = math.random() * 1.1
+                end
+                local px = pt.X + math.sin(animClock * pt.SwayFreq + pt.Phase) * pt.SwayAmp
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                pt.Frame.Rotation = (animClock * 65 + pt.Phase * 40) % 360
+                pt.Frame.BackgroundTransparency = 0.32 + math.sin(animClock * 2.0 + pt.Phase) * 0.20
+            elseif eff == "GoldenStarlight" then
+                pt.Y = pt.Y - step * pt.Speed * 0.35
+                if pt.Y < -0.05 then pt.Y = 1.05; pt.X = math.random() * 0.96 + 0.02 end
+                local px = pt.X + math.sin(animClock * 0.8 + pt.Phase) * (pt.SwayAmp * 0.5)
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                local twinkle = math.sin(animClock * 3.5 + pt.Phase)
+                local s = math.max(3, pt.BaseSize + twinkle * 2.5)
+                pt.Frame.Size = UDim2.fromOffset(s, s)
+                pt.Frame.BackgroundTransparency = 0.45 - twinkle * 0.30
+            else
+                -- Embers, BloodMist, ShadowAura, MagmaSparks (rising dungeon energy motes)
+                local boost = (eff == "MagmaSparks" and 1.45) or (eff == "ShadowAura" and 1.15) or 1.0
+                pt.Y = pt.Y - step * pt.Speed * boost
+                if pt.Y < -0.06 then
+                    pt.Y = 1.06
+                    pt.X = math.random() * 0.96 + 0.02
+                end
+                local px = pt.X + math.sin(animClock * pt.SwayFreq + pt.Phase) * pt.SwayAmp
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                pt.Frame.BackgroundTransparency = 0.35 + math.sin(animClock * 2.6 + pt.Phase) * 0.25
+            end
+        end
+    end))
+
+    Window._DungeonThemeEngine = {
+        ThemeNames = THEME_NAMES,
+        StyleNames = STYLE_NAMES,
+        ApplyTheme = applyDungeonTheme,
+        ApplyGlass = applyGlassTransparency,
+        UpdateParticles = updateParticleLook,
+        SetAnimEnabled = function(enabled)
+            Config.UIBackgroundAnimation = enabled
+            if animCanvas then
+                animCanvas.Visible = enabled
+            end
+            applyGlassTransparency()
+        end,
+    }
+
+    -- Apply initial saved theme after UI elements are created
+    task.defer(function()
+        task.wait(0.25)
+        applyDungeonTheme(Config.UITheme or "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)", false)
+    end)
+end)()
+
 -- ==================== TAB 1: COMBAT & AUTO FARM ====================
 FarmTab:Section({ Title = "Combat & Targeting", Opened = true })
 
@@ -5402,6 +6145,74 @@ SkillsTab:Toggle({
 })
 
 -- ==================== TAB: DUNGEON HUB (SKULL KING'S CRYPT) ====================
+DungeonTab:Section({ Title = "🎨 Dungeon UI Theme & Animated Background (ธีมดันเจี้ยน & เอฟเฟกต์พื้นหลัง)", Opened = true })
+
+DungeonTab:Dropdown({
+    Title = "Select Dungeon Theme (เลือกธีมสีดันเจี้ยน)",
+    Desc = "เปลี่ยนโทนสีหน้าต่าง UI และบรรยากาศพื้นหลังตามธีมดันเจี้ยนและบอส",
+    Values = Window._DungeonThemeEngine.ThemeNames,
+    Value = Config.UITheme or "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
+    Callback = function(selected)
+        Config.UITheme = selected
+        Window._DungeonThemeEngine.ApplyTheme(selected, true)
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Toggle({
+    Title = "Animated Background Effect (เปิดเอฟเฟกต์เคลื่อนไหวพื้นหลัง)",
+    Desc = "แสดงวงเวทรูนดันเจี้ยน, ออร่าเรืองแสง และละอองพลังงานเคลื่อนไหวด้านหลังเมนูแบบเรียลไทม์",
+    Value = Config.UIBackgroundAnimation ~= false,
+    Callback = function(state)
+        Window._DungeonThemeEngine.SetAnimEnabled(state)
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Dropdown({
+    Title = "Background Particle Style (รูปแบบเอฟเฟกต์ละอองพื้นหลัง)",
+    Desc = "เลือกรูปแบบอนิเมชั่นพื้นหลัง (ไฟวิญญาณ, จันทร์สีเลือด, พายุหิมะ, จักรพรรดิเงา, สายลมมังกร, ซากุระ)",
+    Values = Window._DungeonThemeEngine.StyleNames,
+    Value = Config.UIAnimationStyle or "Auto (ตามธีมดันเจี้ยน)",
+    Callback = function(selected)
+        Config.UIAnimationStyle = selected
+        Window._DungeonThemeEngine.UpdateParticles()
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Slider({
+    Title = "Animation Speed (ความเร็วอนิเมชั่นพื้นหลัง)",
+    Desc = "ปรับความเร็วการหมุนของวงเวทรูนและการลอยของละอองพลังงาน",
+    Value = {
+        Min = 2,
+        Max = 30,
+        Default = tonumber(Config.UIAnimationSpeed) or 10,
+    },
+    Step = 1,
+    Callback = function(val)
+        Config.UIAnimationSpeed = tonumber(val) or 10
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Slider({
+    Title = "Glass Card Transparency (ความโปร่งแสงการ์ดเมนู)",
+    Desc = "ปรับความใสของกรอบปุ่มเพื่อให้มองเห็นเอฟเฟกต์วงเวทและละอองพื้นหลังทะลุขึ้นมาได้ชัดเจน",
+    Value = {
+        Min = 0,
+        Max = 65,
+        Default = tonumber(Config.UIGlassTransparency) or 28,
+    },
+    Step = 1,
+    Suffix = "%",
+    Callback = function(val)
+        Config.UIGlassTransparency = tonumber(val) or 28
+        Window._DungeonThemeEngine.ApplyGlass()
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
 DungeonTab:Section({ Title = "🏰 Auto Dungeon Master (ดันเจี้ยนอัตโนมัติ)", Opened = true })
 
 autoDungeonToggle = DungeonTab:Toggle({
@@ -6925,6 +7736,39 @@ TeleportTab:Button({
 })
 
 -- ==================== TAB 10: CONFIG & HOTKEY ====================
+ConfigTab:Section({ Title = "🎨 UI Theme & Background FX (ตั้งค่าธีมและพื้นหลังเคลื่อนไหว)", Opened = true })
+
+ConfigTab:Dropdown({
+    Title = "UI Dungeon Theme (เลือกธีมดันเจี้ยน)",
+    Values = Window._DungeonThemeEngine.ThemeNames,
+    Value = Config.UITheme or "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
+    Callback = function(selected)
+        Config.UITheme = selected
+        Window._DungeonThemeEngine.ApplyTheme(selected, true)
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+ConfigTab:Toggle({
+    Title = "Enable Animated Background (เปิดพื้นหลังเคลื่อนไหว)",
+    Value = Config.UIBackgroundAnimation ~= false,
+    Callback = function(state)
+        Window._DungeonThemeEngine.SetAnimEnabled(state)
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+ConfigTab:Dropdown({
+    Title = "Background Animation Style (รูปแบบเอฟเฟกต์พื้นหลัง)",
+    Values = Window._DungeonThemeEngine.StyleNames,
+    Value = Config.UIAnimationStyle or "Auto (ตามธีมดันเจี้ยน)",
+    Callback = function(selected)
+        Config.UIAnimationStyle = selected
+        Window._DungeonThemeEngine.UpdateParticles()
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
 ConfigTab:Section({ Title = "Profile & Config Management", Opened = true })
 
 ConfigTab:Button({
