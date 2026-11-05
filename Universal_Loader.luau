@@ -7,6 +7,24 @@
 -- Protected with: Universal Whitelist & Key System Web Portal
 -- ==============================================================================
 
+-- 🛡️ Anti-Duplicate / Singleton Guard for Loader
+-- Prevents duplicate loader executions from executor autoexecute + queue_on_teleport
+if getgenv then
+    local now = os.clock()
+    -- 1. If game script is already running healthy with its UI window active, do NOT reload!
+    if getgenv()._HuntingTogetherRunning == true and getgenv()._HT_CurrentWindow then
+        print("[Universal Hub] 🛡️ Script is already running with active UI! Skipping duplicate loader run.")
+        return
+    end
+    -- 2. If loader was executed in another thread less than 5 seconds ago, ignore duplicate run
+    if getgenv()._UniversalLoaderLoading and (now - (getgenv()._UniversalLoaderTime or 0)) < 6 then
+        print("[Universal Hub] ⏳ Loader is already starting in another thread, skipping duplicate run...")
+        return
+    end
+    getgenv()._UniversalLoaderLoading = true
+    getgenv()._UniversalLoaderTime = now
+end
+
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -178,6 +196,9 @@ end
 -- ==============================================================================
 local function launchGameScript(scriptFileName, gameTitle)
     print(string.format("[Universal Hub] 🚀 Launching latest script for %s...", gameTitle))
+    if getgenv then
+        getgenv()._UniversalLoaderLoading = false
+    end
 
     -- 1. Always fetch latest version from Whitelist Server first (guarantees up-to-date features)
     local url = SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. tostring(tick())
