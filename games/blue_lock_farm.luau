@@ -4184,8 +4184,8 @@ task.spawn(function()
     local lastHouseCheck = 0
 
     while isAlive() do
+        -- 1. Weather Status
         pcall(function()
-            -- 1. Weather Status
             if WeatherStatusParagraph and WeatherService then
                 local curWeather = WeatherService.GetCurrentWeather()
                 local isActive = WeatherService.IsWeatherActive()
@@ -4201,17 +4201,19 @@ task.spawn(function()
                     statusText = string.format("• Current Weather: Clear Skies ☀️\n• Next Weather Event in: %ds", nextIn)
                 end
 
-                if typeof(WeatherStatusParagraph.Set) == "function" then
+                if typeof(WeatherStatusParagraph.SetDesc) == "function" then
+                    WeatherStatusParagraph:SetDesc(statusText)
+                elseif typeof(WeatherStatusParagraph.Set) == "function" then
                     WeatherStatusParagraph:Set({
                         Title = "Weather Status",
                         Desc = statusText
                     })
-                elseif typeof(WeatherStatusParagraph.SetDesc) == "function" then
-                    WeatherStatusParagraph:SetDesc(statusText)
                 end
             end
+        end)
 
-            -- 2. Halloween Status
+        -- 2. Halloween Status
+        pcall(function()
             if HalloweenStatusParagraph then
                 local remaining, isNight = getNightTimeRemaining()
                 local candy = getCandyAmount()
@@ -4225,9 +4227,11 @@ task.spawn(function()
                         local housesAvail = 0
                         local houses = CollectionService:GetTagged("HouseSystemModel")
                         for _, h in ipairs(houses) do
-                            if not HalloweenService.IsHouseOnCooldown(LocalPlayer, h.Name) then
-                                housesAvail = housesAvail + 1
-                            end
+                            pcall(function()
+                                if not HalloweenService.IsHouseOnCooldown(LocalPlayer, h.Name) then
+                                    housesAvail = housesAvail + 1
+                                end
+                            end)
                         end
                         cachedHouseStr = housesAvail .. " / " .. (#houses > 0 and #houses or 84) .. " Ready"
                     else
@@ -4255,17 +4259,19 @@ task.spawn(function()
                     "• Admin House (1h): " .. adminStr .. "\n" ..
                     "• Active Graves: " .. gravesCount .. " ready to dig"
 
-                if typeof(HalloweenStatusParagraph.Set) == "function" then
+                if typeof(HalloweenStatusParagraph.SetDesc) == "function" then
+                    HalloweenStatusParagraph:SetDesc(descStr)
+                elseif typeof(HalloweenStatusParagraph.Set) == "function" then
                     HalloweenStatusParagraph:Set({
                         Title = "Halloween Event Status",
                         Desc = descStr
                     })
-                elseif typeof(HalloweenStatusParagraph.SetDesc) == "function" then
-                    HalloweenStatusParagraph:SetDesc(descStr)
                 end
             end
+        end)
 
-            -- 3. Zombie Wave Status Tracker
+        -- 3. Zombie Wave Status Tracker
+        pcall(function()
             if ZombieWaveStatusParagraph then
                 local isWave = false
                 local secLeft = 0
@@ -4304,17 +4310,19 @@ task.spawn(function()
                 local zombieDesc = string.format("• Wave Status: %s\n• Active Zombies in World: %d (King Zombies: %d)\n• Anti-Cheat Lockout: %s\n• Session Zombies Slayed: %d 💀",
                     waveStr, #activeZombies, kingCount, lockoutStr, zombieSessionKills)
 
-                if typeof(ZombieWaveStatusParagraph.Set) == "function" then
+                if typeof(ZombieWaveStatusParagraph.SetDesc) == "function" then
+                    ZombieWaveStatusParagraph:SetDesc(zombieDesc)
+                elseif typeof(ZombieWaveStatusParagraph.Set) == "function" then
                     ZombieWaveStatusParagraph:Set({
                         Title = "Zombie Wave Event Status",
                         Desc = zombieDesc
                     })
-                elseif typeof(ZombieWaveStatusParagraph.SetDesc) == "function" then
-                    ZombieWaveStatusParagraph:SetDesc(zombieDesc)
                 end
             end
+        end)
 
-            -- 3. Mad Scientist Materials Tracker
+        -- 4. Mad Scientist Materials Tracker
+        pcall(function()
             if ScientistStatusParagraph and ClientDataManager then
                 local d = ClientDataManager.GetData()
                 local tokens = d and d.Tokens or {}
@@ -4331,13 +4339,13 @@ task.spawn(function()
                 local sciDesc = string.format("• Predator Variant: %d / 1\n• Shadow Variant: %d / 5\n• Bluetooth Potion: %d / 10\n• Trait Tokens: %d / 100\n• Grade Tokens: %d / 100\n• Synthesis Ready: %s",
                     predatorCount, shadowCount, btPotionCount, traitCount, gradeCount, readyToCraft and "YES! Ready to Craft" or "Gathering materials...")
 
-                if typeof(ScientistStatusParagraph.Set) == "function" then
+                if typeof(ScientistStatusParagraph.SetDesc) == "function" then
+                    ScientistStatusParagraph:SetDesc(sciDesc)
+                elseif typeof(ScientistStatusParagraph.Set) == "function" then
                     ScientistStatusParagraph:Set({
                         Title = "Mad Scientist Material Status",
                         Desc = sciDesc
                     })
-                elseif typeof(ScientistStatusParagraph.SetDesc) == "function" then
-                    ScientistStatusParagraph:SetDesc(sciDesc)
                 end
 
                 -- Auto Craft if enabled
@@ -4345,8 +4353,10 @@ task.spawn(function()
                     Remotes.MadScientistCraft:FireServer("PermanentBluetooth")
                 end
             end
+        end)
 
-            -- 4. Obby Status & Cooldowns Tracker
+        -- 5. Obby Status & Cooldowns Tracker
+        pcall(function()
             if ObbyStatusParagraph then
                 local easyCd = getObbyCooldown("EasyObby")
                 local medCd = getObbyCooldown("MediumObby")
@@ -4358,17 +4368,19 @@ task.spawn(function()
 
                 local obbyDesc = string.format("• Easy Obby (5m): %s\n• Medium Obby (10m): %s\n• Hard Obby (15m): %s", easyStr, medStr, hardStr)
 
-                if typeof(ObbyStatusParagraph.Set) == "function" then
+                if typeof(ObbyStatusParagraph.SetDesc) == "function" then
+                    ObbyStatusParagraph:SetDesc(obbyDesc)
+                elseif typeof(ObbyStatusParagraph.Set) == "function" then
                     ObbyStatusParagraph:Set({
                         Title = "Obby Status & Cooldowns",
                         Desc = obbyDesc
                     })
-                elseif typeof(ObbyStatusParagraph.SetDesc) == "function" then
-                    ObbyStatusParagraph:SetDesc(obbyDesc)
                 end
             end
+        end)
 
-            -- 5. Infinity Tower Status Tracker
+        -- 6. Infinity Tower Status Tracker
+        pcall(function()
             if TowerStatusParagraph then
                 local stageName = activeTowerStage or (typeof(getTargetTowerStage) == "function" and getTargetTowerStage()) or "Entrance"
                 local stageDisplay = (TowerStageDisplayMap and TowerStageDisplayMap[stageName]) or stageName
@@ -4377,17 +4389,19 @@ task.spawn(function()
                 local towerDesc = string.format("• Status: %s\n• Target Stage: %s (%s)\n• Current Floor: %d\n• Surrender at: %s",
                     statusStr, tostring(selectedTowerStage), tostring(stageDisplay), activeTowerFloor, surrenderStr)
 
-                if typeof(TowerStatusParagraph.Set) == "function" then
+                if typeof(TowerStatusParagraph.SetDesc) == "function" then
+                    TowerStatusParagraph:SetDesc(towerDesc)
+                elseif typeof(TowerStatusParagraph.Set) == "function" then
                     TowerStatusParagraph:Set({
                         Title = "Tower Battle Status",
                         Desc = towerDesc
                     })
-                elseif typeof(TowerStatusParagraph.SetDesc) == "function" then
-                    TowerStatusParagraph:SetDesc(towerDesc)
                 end
             end
+        end)
 
-            -- 6. Locker Rolling & Purchase Tracker
+        -- 7. Locker Rolling & Purchase Tracker
+        pcall(function()
             if LockerStatusParagraph then
                 local plot = getMyPlot()
                 local rollPart = plot and plot:FindFirstChild("Systems")
@@ -4400,22 +4414,22 @@ task.spawn(function()
                     price = getConveyorLockerPrice(curBox, curVar, rollPart)
                 end
                 local cash = getCashAmount()
-                local lockerDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%d (Min Buffer: $%d)\n• Current Cash: $%d",
-                    lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), price, minCashBuffer or 0, cash)
+                local lockerDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
+                    lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
 
-                if typeof(LockerStatusParagraph.Set) == "function" then
+                if typeof(LockerStatusParagraph.SetDesc) == "function" then
+                    LockerStatusParagraph:SetDesc(lockerDesc)
+                elseif typeof(LockerStatusParagraph.Set) == "function" then
                     LockerStatusParagraph:Set({
                         Title = "Locker Rolling & Purchase Status",
                         Desc = lockerDesc
                     })
-                elseif typeof(LockerStatusParagraph.SetDesc) == "function" then
-                    LockerStatusParagraph:SetDesc(lockerDesc)
                 end
             end
-
-            -- Automatically prevent gamepass floor button touch prompts
-            disablePlotGamepassButtons()
         end)
+
+        -- Automatically prevent gamepass floor button touch prompts
+        pcall(disablePlotGamepassButtons)
         task.wait(1.5)
     end
 end)
