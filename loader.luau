@@ -200,32 +200,43 @@ local function launchGameScript(scriptFileName, gameTitle)
         getgenv()._UniversalLoaderLoading = false
     end
 
-    -- 1. Always fetch latest version from Whitelist Server first (guarantees up-to-date features)
-    local url = SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. tostring(tick())
-    local dlOk, code = pcall(game.HttpGet, game, url)
-    if dlOk and code and #code > 50 then
-        local fn, err = loadstring(code)
-        if fn then
-            print("[Universal Hub] ✅ Downloaded latest script from server: " .. url)
-            -- Overwrite local file cache so offline mode and autoexecute have the newest version
-            pcall(function()
-                if writefile then
-                    if not isfolder("UniversalHub") then makefolder("UniversalHub") end
-                    writefile("UniversalHub/" .. scriptFileName, code)
-                    if scriptFileName == "hunting_together.luau" then
-                        writefile("hunting_together_script.lua", code)
-                        writefile("hunting_together.luau", code)
+    local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+    local candidateUrls = {
+        -- 1. Official GitHub Raw (Fastest 200ms, 99.99% uptime, no sleep/cold start)
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+        -- 2. Live Render Production Server
+        SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster,
+        -- 3. Secondary GitHub Server Repo
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+    }
+
+    for _, url in ipairs(candidateUrls) do
+        local dlOk, code = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if dlOk and type(code) == "string" and #code > 500 then
+            local fn, err = loadstring(code)
+            if fn then
+                print("[Universal Hub] ✅ Downloaded and compiled latest script from: " .. url)
+                pcall(function()
+                    if writefile then
+                        if not isfolder("UniversalHub") then makefolder("UniversalHub") end
+                        writefile("UniversalHub/" .. scriptFileName, code)
+                        if scriptFileName == "hunting_together.luau" then
+                            writefile("hunting_together_script.lua", code)
+                            writefile("hunting_together.luau", code)
+                        end
                     end
-                end
-            end)
-            task.spawn(fn)
-            return
-        else
-            warn("[Universal Hub] ⚠️ Error compiling downloaded script: " .. tostring(err))
+                end)
+                task.spawn(fn)
+                return
+            else
+                warn("[Universal Hub] ⚠️ Compile error from " .. url .. ": " .. tostring(err))
+            end
         end
-    else
-        warn("[Universal Hub] Failed to download script from server, checking offline cache...")
     end
+
+    warn("[Universal Hub] ⚠️ Failed to download from all cloud endpoints, checking offline cache...")
 
     -- 2. Fallback to local file only if server is unreachable
     local localCandidates = {
