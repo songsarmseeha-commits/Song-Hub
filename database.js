@@ -487,6 +487,125 @@ const Database = {
             settings[row.setting_key] = row.setting_value;
         }
         return settings;
+    },
+
+    // --- CLOUD BACKUP & RESTORE DATA ---
+    exportData() {
+        const keys = db.prepare('SELECT * FROM keys').all();
+        const keyHwids = db.prepare('SELECT * FROM key_hwids').all();
+        const whitelistedUsers = db.prepare('SELECT * FROM whitelisted_users').all();
+        const settings = db.prepare('SELECT * FROM system_settings').all();
+        
+        return {
+            version: 1,
+            exported_at: Math.floor(Date.now() / 1000),
+            keys: keys.map(k => {
+                const hwids = keyHwids.filter(h => h.key_id === k.id);
+                return { ...k, bound_hwids: hwids };
+            }),
+            whitelisted_users: whitelistedUsers,
+            system_settings: settings
+        };
+    },
+
+    importData(data, replace = false) {
+        if (!data || typeof data !== 'object') throw new Error('Invalid backup data');
+        let importedKeys = 0;
+        let importedUsers = 0;
+
+        // Import keys
+        if (Array.isArray(data.keys)) {
+            for (const k of data.keys) {
+                if (!k.key_string) continue;
+                const existing = db.prepare('SELECT id FROM keys WHERE key_string = ?').get(k.key_string);
+                let keyId = existing ? existing.id : null;
+
+                if (!existing) {
+                    const stmt = db.prepare(`
+                        INSERT INTO keys (
+                            key_string, key_type, duration_seconds, hwid, claimed_by,
+                            created_at, activated_at, expires_at, is_active, note,
+                            max_resets, resets_count, max_hwid, max_sessions
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `);
+                    const info = stmt.run(
+                        k.key_string, k.key_type || 'standard', k.duration_seconds || 86400,
+                        k.hwid || null, k.claimed_by || null, k.created_at || Math.floor(Date.now() / 1000),
+                        k.activated_at || null, k.expires_at || null, k.is_active !== undefined ? k.is_active : 1,
+                        k.note || '', k.max_resets || 3, k.resets_count || 0,
+                        k.max_hwid || 1, k.max_sessions || 1
+                    );
+                    keyId = info.lastInsertRowid;
+                    importedKeys++;
+                } else if (replace) {
+                    db.prepare(`
+                        UPDATE keys SET
+                            key_type = ?, duration_seconds = ?, hwid = ?, claimed_by = ?,
+                            created_at = ?, activated_at = ?, expires_at = ?, is_active = ?,
+                            note = ?, max_resets = ?, resets_count = ?, max_hwid = ?, max_sessions = ?
+                        WHERE id = ?
+                    `).run(
+                        k.key_type || 'standard', k.duration_seconds || 86400,
+                        k.hwid || null, k.claimed_by || null, k.created_at || Math.floor(Date.now() / 1000),
+                        k.activated_at || null, k.expires_at || null, k.is_active !== undefined ? k.is_active : 1,
+                        k.note || '', k.max_resets || 3, k.resets_count || 0,
+                        k.max_hwid || 1, k.max_sessions || 1, keyId
+                    );
+                    importedKeys++;
+                }
+
+                // Import bound HWIDs
+                if (keyId && Array.isArray(k.bound_hwids)) {
+                    for (const h of k.bound_hwids) {
+                        if (h.hwid) {
+                            try {
+                                db.prepare(`
+                                    INSERT OR REPLACE INTO key_hwids (key_id, hwid, user_id, username, first_used_at, last_used_at)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                `).run(
+                                    keyId, h.hwid, h.user_id || null, h.username || null,
+                                    h.first_used_at || Math.floor(Date.now() / 1000),
+                                    h.last_used_at || Math.floor(Date.now() / 1000)
+                                );
+                            } catch (e) {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // Import whitelisted users
+        if (Array.isArray(data.whitelisted_users)) {
+            for (const u of data.whitelisted_users) {
+                if (!u.roblox_user_id) continue;
+                try {
+                    db.prepare(`
+                        INSERT OR REPLACE INTO whitelisted_users (roblox_user_id, username, role, note, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    `).run(
+                        String(u.roblox_user_id), u.username || '', u.role || 'VIP',
+                        u.note || '', u.created_at || Math.floor(Date.now() / 1000)
+                    );
+                    importedUsers++;
+                } catch (e) {}
+            }
+        }
+
+        // Import settings
+        if (Array.isArray(data.system_settings)) {
+            for (const s of data.system_settings) {
+                if (s.setting_key && s.setting_value !== undefined) {
+                    try {
+                        db.prepare(`
+                            INSERT OR REPLACE INTO system_settings (setting_key, setting_value)
+                            VALUES (?, ?)
+                        `).run(s.setting_key, String(s.setting_value));
+                    } catch (e) {}
+                }
+            }
+        }
+
+        return { importedKeys, importedUsers };
     }
 };
 
