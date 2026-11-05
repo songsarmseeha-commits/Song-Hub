@@ -356,6 +356,11 @@ local function updateParagraph(para, title, desc)
         end
     end)
     pcall(function()
+        if para.ParagraphFrame and para.ParagraphFrame.UIElements and para.ParagraphFrame.UIElements.Desc then
+            para.ParagraphFrame.UIElements.Desc.Text = desc
+        end
+    end)
+    pcall(function()
         if para.ElementFrame then
             for _, d in ipairs(para.ElementFrame:GetDescendants()) do
                 if d:IsA("TextLabel") and d.Text ~= title and d.Text ~= "Locked" then
@@ -2097,9 +2102,22 @@ TabAutomation:Button({
 
 TabAutomation:Section({ Title = "Locker Rolling & Purchase (Multi-Select Filters)" })
 
+local initPlot = getMyPlot()
+local initRollPart = initPlot and initPlot:FindFirstChild("Systems")
+    and initPlot.Systems:FindFirstChild("RollStation")
+    and initPlot.Systems.RollStation:FindFirstChild("ConveyorPart")
+local initBox = (initRollPart and initRollPart:GetAttribute("BoxName")) or "None"
+local initVar = (initRollPart and initRollPart:GetAttribute("Variant")) or "Normal"
+local initPrice = 0
+if initRollPart and initBox ~= "None" and initBox ~= "" then
+    initPrice = getConveyorLockerPrice(initBox, initVar, initRollPart)
+end
+local initCash = getCashAmount()
+
 LockerStatusParagraph = TabAutomation:Paragraph({
     Title = "Locker Rolling & Purchase Status",
-    Desc = "• Status: Idle 💤\n• Conveyor Locker: None\n• Price: $0\n• Cash: $0"
+    Desc = string.format("• Status: Idle 💤\n• Station Locker: %s (%s)\n• Price: $%s\n• Current Cash: $%s",
+        tostring(initBox), tostring(initVar), formatNumber(initPrice), formatNumber(initCash))
 })
 
 UIElements.autoRollLocker = TabAutomation:Toggle({
