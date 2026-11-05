@@ -466,11 +466,12 @@ Config = {
     ProtectRefined = true,
     ProtectBestGear = true,
     
-    -- Auto Loot
+    -- Auto Loot (Stealth Magnet Vacuum - Zero Character Teleport)
     AutoLoot = true,
     LootPriority = true,
-    LootTeleport = false,       -- Remote vacuum prevents warping/jittering
-    LootRadius = 100,
+    StealthMagnetLoot = true,   -- ดูดไอเทมลอยเข้าหาตัวละครแบบเนียนๆ ไม่ต้องวาร์ปตัวละคร
+    LootTeleport = false,       -- ปิดการวาร์ปตัวละครไปเก็บของถาวร
+    LootRadius = 120,
     AutoOpenLootBox = false,    -- ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการแวบไปเปิดกล่องเอง
     
     -- Level Progression (1 - 99)
@@ -614,6 +615,11 @@ local function LoadConfig(silent)
             if type(decoded) == "table" then
                 for k, v in pairs(decoded) do
                     Config[k] = v
+                end
+                -- Force disable character teleport looting even if old config had it enabled
+                Config.LootTeleport = false
+                if Config.StealthMagnetLoot == nil then
+                    Config.StealthMagnetLoot = true
                 end
                 success = true
                 if not silent and WindUI and WindUI.Notify then
@@ -1320,7 +1326,7 @@ local function advanceDungeonPath()
         end
     end
 
-    -- 1. Auto Secret Chests nearby
+    -- 1. Auto Secret Chests nearby (Stealth remote claim without warping character)
     if Config.AutoSecretChests and (os.clock() - lastSecretChestClaimTime > 2.0) then
         local h = workspace:FindFirstChild("Halloween")
         if h then
@@ -1329,21 +1335,29 @@ local function advanceDungeonPath()
                     local prompt = c:FindFirstChildWhichIsA("ProximityPrompt", true)
                     if prompt and prompt.Enabled then
                         local cPos = c:GetPivot().Position
-                        if (pPos - cPos).Magnitude <= 32 then
+                        local cDist = (pPos - cPos).Magnitude
+                        if cDist <= 45 then
                             lastSecretChestClaimTime = os.clock()
-                            hrp.CFrame = CFrame.new(cPos.X, 60.5, cPos.Z)
-                            task.wait(0.12)
+                            pcall(function()
+                                prompt.RequiresLineOfSight = false
+                                prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 10, cDist + 20)
+                            end)
                             if fireproximityprompt then
-                                fireproximityprompt(prompt)
+                                pcall(function() fireproximityprompt(prompt) end)
                             else
                                 pcall(function()
                                     prompt:InputHoldBegin()
-                                    task.wait(prompt.HoldDuration or 0.2)
+                                    task.wait(math.min(prompt.HoldDuration or 0.1, 0.15))
                                     prompt:InputHoldEnd()
                                 end)
                             end
-                            task.wait(0.2)
-                            return
+                            local cPart = c:IsA("BasePart") and c or c:FindFirstChildWhichIsA("BasePart", true)
+                            if cPart and firetouchinterest then
+                                pcall(function()
+                                    firetouchinterest(hrp, cPart, 0)
+                                    firetouchinterest(hrp, cPart, 1)
+                                end)
+                            end
                         end
                     end
                 end
@@ -2493,7 +2507,7 @@ local function handlePostBossReturn(bossName, deathPos)
                 })
             end
 
-            -- 2. Fast loot vacuum around boss death area (catches rare drops, chests, boss pet eggs)
+            -- 2. Fast stealth loot vacuum around boss death area (no character warp)
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             local dropsFolder = workspace:FindFirstChild("Drops")
@@ -2503,10 +2517,18 @@ local function handlePostBossReturn(bossName, deathPos)
                     for _, d in ipairs(dropsFolder:GetChildren()) do
                         if d:IsA("BasePart") then
                             local dDist = (d.Position - hrp.Position).Magnitude
-                            if dDist <= 85 then
+                            if dDist <= (Config.LootRadius or 120) then
+                                if Config.StealthMagnetLoot ~= false then
+                                    pcall(function()
+                                        d.CanCollide = false
+                                        d.CFrame = hrp.CFrame
+                                    end)
+                                end
                                 pcall(function()
-                                    PickupDrop:FireServer(true)
-                                    PickupDrop:FireServer(d)
+                                    if RemotesLazy.PickupDrop then
+                                        RemotesLazy.PickupDrop:FireServer(true)
+                                        RemotesLazy.PickupDrop:FireServer(d)
+                                    end
                                 end)
                                 if firetouchinterest then
                                     pcall(function()
@@ -2518,7 +2540,7 @@ local function handlePostBossReturn(bossName, deathPos)
                         end
                     end
                 end
-                task.wait(0.3)
+                task.wait(0.25)
             end
 
             -- 3. Reset combat flags so normal monsters are immediately targetable
@@ -3377,7 +3399,7 @@ local function getNearbyMonsters(radius)
     return results
 end
 
--- ==================== ADVANCED AUTO LOOT & VACUUM ====================
+-- ==================== ADVANCED AUTO LOOT & STEALTH MAGNET VACUUM ====================
 isLooting = false
 
 local function performAutoLoot()
@@ -3394,14 +3416,15 @@ local function performAutoLoot()
     if #allDrops == 0 then return end
 
     isLooting = true
-    local maxLootDist = Config.LootRadius or 100
+    local maxLootDist = tonumber(Config.LootRadius) or 120
     local now = workspace:GetServerTimeNow()
     local validDrops = {}
 
     for _, drop in ipairs(allDrops) do
-        if drop and drop.Parent and drop:IsA("BasePart") then
-            local owner = drop:GetAttribute("OwnerUserId")
-            local freeAt = drop:GetAttribute("FreeAt")
+        local dropPart = drop:IsA("BasePart") and drop or (drop:IsA("Model") and (drop.PrimaryPart or drop:FindFirstChildWhichIsA("BasePart", true)))
+        if dropPart and dropPart.Parent then
+            local owner = drop:GetAttribute("OwnerUserId") or dropPart:GetAttribute("OwnerUserId")
+            local freeAt = drop:GetAttribute("FreeAt") or dropPart:GetAttribute("FreeAt")
             local canPickup = true
             if owner and owner ~= 0 and owner ~= LocalPlayer.UserId then
                 if freeAt and now < freeAt then
@@ -3410,9 +3433,9 @@ local function performAutoLoot()
             end
 
             if canPickup then
-                local dropDist = (drop.Position - hrp.Position).Magnitude
+                local dropDist = (dropPart.Position - hrp.Position).Magnitude
                 if dropDist <= maxLootDist then
-                    table.insert(validDrops, { part = drop, dist = dropDist })
+                    table.insert(validDrops, { obj = drop, part = dropPart, dist = dropDist })
                 end
             end
         end
@@ -3426,84 +3449,73 @@ local function performAutoLoot()
     -- Sort closest drops first
     table.sort(validDrops, function(a, b) return a.dist < b.dist end)
 
-    -- If all drops are already within melee pickup reach (<= 6 studs)
-    local anyFar = false
-    for _, dInfo in ipairs(validDrops) do
-        if dInfo.dist > 6 then
-            anyFar = true
-            break
-        end
-    end
-
-    if not anyFar then
+    -- 1. Smooth Stealth Magnet Pull: glide item drops directly into the character WITHOUT moving/warping the character
+    if Config.StealthMagnetLoot ~= false then
         pcall(function()
-            if PickupDrop then
-                PickupDrop:FireServer(true)
-                for _, dInfo in ipairs(validDrops) do
-                    PickupDrop:FireServer(dInfo.part)
-                end
-            end
-        end)
-        isLooting = false
-        return
-    end
-
-    -- Remote pickup for all valid drops without moving the character
-    pcall(function()
-        if PickupDrop then
-            PickupDrop:FireServer(true)
+            local targetPos = hrp.Position
             for _, dInfo in ipairs(validDrops) do
-                PickupDrop:FireServer(dInfo.part)
-            end
-        end
-    end)
-
-    -- Only micro-teleport if the user explicitly enabled LootTeleport in settings (disabled in Dungeon to prevent rapid teleport bans)
-    if Config.LootTeleport and not isInsideDungeon() then
-        local originalCF = hrp.CFrame
-        local pickedCount = 0
-
-        for _, dInfo in ipairs(validDrops) do
-            local drop = dInfo.part
-            if drop and drop.Parent then
-                local currDist = (drop.Position - hrp.Position).Magnitude
-                if currDist > 6 and currDist <= 60 then
-                    hrp.CFrame = CFrame.new(drop.Position + Vector3.new(0, 1.4, 0))
-                    hrp.Velocity = Vector3.zero
-                    task.wait(0.08)
-
-                    pcall(function()
-                        if firetouchinterest then
-                            firetouchinterest(hrp, drop, 0)
-                            task.wait()
-                            firetouchinterest(hrp, drop, 1)
-                        end
-                    end)
-
-                    pickedCount = pickedCount + 1
-                    if pickedCount >= 3 then break end
-                end
-            end
-        end
-
-        if hrp and hrp.Parent and pickedCount > 0 then
-            hrp.CFrame = originalCF
-            hrp.Velocity = Vector3.zero
-        end
-    else
-        -- LootTeleport is disabled: touch nearby drops without moving
-        pcall(function()
-            if firetouchinterest then
-                for _, dInfo in ipairs(validDrops) do
-                    if dInfo.dist <= 10 and dInfo.part and dInfo.part.Parent then
-                        firetouchinterest(hrp, dInfo.part, 0)
-                        task.wait()
-                        firetouchinterest(hrp, dInfo.part, 1)
+                local dp = dInfo.part
+                if dp and dp.Parent then
+                    dp.CanCollide = false
+                    pcall(function() dp.Massless = true end)
+                    if dInfo.dist > 4 then
+                        -- Smoothly pull item toward character so it looks like a natural RPG magnet
+                        local midPos = dp.Position:Lerp(targetPos, 0.65)
+                        dp.CFrame = CFrame.new(midPos)
                     end
                 end
             end
         end)
+        task.wait(0.02)
+        pcall(function()
+            local targetCF = hrp.CFrame
+            for _, dInfo in ipairs(validDrops) do
+                local dp = dInfo.part
+                if dp and dp.Parent then
+                    dp.CanCollide = false
+                    dp.CFrame = targetCF
+                end
+            end
+        end)
     end
+
+    -- 2. Remote Pickup Packet for all valid drops (Zero character movement)
+    pcall(function()
+        if RemotesLazy.PickupDrop then
+            RemotesLazy.PickupDrop:FireServer(true)
+            for _, dInfo in ipairs(validDrops) do
+                if dInfo.part and dInfo.part.Parent then
+                    RemotesLazy.PickupDrop:FireServer(dInfo.part)
+                end
+                if dInfo.obj and dInfo.obj ~= dInfo.part and dInfo.obj.Parent then
+                    RemotesLazy.PickupDrop:FireServer(dInfo.obj)
+                end
+            end
+        end
+    end)
+
+    -- 3. TouchInterest & ProximityPrompt trigger across all valid drops within LootRadius (Zero character movement)
+    pcall(function()
+        for _, dInfo in ipairs(validDrops) do
+            local dp = dInfo.part
+            if dp and dp.Parent then
+                if firetouchinterest then
+                    firetouchinterest(hrp, dp, 0)
+                    firetouchinterest(hrp, dp, 1)
+                end
+                local prompt = dp:FindFirstChildOfClass("ProximityPrompt") or (dInfo.obj and dInfo.obj:FindFirstChildWhichIsA("ProximityPrompt", true))
+                if prompt and prompt.Enabled then
+                    pcall(function()
+                        prompt.RequiresLineOfSight = false
+                        prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 10, dInfo.dist + 20)
+                    end)
+                    if fireproximityprompt then
+                        fireproximityprompt(prompt)
+                    end
+                end
+            end
+        end
+    end)
 
     isLooting = false
 end
@@ -3550,32 +3562,12 @@ local function openLootBoxTarget(boxObj)
 
     local boxPos = boxPart.Position
     local dist = (boxPos - hrp.Position).Magnitude
-    local maxAllowed = math.min(Config.LootRadius or 60, 60)
+    local maxAllowed = tonumber(Config.LootRadius) or 120
     if dist > maxAllowed then return false end
 
-    local canTeleportBox = canScriptMoveOrWarp() and (Config.LootTeleport == true) and not isInsideDungeon()
-    if not canTeleportBox and dist > 14 then
-        return false
-    end
-
-    local prevCF = hrp.CFrame
-
-    if canTeleportBox then
-        -- Approach safely if within reach
-        if dist > 20 then
-            local midPos = hrp.Position:Lerp(boxPos + Vector3.new(0, 1.5, 0), 0.5)
-            hrp.CFrame = CFrame.new(midPos)
-            task.wait(0.04)
-        end
-
-        hrp.CFrame = CFrame.new(boxPos + Vector3.new(0, 1.5, 0))
-        hrp.Velocity = Vector3.zero
-        task.wait(0.12)
-    end
-
-    -- 6. Multi-attempt Opening Actions (repeat up to 3 times or until opened)
+    -- 5. Stealth Remote & Magnet Opening (Zero character teleport / no hrp.CFrame changes!)
     for attempt = 1, 3 do
-        if not boxPart.Parent or boxPart:GetAttribute("OpenTitle") ~= nil then
+        if not boxPart.Parent or boxPart:GetAttribute("OpenTitle") ~= nil or boxPart:GetAttribute("Opened") == true then
             break
         end
 
@@ -3589,16 +3581,26 @@ local function openLootBoxTarget(boxObj)
         end)
 
         pcall(function()
-            if PickupDrop then
-                PickupDrop:FireServer(true)
-                PickupDrop:FireServer(boxPart)
+            if RemotesLazy.PickupDrop then
+                RemotesLazy.PickupDrop:FireServer(true)
+                RemotesLazy.PickupDrop:FireServer(boxPart)
             end
         end)
 
         pcall(function()
             local prompt = boxPart:FindFirstChildOfClass("ProximityPrompt") or (boxModel and boxModel:FindFirstChildWhichIsA("ProximityPrompt", true))
-            if prompt and fireproximityprompt then
-                fireproximityprompt(prompt)
+            if prompt then
+                pcall(function()
+                    prompt.RequiresLineOfSight = false
+                    prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 12, dist + 25)
+                end)
+                if fireproximityprompt then
+                    fireproximityprompt(prompt)
+                else
+                    prompt:InputHoldBegin()
+                    task.wait(0.05)
+                    prompt:InputHoldEnd()
+                end
             end
         end)
 
@@ -3610,13 +3612,7 @@ local function openLootBoxTarget(boxObj)
             end
         end)
 
-        task.wait(0.08)
-    end
-
-    -- Return smoothly to combat position if farming
-    if canTeleportBox and hrp and hrp.Parent and canScriptMoveOrWarp() then
-        hrp.CFrame = prevCF
-        hrp.Velocity = Vector3.zero
+        task.wait(0.06)
     end
 
     return true
@@ -6913,11 +6909,11 @@ AutoSellTab:Button({
 })
 
 -- ==================== TAB 4: ADVANCED AUTO LOOT ====================
-LootTab:Section({ Title = "Drop Magnet & Vacuum", Opened = true })
+LootTab:Section({ Title = "🧲 Stealth Drop Magnet & Vacuum (ดูดของแบบเนียนๆ ไม่วาร์ป)", Opened = true })
 
 LootTab:Toggle({
-    Title = "Enable Auto Loot Drops",
-    Desc = "เปิดระบบดูดเก็บไอเทมที่ดรอปบนพื้นทั้งหมดแบบอัตโนมัติ",
+    Title = "Enable Auto Loot Drops (เปิดระบบเก็บของอัตโนมัติ)",
+    Desc = "เก็บไอเทมที่ดรอปบนพื้นทั้งหมดแบบอัตโนมัติโดยไม่ต้องวาร์ปตัวละครไปเก็บ",
     Value = Config.AutoLoot,
     Callback = function(state)
         Config.AutoLoot = state
@@ -6926,8 +6922,18 @@ LootTab:Toggle({
 })
 
 LootTab:Toggle({
-    Title = "Loot Priority (Instant Sweep)",
-    Desc = "เมื่อมอนตายและมีของตก จะแวะเก็บของให้หมดทันทีก่อนไปตีตัวต่อไป",
+    Title = "Stealth Magnet Pull (ดูดไอเทมลอยเข้าตัวแบบเนียนๆ)",
+    Desc = "ดึงไอเทมที่ตกบนพื้นให้ลอยดูดเข้าหาตัวละครเองแบบเนียนๆ ตัวละครยืนตีมอนต่อได้โดยไม่กระตุกหรือวาร์ป",
+    Value = Config.StealthMagnetLoot ~= false,
+    Callback = function(state)
+        Config.StealthMagnetLoot = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+LootTab:Toggle({
+    Title = "Loot Priority (เก็บของทันทีที่มอนตาย)",
+    Desc = "ดึงและเก็บไอเทมดรอปเข้าตัวทันทีระหว่างต่อสู้แบบเรียลไทม์",
     Value = Config.LootPriority,
     Callback = function(state)
         Config.LootPriority = state
@@ -6935,19 +6941,24 @@ LootTab:Toggle({
     end,
 })
 
-LootTab:Toggle({
-    Title = "Teleport Directly to Drops",
-    Desc = "วาร์ปแตะตัวไอเทมดรอปโดยตรงเพื่อทะลุระยะเช็คของเซิร์ฟเวอร์",
-    Value = Config.LootTeleport,
-    Callback = function(state)
-        Config.LootTeleport = state
+LootTab:Slider({
+    Title = "Loot Vacuum Radius (รัศมีดูดเก็บของอัตโนมัติ)",
+    Desc = "ระยะรัศมีในการดึงและดูดเก็บไอเทมรอบตัวละคร (ไม่ต้องวาร์ป)",
+    Value = {
+        Min = 20,
+        Max = 200,
+        Default = tonumber(Config.LootRadius) or 120,
+    },
+    Step = 5,
+    Callback = function(val)
+        Config.LootRadius = tonumber(val) or 120
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
 
 LootTab:Toggle({
-    Title = "Auto Open LootBox / Chests",
-    Desc = "เปิดกล่องสมบัติและหีบที่ดรอปอัตโนมัติ",
+    Title = "Auto Open LootBox / Chests (เปิดกล่องสมบัติระยะไกล)",
+    Desc = "เปิดกล่องสมบัติและหีบที่ดรอปอัตโนมัติจากระยะไกลโดยไม่ต้องวาร์ปตัวละครไปหากล่อง",
     Value = Config.AutoOpenLootBox,
     Callback = function(state)
         Config.AutoOpenLootBox = state
@@ -6956,10 +6967,10 @@ LootTab:Toggle({
 })
 
 LootTab:Button({
-    Title = "Manual Vacuum Drops Now",
+    Title = "Manual Vacuum Drops Now (กดดูดของรอบตัวทันที)",
     Callback = function()
         performAutoLoot()
-        WindUI:Notify({ Title = "Looting", Content = "ดูดเก็บของบนพื้นเรียบร้อย", Duration = 2, Icon = "sparkles" })
+        WindUI:Notify({ Title = "Stealth Looting 🧲", Content = "ดูดเก็บไอเทมรอบตัวแบบเนียนๆ เรียบร้อย!", Duration = 2, Icon = "sparkles" })
     end,
 })
 
@@ -8184,27 +8195,44 @@ task.spawn(function()
                 end
                 task.wait(2)
             elseif hrp and hum and hum.Health > 0 then
-                -- Remote instant pickup for nearby drops during combat
+                -- Stealth magnet & remote instant pickup for nearby drops during combat (zero character warp)
                 local dropsFolder = workspace:FindFirstChild("Drops")
                 if Config.AutoLoot and Config.LootPriority and dropsFolder then
+                    local maxCombatLootDist = tonumber(Config.LootRadius) or 120
+                    local nowServer = workspace:GetServerTimeNow()
                     for _, d in ipairs(dropsFolder:GetChildren()) do
-                        if d:IsA("BasePart") then
-                            local dDist = (d.Position - hrp.Position).Magnitude
-                            if dDist <= 8 then
-                                pcall(function()
-                                    PickupDrop:FireServer(true)
-                                    PickupDrop:FireServer(d)
-                                end)
-                                if firetouchinterest then
-                                    pcall(function()
-                                        firetouchinterest(hrp, d, 0)
-                                        firetouchinterest(hrp, d, 1)
-                                    end)
+                        local dp = d:IsA("BasePart") and d or (d:IsA("Model") and (d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)))
+                        if dp and dp.Parent then
+                            local owner = d:GetAttribute("OwnerUserId") or dp:GetAttribute("OwnerUserId")
+                            local freeAt = d:GetAttribute("FreeAt") or dp:GetAttribute("FreeAt")
+                            local canTake = true
+                            if owner and owner ~= 0 and owner ~= LocalPlayer.UserId then
+                                if freeAt and nowServer < freeAt then
+                                    canTake = false
                                 end
-                            elseif dDist <= 35 then
-                                pcall(function()
-                                    PickupDrop:FireServer(d)
-                                end)
+                            end
+                            if canTake then
+                                local dDist = (dp.Position - hrp.Position).Magnitude
+                                if dDist <= maxCombatLootDist then
+                                    if Config.StealthMagnetLoot ~= false then
+                                        pcall(function()
+                                            dp.CanCollide = false
+                                            dp.CFrame = hrp.CFrame
+                                        end)
+                                    end
+                                    pcall(function()
+                                        if RemotesLazy.PickupDrop then
+                                            RemotesLazy.PickupDrop:FireServer(true)
+                                            RemotesLazy.PickupDrop:FireServer(dp)
+                                        end
+                                    end)
+                                    if firetouchinterest then
+                                        pcall(function()
+                                            firetouchinterest(hrp, dp, 0)
+                                            firetouchinterest(hrp, dp, 1)
+                                        end)
+                                    end
+                                end
                             end
                         end
                     end
