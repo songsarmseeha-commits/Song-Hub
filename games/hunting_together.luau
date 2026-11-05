@@ -420,10 +420,10 @@ local Config = {
     AutoFarm = false,
     FarmMode = "Fly",            -- "Fly" (โหมดบินลอยตัว) or "Walk" (โหมดเดินปกติบนพื้น)
     WalkFarmSpeed = 26,          -- ความเร็วในการเดินฟาร์มเมื่ออยู่ในโหมดเดินปกติ (Walk Mode)
-    SafeFarm = true,
+    SafeFarm = false,
     SafeFarmExploit = true,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัยสมบูรณ์แบบ
     SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์ (พ้นระยะกวาดแนวนอน)
-    AdaptiveDistance = true,     -- ปรับระยะห่างตามอาวุธ (Archer/Mage 14 studs, Melee 5.8 studs)
+    AdaptiveDistance = false,     -- ปรับระยะห่างตามอาวุธ (Archer/Mage 14 studs, Melee 5.8 studs)
     FarmDistance = 14.0,         -- ค่าตั้งต้นระยะฟาร์ม
     AttackDelay = 0.15,
     SelectedMonster = "All",
@@ -3853,20 +3853,8 @@ local function getSmartFarmOffset(target)
         return dist, height, isRanged
     end
 
-    if Config.AdaptiveDistance then
-        if isRanged then
-            -- Ranged: Stay 13.5 - 16.0 studs back (Leader slam has 11 studs radius, so 16.0 studs is safe)
-            dist = (isBoss or isLeader) and 16.0 or math.clamp(atkRange * 0.45, 13.5, 16.0)
-            height = math.clamp(Config.SafeFarmHeight or 5.2, 4.2, 8.0)
-        else
-            -- Melee: Stay 4.2 - 6.0 studs back and float up (perfect weapon reach, 0% misses)
-            dist = isBoss and 6.0 or (isLeader and 5.5 or math.clamp(Config.FarmDistance or 4.5, 3.8, 5.2))
-            height = isBoss and 3.8 or math.clamp(Config.SafeFarmHeight or 1.2, 0.5, 2.2)
-        end
-    else
-        dist = isBoss and 6.0 or math.clamp(Config.FarmDistance or 5.5, 3.0, 25.0)
-        height = isBoss and 3.8 or math.clamp(Config.SafeFarmHeight or 5.2, 2.0, 10.0)
-    end
+    dist = isBoss and 6.0 or math.clamp(tonumber(Config.FarmDistance) or 5.5, 3.0, 25.0)
+    height = isBoss and 3.8 or math.clamp(tonumber(Config.SafeFarmHeight) or 5.2, 0.5, 15.0)
 
     return dist, height, isRanged
 end
@@ -5006,33 +4994,11 @@ FarmTab:Slider({
     end,
 })
 
-FarmTab:Toggle({
-    Title = "Safe Farm (Blindspot & Out-Range)",
-    Desc = "เปิดใช้งานช่องโหว่ระยะมุมอับสายตา & ระยะปลอดภัยสมบูรณ์แบบ มอนสเตอร์ปกติไม่สามารถตีโดนได้ 100%",
-    Value = Config.SafeFarm,
-    Callback = function(state)
-        Config.SafeFarm = state
-        if Config.AutoSave then SaveConfig(true) end
-        if not state then
-            currentSafeHoldTarget = nil
-            safeHoldUntil = 0
-        end
-    end,
-})
-
-FarmTab:Toggle({
-    Title = "Adaptive Weapon Distance",
-    Desc = "ปรับระยะห่างตามอาวุธของผู้เล่นอัตโนมัติ (Archer/Mage ยืน 14 studs มอนสเตอร์ตีไม่ถึง, Melee ยืน 5.8 studs ลอยเหนือมุมกวาด)",
-    Value = Config.AdaptiveDistance,
-    Callback = function(state)
-        Config.AdaptiveDistance = state
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
 FarmTab:Slider({
-    Title = "Safe Farm Height (ความสูงลอยตัว)",
-    Value = { Min = 3, Max = 10, Default = Config.SafeFarmHeight },
+    Title = "Farm Height (ความสูงลอยตัวขณะบิน)",
+    Desc = "ปรับความสูงลอยตัวเหนือมอนสเตอร์ขณะฟาร์มในโหมดบิน (Fly Mode)",
+    Value = { Min = 1, Max = 15, Default = Config.SafeFarmHeight or 5 },
+    Step = 0.5,
     Callback = function(val)
         Config.SafeFarmHeight = val
         if Config.AutoSave then SaveConfig(true) end
@@ -5040,8 +5006,10 @@ FarmTab:Slider({
 })
 
 FarmTab:Slider({
-    Title = "Manual Farm Distance (ระยะห่าง)",
-    Value = { Min = 3, Max = 25, Default = Config.FarmDistance },
+    Title = "Farm Distance (ระยะห่าง)",
+    Desc = "ปรับระยะห่างจากมอนสเตอร์ขณะทำการโจมตี",
+    Value = { Min = 3, Max = 25, Default = Config.FarmDistance or 5 },
+    Step = 0.5,
     Callback = function(val)
         Config.FarmDistance = val
         if Config.AutoSave then SaveConfig(true) end
@@ -5073,53 +5041,6 @@ FarmTab:Button({
         local updated = getMonsterList()
         monsterDropdown:SetValues(updated)
         WindUI:Notify({ Title = "Updated", Content = "อัปเดตมอนสเตอร์: " .. #updated .. " ชนิด", Duration = 2, Icon = "refresh-cw" })
-    end,
-})
-
-FarmTab:Section({ Title = "🐺 Mob Gathering & Cluster Farm (ฟาร์มลากมอนรวมฝูง)", Opened = true })
-
-FarmTab:Toggle({
-    Title = "Enable Mob Gathering (เปิดระบบรวมฝูงมอน)",
-    Desc = "ดึง Aggro มอนสเตอร์รอบตัวให้วิ่งเข้ามารวมกันเป็นกลุ่มก้อน แล้วระเบิดสกิลหมู่ทำลายล้างพร้อมกัน",
-    Value = Config.MobGathering,
-    Callback = function(state)
-        Config.MobGathering = state
-        if Config.AutoSave then SaveConfig(true) end
-        if state then
-            WindUI:Notify({ Title = "Mob Gathering", Content = "เปิดระบบลากมอนสเตอร์รวมฝูงแล้ว!", Duration = 2, Icon = "users" })
-        else
-            WindUI:Notify({ Title = "Mob Gathering", Content = "ปิดระบบลากมอนสเตอร์รวมฝูง", Duration = 2, Icon = "square" })
-        end
-    end,
-})
-
-FarmTab:Slider({
-    Title = "Gather Pull Radius (รัศมีดึงมอนรวมกลุ่ม)",
-    Desc = "ระยะในการกวาดมอนสเตอร์รอบตัวเข้ามา (30 - 80 studs)",
-    Value = { Min = 30, Max = 80, Default = Config.GatherRadius or 55 },
-    Callback = function(val)
-        Config.GatherRadius = val
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-FarmTab:Slider({
-    Title = "Target Group Size (จำนวนมอนสเตอร์รวมฝูง)",
-    Desc = "จำนวนมอนสเตอร์สูงสุดที่จะดึงมารวมฝูง (2 - 8 ตัว)",
-    Value = { Min = 2, Max = 8, Default = Config.MaxGatherCount or 6 },
-    Callback = function(val)
-        Config.MaxGatherCount = val
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-FarmTab:Toggle({
-    Title = "Full AoE Multi-Target Burst (ระเบิดสกิลหมู่)",
-    Desc = "สาดสกิล AoE (Big Kaboom, Tar Flask, Neko Flask, Thunderstorm ฯลฯ) ใส่ทุกตัวในฝูงพร้อมกัน",
-    Value = Config.AoEMultiBurst,
-    Callback = function(state)
-        Config.AoEMultiBurst = state
-        if Config.AutoSave then SaveConfig(true) end
     end,
 })
 
@@ -7339,7 +7260,7 @@ task.spawn(function()
                                 else
                                     farmH = 0.2
                                 end
-                            elseif Config.SafeFarm then
+                            else
                                 farmH = (Config.FarmMode == "Walk") and 0.0 or safeHeight
                             end
 
@@ -7493,23 +7414,8 @@ task.spawn(function()
                             end)
                         end
 
-                        -- 4. Multi-Target Mob Gathering & Kill Aura AoE
-                        if Config.MobGathering then
-                            local cluster, clusterCenter = getMobCluster(Config.GatherRadius or 55, Config.MaxGatherCount or 6)
-                            if #cluster > 1 then
-                                -- Aggro Taunt: Tag all monsters in cluster so they swarm towards player
-                                for _, mob in ipairs(cluster) do
-                                    if mob ~= target and isMonsterAlive(mob) then
-                                        pcall(function()
-                                            SetTarget:FireServer(mob, false, true)
-                                        end)
-                                        if Config.AoEMultiBurst then
-                                            castAllAoESkills(mob)
-                                        end
-                                    end
-                                end
-                            end
-                        elseif Config.KillAura then
+                        -- 4. Kill Aura AoE (if enabled)
+                        if Config.KillAura then
                             local nearby = getNearbyMonsters(Config.KillAuraRadius or 20)
                             for _, mob in ipairs(nearby) do
                                 if mob ~= target and isMonsterAlive(mob) then
