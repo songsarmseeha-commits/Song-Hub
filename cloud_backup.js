@@ -90,8 +90,8 @@ const CloudBackup = {
             const existingKeys = db.getAllKeys ? db.getAllKeys() : [];
             const existingUsers = db.getAllWhitelistedUsers ? db.getAllWhitelistedUsers() : [];
 
-            if (!force && (existingKeys.length > 0 || existingUsers.length > 0)) {
-                console.log(`[Cloud Backup] ℹ️ Local database already has ${existingKeys.length} keys and ${existingUsers.length} whitelisted users. Skipping auto-restore.`);
+            if (!force && existingKeys.length > 0) {
+                console.log(`[Cloud Backup] ℹ️ Local database already has ${existingKeys.length} keys. Skipping auto-restore.`);
                 return false;
             }
 
