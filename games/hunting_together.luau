@@ -421,7 +421,7 @@ Config = {
     SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์ (พ้นระยะกวาดแนวนอน)
     AdaptiveDistance = false,     -- ปรับระยะห่างตามอาวุธ (Archer/Mage 14 studs, Melee 5.8 studs)
     FarmDistance = 14.0,         -- ค่าตั้งต้นระยะฟาร์ม
-    AttackDelay = 0.15,
+    AttackDelay = 0.08,
     SelectedMonster = "All",
     AutoBoss = true,            -- Automatically hunt Bosses & Mini-Bosses
     AutoWarpToBoss = false,     -- Automatically warp to World Boss Arenas (ปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการวาปไปกลับเอง)
@@ -549,7 +549,7 @@ Config = {
     AutoRepeatDungeon = false,
     ReturnToFarmAfterDungeon = false,          -- ปิดไว้เพื่อไม่ให้แอบเปิด Auto Farm เอง
     DungeonSafeHeight = 5.2,                  -- ความสูงลอยตัวเหนือกราวด์แอตแทกของบอส
-    DungeonAttackDelay = 0.12,                -- ความเร็วโจมตีในดันเจี้ยน
+    DungeonAttackDelay = 0.08,                -- ความเร็วโจมตีในดันเจี้ยน
 
     -- 🎥 Streamer Mode (โหมดสตรีมเมอร์ & ปกปิดชื่อ)
     StreamerMode = false,
@@ -869,14 +869,16 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
         local rayParamsFloor = RaycastParams.new()
         rayParamsFloor.FilterType = Enum.RaycastFilterType.Exclude
         local char = LocalPlayer.Character
-        local monstersFolder = workspace:FindFirstChild("Monsters")
+do
+    local monstersFolder = workspace:FindFirstChild("Monsters")
         local ignore = { char }
         if monstersFolder then table.insert(ignore, monstersFolder) end
         rayParamsFloor.FilterDescendantsInstances = ignore
         local floorRay = workspace:Raycast(Vector3.new(targetPos.X, 75.0, targetPos.Z), Vector3.new(0, -40.0, 0), rayParamsFloor)
         if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
             floorY = floorRay.Position.Y + 2.8
-        end
+end
+end
     end)
 
     -- If fly mode (not Walk), add slight vertical hover within melee hit range
@@ -2954,6 +2956,10 @@ end)
 
 -- ==================== SMART SKILLS & COMBAT ENGINE ====================
 local skillLastCast = {}
+local cachedHotbarSkills = {}
+local lastGlobalSkillCast = 0
+local lastCombatLootScan = 0
+local evaluateAndCastBestSkill = nil
 
 local function isSlotSelected(slotNum)
     local cfg = Config.SelectedSkillSlots
@@ -3010,56 +3016,191 @@ pcall(function()
     end
 end)
 
-local SkillCooldownDefaults = {
-    twinfang = 0.55,
-    venomknife = 7.0,
-    shadowburst = 6.0,
-    cross_slash = 5.0,
-    sonicblow = 8.0,
-    soulstrike = 3.0,
-    firebolt = 3.0,
-    coldbolt = 3.0,
-    lightningbolt = 3.0,
-    magnum_break = 6.0,
-    bash = 2.0,
-    arrowshower = 6.0,
-    double_strafe = 2.0,
-    vanish = 20.0,
-    stealth = 15.0,
-    iaigiri = 0.55,
-    obororanbu = 2.5,
-    issen = 3.0,
-    meikyo = 8.0,
-    shukuchi = 4.0,
-}
-
-local function castSmartSkill(skillId, target)
-    if not skillId or skillId == "" then return false end
-    local now = os.clock()
-    local cd = SkillCooldownDefaults[skillId] or 3.0
-
-    if SkillDataModule and SkillDataModule.Skills and SkillDataModule.Skills[skillId] then
-        local sdef = SkillDataModule.Skills[skillId]
-        if type(sdef.Cooldown) == "number" then
-            cd = sdef.Cooldown
-        elseif sdef.Cooldown == "aspd" then
-            cd = 0.55
+local function updateHotbarCache()
+    table.clear(cachedHotbarSkills)
+    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+    if not hotbarRaw or hotbarRaw == "" then return end
+    pcall(function()
+        local decoded = HttpService:JSONDecode(hotbarRaw)
+        if type(decoded) == "table" then
+            for i = 1, 8 do
+                local val = decoded[tostring(i)]
+                if type(val) == "string" and val:find("^skill:") then
+                    local sId = val:sub(7):lower()
+                    local sData = SkillDataModule and SkillDataModule.Skills and SkillDataModule.Skills[sId]
+                    local isBuff = (sData and (sData.Kind == "buff" or sData.Type == "buff" or sData.Buff ~= nil))
+                    if not isBuff then
+                        local buffNames = { meikyo = true, vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true, endure = true }
+                        if buffNames[sId] then isBuff = true end
+                    end
+                    local kind = sData and sData.Kind or (isBuff and "buff" or "active")
+                    local range = sData and (sData.Range or sData.Radius or sData.Length) or 200
+                    cachedHotbarSkills[i] = {
+                        slotNum = i,
+                        id = sId,
+                        isBuff = isBuff,
+                        kind = kind,
+                        range = range,
+                    }
+                end
+            end
         end
-    end
+    end)
+end
 
-    if (now - (skillLastCast[skillId] or 0)) < cd then
+pcall(function()
+    updateHotbarCache()
+    if trackConn then
+        trackConn(LocalPlayer:GetAttributeChangedSignal("HotbarJson"):Connect(updateHotbarCache))
+    end
+end)
+
+local function isBuffActive(buffId)
+    local raw = LocalPlayer:GetAttribute("BuffsJson")
+    if not raw or raw == "" then return false end
+    return raw:lower():find(buffId:lower()) ~= nil
+end
+
+local function isHotbarSlotReady(slotNum, sInfo)
+    local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
+    local pad = ap and ap:FindFirstChild("ActionPad")
+    local slot = pad and pad:FindFirstChild("Slot" .. slotNum)
+    if not slot then return false end
+
+    -- 1. Real UI cooldown inspection (text & shade frame)
+    local cdLabel = slot:FindFirstChild("Cooldown")
+    if cdLabel and cdLabel.Visible and cdLabel.Text ~= "" then
+        return false
+    end
+    local shade = slot:FindFirstChild("CooldownShade")
+    if shade and shade.Visible then
         return false
     end
 
+    -- 2. Real SP Requirement
     local currentSp = LocalPlayer:GetAttribute("SP") or 999
-    if currentSp < 4 then return false end
+    local itemCount = slot:FindFirstChild("ItemCount")
+    if itemCount and itemCount.Text ~= "" then
+        local spCost = tonumber(itemCount.Text:match("%d+"))
+        if spCost and currentSp < spCost then
+            return false
+        end
+    elseif currentSp < 4 then
+        return false
+    end
 
-    -- Safe, non-blocking remote skill execution
+    -- 3. Safety micro-gap between repeated casts of same skill
+    local now = os.clock()
+    if (now - (skillLastCast[sInfo.id] or 0)) < 0.08 then
+        return false
+    end
+
+    return true
+end
+
+local function executeSmartSkill(slotNum, sInfo, target)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local now = os.clock()
+
+    -- Aim towards target immediately for line/cone/targeted attacks
+    if target and target.Parent then
+        local tHrp = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+        if tHrp then
+            hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tHrp.Position.X, hrp.Position.Y, tHrp.Position.Z))
+        end
+    end
+
+    -- 1. Remote Fire to server
     if UseSkill then
         pcall(function()
-            UseSkill:FireServer(skillId, target)
-            skillLastCast[skillId] = now
+            UseSkill:FireServer(sInfo.id, sInfo.isBuff and nil or target)
         end)
+    end
+
+    -- 2. Trigger Client Slot Button (plays native animations and sounds)
+    pcall(function()
+        local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
+        local pad = ap and ap:FindFirstChild("ActionPad")
+        local slotBtn = pad and pad:FindFirstChild("Slot" .. slotNum)
+        if slotBtn and getconnections then
+            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Down)) do
+                pcall(function() conn:Fire() end)
+            end
+        end
+    end)
+
+    skillLastCast[sInfo.id] = now
+    lastGlobalSkillCast = now
+    return true
+end
+
+evaluateAndCastBestSkill = function(target)
+    if not Config.AutoUseSkills then return false end
+    if isEnteringDungeon or isWaitingForParty then return false end
+    local now = os.clock()
+    if (now - lastGlobalSkillCast) < 0.06 then return false end
+
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    local targetPos = target and (target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart) and (target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart).Position
+    local distToTarget = targetPos and (hrp.Position - targetPos).Magnitude or math.huge
+
+    local bestBuff = nil
+    local bestBurst = nil
+    local bestCounter = nil
+    local bestSpam = nil
+    local bestOther = nil
+
+    for slotNum = 1, 7 do
+        if isSlotSelected(slotNum) then
+            local sInfo = cachedHotbarSkills[slotNum]
+            if sInfo and isHotbarSlotReady(slotNum, sInfo) then
+                if sInfo.isBuff then
+                    -- Priority 1: Self Buffs (cast if missing)
+                    if not isBuffActive(sInfo.id) and not bestBuff then
+                        bestBuff = sInfo
+                    end
+                elseif target and isMonsterAlive(target) and distToTarget <= (sInfo.range or 200) then
+                    -- Priority 2: AoE / Burst
+                    if sInfo.kind == "aoe_self" or sInfo.kind == "aoe_target" or sInfo.id == "obororanbu" or sInfo.id == "magnum_break" or sInfo.id == "arrowshower" or sInfo.id == "bigkaboom" or sInfo.id == "thunderstorm" or sInfo.id == "cartstrike" then
+                        if not bestBurst then bestBurst = sInfo end
+                    -- Priority 3: Counter / Defensive
+                    elseif sInfo.kind == "counter" or sInfo.id == "issen" then
+                        if not bestCounter then bestCounter = sInfo end
+                    -- Priority 4: Primary Spammer / Direct Hits (IAIGIRI etc.)
+                    elseif sInfo.kind == "line" or sInfo.id == "iaigiri" or sInfo.id == "bash" or sInfo.id == "double_strafe" or sInfo.id:find("bolt") or sInfo.id == "twinfang" or sInfo.id == "venomknife" then
+                        if not bestSpam then bestSpam = sInfo end
+                    else
+                        if not bestOther then bestOther = sInfo end
+                    end
+                end
+            end
+        end
+    end
+
+    local chosen = bestBuff or bestBurst or bestCounter or bestSpam or bestOther
+    if chosen then
+        return executeSmartSkill(chosen.slotNum, chosen, chosen.isBuff and nil or target)
+    end
+    return false
+end
+
+local function castSmartSkill(skillId, target)
+    if not skillId or skillId == "" then return false end
+    for slotNum, sInfo in pairs(cachedHotbarSkills) do
+        if sInfo.id == skillId:lower() then
+            if isHotbarSlotReady(slotNum, sInfo) then
+                return executeSmartSkill(slotNum, sInfo, target)
+            end
+            return false
+        end
+    end
+    if UseSkill then
+        pcall(function() UseSkill:FireServer(skillId, target) end)
         return true
     end
     return false
@@ -3115,21 +3256,7 @@ end
 
 local function castAllAoESkills(targetMob)
     if not Config.AutoUseSkills and not Config.AoEMultiBurst then return end
-    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-    if hotbarRaw and hotbarRaw ~= "" then
-        pcall(function()
-            local hotbar = HttpService:JSONDecode(hotbarRaw)
-            for slotNum = 1, 7 do
-                if isSlotSelected(slotNum) then
-                    local slotVal = hotbar[tostring(slotNum)]
-                    if type(slotVal) == "string" and slotVal:find("^skill:") then
-                        local sname = slotVal:sub(7)
-                        castSmartSkill(sname, targetMob)
-                    end
-                end
-            end
-        end)
-    end
+    evaluateAndCastBestSkill(targetMob)
 end
 
 isMonsterAlive = function(monster)
@@ -4319,12 +4446,14 @@ end
 for _, mob in ipairs(CollectionService:GetTagged("Monster")) do
     task.spawn(hookMonsterEvasion, mob)
 end
-local monstersFolder = workspace:FindFirstChild("Monsters")
+do
+    local monstersFolder = workspace:FindFirstChild("Monsters")
 if monstersFolder then
     for _, mob in ipairs(monstersFolder:GetChildren()) do
         if mob:IsA("Model") then
             task.spawn(hookMonsterEvasion, mob)
-        end
+    end
+end
     end
     trackConn(monstersFolder.ChildAdded:Connect(function(mob)
         if not isScriptAlive() then return end
@@ -5971,8 +6100,10 @@ FarmTab:Slider({
 })
 
 FarmTab:Slider({
-    Title = "Attack Delay",
-    Value = { Min = 0.05, Max = 0.5, Default = Config.AttackDelay },
+    Title = "Attack Delay (ความเร็วในการโจมตี / ASPD Turbo)",
+    Desc = "ปรับความเร็วดีเลย์การโจมตี (ค่ายิ่งต่ำยิ่งตีรัวเร็วตามค่า ASPD)",
+    Value = { Min = 0.03, Max = 0.4, Default = Config.AttackDelay or 0.08 },
+    Step = 0.01,
     Callback = function(val)
         Config.AttackDelay = val
         if Config.AutoSave then SaveConfig(true) end
@@ -8188,7 +8319,10 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         local inDungeon = isInsideDungeon()
-        local attackDelay = (inDungeon and Config.DungeonAttackDelay) or Config.AttackDelay or 0.15
+        -- Dynamic ASPD-scaled attack delay: high ASPD character attacks at maximum speed
+        local aspd = tonumber(LocalPlayer:GetAttribute("ASPD")) or 120
+        local aspdDelay = math.clamp(0.035 + (200 - aspd) * 0.0012, 0.035, 0.16)
+        local attackDelay = (inDungeon and Config.DungeonAttackDelay) or math.min(aspdDelay, tonumber(Config.AttackDelay) or 0.10)
         task.wait(attackDelay)
 
         local shouldCombat = false
@@ -8239,9 +8373,11 @@ task.spawn(function()
                 end
                 task.wait(2)
             elseif hrp and hum and hum.Health > 0 then
-                -- Stealth magnet & remote instant pickup for nearby drops during combat (zero character warp)
+                -- Stealth magnet & remote instant pickup for nearby drops during combat (throttled to keep attack 100% fluid)
+                local nowClock = os.clock()
                 local dropsFolder = workspace:FindFirstChild("Drops")
-                if Config.AutoLoot and Config.LootPriority and dropsFolder then
+                if Config.AutoLoot and Config.LootPriority and dropsFolder and (nowClock - lastCombatLootScan) >= 0.5 then
+                    lastCombatLootScan = nowClock
                     local maxCombatLootDist = tonumber(Config.LootRadius) or 120
                     local nowServer = workspace:GetServerTimeNow()
                     for _, d in ipairs(dropsFolder:GetChildren()) do
@@ -8398,13 +8534,8 @@ task.spawn(function()
                                         local intermediate = hrp.Position:Lerp(playerPos, alpha)
                                         hrp.CFrame = CFrame.lookAt(intermediate, targetPos + Vector3.new(0, 0.6, 0))
                                         hrp.Velocity = Vector3.zero
-                                        task.wait(0.02)
+                                        task.wait(0.015)
                                     end
-                                elseif distToTarget > 25 then
-                                    local mid = hrp.Position:Lerp(playerPos, 0.5)
-                                    hrp.CFrame = CFrame.lookAt(mid, targetPos + Vector3.new(0, 0.6, 0))
-                                    hrp.Velocity = Vector3.zero
-                                    task.wait(0.02)
                                 end
 
                                 hrp.CFrame = CFrame.lookAt(playerPos, targetPos + Vector3.new(0, 0.6, 0))
@@ -8431,23 +8562,9 @@ task.spawn(function()
                         end)
 
 
-                        -- 3. Smart Skills Trigger (Auto casts selected slots 1-7 in order)
+                        -- 3. Smart Skills Trigger (Weaves optimal ready skill smoothly with attack)
                         if Config.AutoUseSkills then
-                            pcall(function()
-                                local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-                                if hotbarRaw and type(hotbarRaw) == "string" and hotbarRaw ~= "" then
-                                    local hotbar = HttpService:JSONDecode(hotbarRaw)
-                                    for slotNum = 1, 7 do
-                                        if isSlotSelected(slotNum) then
-                                            local slotVal = hotbar[tostring(slotNum)]
-                                            if type(slotVal) == "string" and slotVal:find("^skill:") then
-                                                local sname = slotVal:sub(7)
-                                                castSmartSkill(sname, target)
-                                            end
-                                        end
-                                    end
-                                end
-                            end)
+                            evaluateAndCastBestSkill(target)
                         end
 
                         -- 4. Kill Aura AoE (if enabled)
@@ -8455,7 +8572,7 @@ task.spawn(function()
                             local nearby = getNearbyMonsters(Config.KillAuraRadius or 20)
                             for _, mob in ipairs(nearby) do
                                 if mob ~= target and isMonsterAlive(mob) then
-                                    castAllAoESkills(mob)
+                                    evaluateAndCastBestSkill(mob)
                                 end
                             end
                         end
@@ -8516,33 +8633,22 @@ task.spawn(function()
     end
 end)
 
--- 5. Auto Buffs Loop (Equipped Hotbar Buffs)
+-- 5. Dedicated High-Speed Smart Skill & Buff Engine Loop (Runs independently of basic attack)
 task.spawn(function()
     while isScriptAlive() do
-        task.wait(2)
-        if isEnteringDungeon or isWaitingForParty then continue end
-        if Config.AutoUseBuffs and Config.AutoFarm then
-            local char = LocalPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                pcall(function()
-                    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-                    if hotbarRaw and hotbarRaw ~= "" then
-                        local hotbar = HttpService:JSONDecode(hotbarRaw)
-                        local buffNames = { meikyo = true, vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true }
-                        for slotNum = 1, 7 do
-                            if isSlotSelected(slotNum) then
-                                local slotVal = hotbar[tostring(slotNum)]
-                                if type(slotVal) == "string" and slotVal:find("^skill:") then
-                                    local sname = slotVal:sub(7)
-                                    if buffNames[sname:lower()] then
-                                        castSmartSkill(sname, nil)
-                                    end
-                                end
-                            end
-                        end
+        task.wait(0.035) -- ~28 FPS responsive skill evaluation
+        if Config.AutoUseSkills and canScriptMoveOrWarp() and not isEnteringDungeon and not isWaitingForParty then
+            local inDungeon = isInsideDungeon()
+            local activeCombat = inDungeon and (Config.AutoDungeon or Config.AutoFarm) or Config.AutoFarm
+            if activeCombat then
+                local target = currentCombatTarget
+                if not target or not isMonsterAlive(target) then
+                    local ct = LocalPlayer:FindFirstChild("CurrentTarget")
+                    if ct and ct.Value and isMonsterAlive(ct.Value) then
+                        target = ct.Value
                     end
-                end)
+                end
+                evaluateAndCastBestSkill(target)
             end
         end
     end
