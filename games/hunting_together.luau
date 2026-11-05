@@ -38,15 +38,6 @@ local CollectionService = game:GetService("CollectionService")
 local LocalPlayer = Players.LocalPlayer
 local Remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 5)
 
--- Lazy Remote cache table to conserve top-level local registers
-local RemotesLazy = setmetatable({}, {
-    __index = function(self, key)
-        local r = getRemote(key, 1)
-        rawset(self, key, r)
-        return r
-    end
-})
-
 -- Safe remote getter that never blocks indefinitely
 local function getRemote(name, timeout)
     if not Remotes then
@@ -61,6 +52,17 @@ local function getRemote(name, timeout)
     end
     return r
 end
+
+-- Lazy Remote cache table to conserve top-level local registers
+local RemotesLazy = setmetatable({}, {
+    __index = function(self, key)
+        local r = getRemote(key)
+        if r then
+            rawset(self, key, r)
+        end
+        return r
+    end
+})
 
 -- Core Remotes
 local SetTarget = getRemote("SetTarget")
@@ -172,7 +174,22 @@ end
 pcall(safeDestroyExistingUI)
 
 -- Forward declarations for scope stability across functions
+local WindUI = nil
+local Config = nil
 local currentCombatTarget = nil
+local currentDungeonPillar = nil
+local activeBossFight = nil
+local isReturningFromBoss = false
+local isCheckingBossArena = false
+local outOfZoneTicks = 0
+local isLooting = false
+local isOpeningBox = false
+local isKnockingHouse = false
+local isPullingGacha = false
+local getMonsterCombatPart = nil
+local getMonsterList = nil
+local getBossList = nil
+local trackBossDeath = nil
 local currentSafeHoldTarget = nil
 local safeHoldUntil = 0
 local safeHoldReason = ""
@@ -322,6 +339,15 @@ isMonsterAlive = function(monster)
     return mHrp ~= nil
 end
 
+getMonsterCombatPart = function(monster)
+    if not monster then return nil end
+    return monster:FindFirstChild("HumanoidRootPart")
+        or monster.PrimaryPart
+        or monster:FindFirstChild("Base")
+        or monster:FindFirstChild("Shaft")
+        or monster:FindFirstChildOfClass("BasePart")
+end
+
 isBossMonster = function(monster)
     if not monster or not monster.Parent then return false end
     if monster:GetAttribute("IsBoss") == true then return true end
@@ -381,7 +407,7 @@ end
 -- ==================== CONFIGURATION SYSTEM ====================
 local CONFIG_FILE = "HuntingTogether_Config_" .. tostring(LocalPlayer.UserId) .. ".json"
 
-local Config = {
+Config = {
     -- Window & Controls
     ToggleKey = "RightControl",
     AutoSave = true,
@@ -2258,7 +2284,7 @@ travelToZone = function(targetField, fieldName, isManual)
 
     -- 3. Sync zone warp with server remote
     pcall(function()
-        if WarpTo then
+        if RemotesLazy.WarpTo then
             RemotesLazy.WarpTo:FireServer(targetField)
         end
     end)
@@ -2309,10 +2335,10 @@ travelToZone = function(targetField, fieldName, isManual)
 end
 
 -- ==================== AUTO RETURN TO PROGRESSION AFTER BOSS ====================
-local activeBossFight = nil
-local isReturningFromBoss = false
+activeBossFight = nil
+isReturningFromBoss = false
 local trackedBossDeaths = {}
-local isCheckingBossArena = false
+isCheckingBossArena = false
 local lastBossWarpCheckTime = 0
 
 local BossZones = {
@@ -2539,7 +2565,7 @@ local function handlePostBossReturn(bossName, deathPos)
     end)
 end
 
-local function trackBossDeath(boss)
+trackBossDeath = function(boss)
     if not boss or not boss:IsA("Model") or trackedBossDeaths[boss] then return end
     trackedBossDeaths[boss] = true
 
@@ -2583,7 +2609,7 @@ local function trackBossDeath(boss)
     end)
 end
 
-local outOfZoneTicks = 0
+outOfZoneTicks = 0
 local function checkAutoProgression(force)
     -- Only proceed if AutoProgression is enabled or forced
     if not Config.AutoProgression and not force then return end
@@ -2631,21 +2657,21 @@ end
 -- ==================== AUTO EQUIP BEST GEAR SYSTEM ====================
 local function executeAutoEquipBest()
     -- 1. Native best armor and accessories
-    if Config.AutoEquipBest and EquipItem then
+    if Config.AutoEquipBest and RemotesLazy.EquipItem then
         pcall(function()
             RemotesLazy.EquipItem:FireServer("@best")
         end)
     end
 
     -- 2. Native auto card equip
-    if Config.AutoEquipCards and CardAction then
+    if Config.AutoEquipCards and RemotesLazy.CardAction then
         pcall(function()
             RemotesLazy.CardAction:FireServer("auto")
         end)
     end
 
     -- 3. Custom Best Weapon Selector
-    if Config.AutoEquipBestWeapon and EquipWeapon then
+    if Config.AutoEquipBestWeapon and RemotesLazy.EquipWeapon then
         pcall(function()
             local playerLevel = LocalPlayer:GetAttribute("Level") or 1
             local gearRaw = LocalPlayer:GetAttribute("GearJson") or "{}"
@@ -2681,7 +2707,7 @@ local function executeAutoEquipBest()
 end
 
 -- ==================== HELPER FUNCTIONS ====================
-local function getMonsterList()
+getMonsterList = function()
     local list = {"All"}
     local seen = {}
     local folder = workspace:FindFirstChild("Monsters")
@@ -3065,7 +3091,7 @@ isMonsterAlive = function(monster)
     return mHrp ~= nil
 end
 
-local function getMonsterCombatPart(monster)
+getMonsterCombatPart = function(monster)
     if not monster then return nil end
     return monster:FindFirstChild("HumanoidRootPart")
         or monster.PrimaryPart
@@ -3086,7 +3112,7 @@ isBossMonster = function(monster)
     return false
 end
 
-local function getBossList()
+getBossList = function()
     local list = {"All Bosses", "Pack Leaders Only"}
     local seen = {["All Bosses"] = true, ["Pack Leaders Only"] = true}
     local folder = workspace:FindFirstChild("Monsters")
@@ -3333,7 +3359,7 @@ local function getNearbyMonsters(radius)
 end
 
 -- ==================== ADVANCED AUTO LOOT & VACUUM ====================
-local isLooting = false
+isLooting = false
 
 local function performAutoLoot()
     if isLooting or isWarpingZone or isSelling or isEnteringDungeon or isWaitingForParty then return end
@@ -3463,7 +3489,7 @@ local function performAutoLoot()
     isLooting = false
 end
 
-local isOpeningBox = false
+isOpeningBox = false
 local boxRecentAttempts = setmetatable({}, {__mode = "k"})
 
 local function openLootBoxTarget(boxObj)
@@ -3535,7 +3561,7 @@ local function openLootBoxTarget(boxObj)
         end
 
         pcall(function()
-            if OpenLootBox then
+            if RemotesLazy.OpenLootBox then
                 RemotesLazy.OpenLootBox:FireServer(boxPart)
                 if boxModel then
                     RemotesLazy.OpenLootBox:FireServer(boxModel)
@@ -3660,8 +3686,8 @@ end
 
 
 -- ==================== 🎃 HALLOWEEN EVENT SYSTEM ENGINE ====================
-local isKnockingHouse = false
-local isPullingGacha = false
+isKnockingHouse = false
+isPullingGacha = false
 
 local function getHalloweenInventory()
     local candy = 0
@@ -3752,7 +3778,7 @@ local function performTrickTreat(forceVisit)
 end
 
 local function performHalloweenGacha(pullCount)
-    if isPullingGacha or not GachaPull then return false end
+    if isPullingGacha or not RemotesLazy.GachaPull then return false end
     local _, heads = getHalloweenInventory()
     local count = pullCount or ((Config.GachaPullType == "1x Pull (10 Heads)") and 1 or 10)
     local cost = (count == 1) and 10 or 100
@@ -4054,7 +4080,7 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
 
     -- 2. Call game-native Dash Remote (triggers server dash, i-frames, sound & animations)
     pcall(function()
-        if Dash then
+        if RemotesLazy.Dash then
             RemotesLazy.Dash:FireServer()
         end
     end)
@@ -4262,7 +4288,7 @@ trackConn(CollectionService:GetInstanceAddedSignal("Monster"):Connect(hookMonste
 
 -- Boss AoE Telegraph Danger Detection (BossFx)
 pcall(function()
-    if BossFx then
+    if RemotesLazy.BossFx then
         trackConn(RemotesLazy.BossFx.OnClientEvent:Connect(function(action, bossModel, skillName, zones, duration)
             if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge then return end
             local inDungeon = isInsideDungeon()
@@ -4379,7 +4405,7 @@ end)
 
 -- Monster Projectile Detection (MonsterProjectile)
 pcall(function()
-    if MonsterProjectile then
+    if RemotesLazy.MonsterProjectile then
         trackConn(RemotesLazy.MonsterProjectile.OnClientEvent:Connect(function(mob, targetChar, speed)
             if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge or not Config.DodgeProjectiles then return end
             if targetChar == LocalPlayer.Character then
@@ -4699,7 +4725,7 @@ local function executeAutoSell(silent)
 
     for _, batch in ipairs(batches) do
         pcall(function()
-            if BagSell then
+            if RemotesLazy.BagSell then
                 RemotesLazy.BagSell:FireServer(batch)
             end
         end)
@@ -4708,7 +4734,7 @@ local function executeAutoSell(silent)
 
     -- Also fire ShopSellJunk to ensure any remaining monster junk drops are sold
     pcall(function()
-        if ShopSellJunk then
+        if RemotesLazy.ShopSellJunk then
             RemotesLazy.ShopSellJunk:FireServer()
         end
     end)
@@ -4960,7 +4986,7 @@ trackConn(LocalPlayer.CharacterAdded:Connect(function(newChar)
 end))
 
 -- ==================== LOAD WINDUI ====================
-local WindUI = nil
+WindUI = nil
 if isfile and isfile("WindUI_cache.lua") and readfile then
     local ok, res = pcall(function() return loadstring(readfile("WindUI_cache.lua"))() end)
     if ok and res and type(res) == "table" and res.CreateWindow then 
@@ -4987,14 +5013,14 @@ end)
 local initialKey = Enum.KeyCode[Config.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = WindUI:CreateWindow({
-    Title = "👑 Song Hub | Hunting Together [v3.5 - Latest]",
+    Title = "Hunting Together | All-in-One Auto Hub [v3.5 - Latest]",
     Icon = "swords",
     Folder = "HuntingTogether_UltimateHub",
     Size = UDim2.fromOffset(600, 490),
     Theme = "Dark",
     ToggleKey = initialKey,
     OpenButton = {
-        Title = "Song Hub",
+        Title = "Hunting Hub",
         Icon = "swords",
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
@@ -7437,7 +7463,7 @@ HalloweenTab:Button({
     Title = "Claim Event Rewards & Pet Now",
     Callback = function()
         pcall(function()
-            if EventNpcAction then
+            if RemotesLazy.EventNpcAction then
                 RemotesLazy.EventNpcAction:FireServer("claimAll")
                 RemotesLazy.EventNpcAction:FireServer("claimPet")
             end
@@ -8474,7 +8500,7 @@ task.spawn(function()
             executeAutoEquipBest()
         end
         -- Auto Refine Weapon
-        if Config.AutoRefine and RefineWeapon then
+        if Config.AutoRefine and RemotesLazy.RefineWeapon then
             pcall(function()
                 RemotesLazy.RefineWeapon:FireServer()
             end)
@@ -8629,11 +8655,11 @@ task.spawn(function()
     while isScriptAlive() do
         task.wait(8)
         -- Auto Daily
-        if Config.AutoClaimDaily and DailyClaim then
+        if Config.AutoClaimDaily and RemotesLazy.DailyClaim then
             pcall(function() RemotesLazy.DailyClaim:FireServer() end)
         end
         -- Auto Quests
-        if Config.AutoClaimQuests and QuestAction then
+        if Config.AutoClaimQuests and RemotesLazy.QuestAction then
             pcall(function()
                 local hs = HttpService
                 local qJson = hs:JSONDecode(LocalPlayer:GetAttribute("QuestsJson") or "{}")
@@ -8645,7 +8671,7 @@ task.spawn(function()
             end)
         end
         -- Auto Achievements
-        if Config.AutoClaimAchieve and AchieveAction then
+        if Config.AutoClaimAchieve and RemotesLazy.AchieveAction then
             pcall(function()
                 if (LocalPlayer:GetAttribute("AchieveReady") or 0) > 0 then
                     RemotesLazy.AchieveAction:FireServer("claim")
@@ -8653,7 +8679,7 @@ task.spawn(function()
             end)
         end
         -- Auto Pet
-        if Config.AutoPet and PetAction then
+        if Config.AutoPet and RemotesLazy.PetAction then
             pcall(function()
                 RemotesLazy.PetAction:FireServer("summon")
                 RemotesLazy.PetAction:FireServer("feed")
@@ -8767,7 +8793,7 @@ task.spawn(function()
         if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then continue end
         if Config.AutoHalloween then
             -- 1. Auto Claim Event NPC Rewards & Free RonB Pet
-            if Config.AutoClaimEventRewards and EventNpcAction then
+            if Config.AutoClaimEventRewards and RemotesLazy.EventNpcAction then
                 pcall(function()
                     RemotesLazy.EventNpcAction:FireServer("claimAll")
                     RemotesLazy.EventNpcAction:FireServer("claimPet")
@@ -8790,7 +8816,7 @@ task.spawn(function()
             end
 
             -- 4. Auto Halloween Crystal Gacha Pull (1x or 10x)
-            if Config.AutoHalloweenGacha and GachaPull then
+            if Config.AutoHalloweenGacha and RemotesLazy.GachaPull then
                 local _, heads = getHalloweenInventory()
                 local needed = (Config.GachaPullType == "1x Pull (10 Heads)") and 10 or 100
                 if heads >= needed then
@@ -8825,8 +8851,8 @@ pcall(function()
 end)
 
 WindUI:Notify({
-    Title = "👑 Song Hub | Hunting Together",
-    Content = "โหลด Song Hub [v3.5] สำเร็จ!\n- ธีมดันเจี้ยน & พื้นหลังเคลื่อนไหว\n- ระบบฟาร์ม & ดันเจี้ยนอัตโนมัติครบวงจร",
+    Title = "Hunting Together [v3.5]",
+    Content = "อัปเดตเวอร์ชันล่าสุด [v3.5] สำเร็จ!\n- เลือกสกิลที่จะใช้\n- Alt Account รับตี้ออโต้\n- ปิด Auto Lv.99 เมื่อเปิดดันเจี้ยน",
     Duration = 4,
     Icon = "check-circle",
 })
