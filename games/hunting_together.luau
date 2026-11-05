@@ -1363,19 +1363,25 @@ local function advanceDungeonPath()
         end
     end
 
-    -- Monotonic forward waypoint advancement: never clamp backward (eliminates oscillation trap!)
+    -- Sync waypoint index with physical position if player moved significantly backward (e.g. chasing a monster)
     currentDungeonWpIndex = currentDungeonWpIndex or 2
     if closestIdx > currentDungeonWpIndex then
         currentDungeonWpIndex = closestIdx
+    elseif (currentDungeonWpIndex - closestIdx) >= 2 then
+        currentDungeonWpIndex = closestIdx + 1
     end
+
+    local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
 
     -- Gate progression on active objectives:
     local mFolder = workspace:FindFirstChild("Monsters")
     local hasAlivePillars = false
     local hasAliveWitch = false
+    local aliveMobsCount = 0
     if mFolder then
         for _, m in ipairs(mFolder:GetChildren()) do
             if m:IsA("Model") and isMonsterAlive(m) then
+                aliveMobsCount = aliveMobsCount + 1
                 local mName = m.Name:lower()
                 local mId = tostring(m:GetAttribute("MonsterId") or "")
                 if mName:find("pillar") or mName:find("ritual") or mId == "dgn_ritual_pillar" then
@@ -1384,6 +1390,19 @@ local function advanceDungeonPath()
                     hasAliveWitch = true
                 end
             end
+        end
+    end
+
+    -- If still in Step 1 (Entrance Corridor) and player reached the locked Plaza gate with no mobs streamed in, sweep back to entrance!
+    if dStep == 1 and currentDungeonWpIndex >= 12 then
+        if aliveMobsCount == 0 then
+            currentDungeonWpIndex = 3
+            local sweepWp = DungeonPathWaypoints[3]
+            hrp.CFrame = CFrame.new(sweepWp.X, 62.5, sweepWp.Z)
+            hrp.Velocity = Vector3.zero
+            return
+        else
+            currentDungeonWpIndex = 12
         end
     end
 
