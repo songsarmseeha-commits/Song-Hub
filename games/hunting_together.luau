@@ -6145,74 +6145,6 @@ SkillsTab:Toggle({
 })
 
 -- ==================== TAB: DUNGEON HUB (SKULL KING'S CRYPT) ====================
-DungeonTab:Section({ Title = "🎨 Dungeon UI Theme & Animated Background (ธีมดันเจี้ยน & เอฟเฟกต์พื้นหลัง)", Opened = true })
-
-DungeonTab:Dropdown({
-    Title = "Select Dungeon Theme (เลือกธีมสีดันเจี้ยน)",
-    Desc = "เปลี่ยนโทนสีหน้าต่าง UI และบรรยากาศพื้นหลังตามธีมดันเจี้ยนและบอส",
-    Values = Window._DungeonThemeEngine.ThemeNames,
-    Value = Config.UITheme or "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
-    Callback = function(selected)
-        Config.UITheme = selected
-        Window._DungeonThemeEngine.ApplyTheme(selected, true)
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-DungeonTab:Toggle({
-    Title = "Animated Background Effect (เปิดเอฟเฟกต์เคลื่อนไหวพื้นหลัง)",
-    Desc = "แสดงวงเวทรูนดันเจี้ยน, ออร่าเรืองแสง และละอองพลังงานเคลื่อนไหวด้านหลังเมนูแบบเรียลไทม์",
-    Value = Config.UIBackgroundAnimation ~= false,
-    Callback = function(state)
-        Window._DungeonThemeEngine.SetAnimEnabled(state)
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-DungeonTab:Dropdown({
-    Title = "Background Particle Style (รูปแบบเอฟเฟกต์ละอองพื้นหลัง)",
-    Desc = "เลือกรูปแบบอนิเมชั่นพื้นหลัง (ไฟวิญญาณ, จันทร์สีเลือด, พายุหิมะ, จักรพรรดิเงา, สายลมมังกร, ซากุระ)",
-    Values = Window._DungeonThemeEngine.StyleNames,
-    Value = Config.UIAnimationStyle or "Auto (ตามธีมดันเจี้ยน)",
-    Callback = function(selected)
-        Config.UIAnimationStyle = selected
-        Window._DungeonThemeEngine.UpdateParticles()
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-DungeonTab:Slider({
-    Title = "Animation Speed (ความเร็วอนิเมชั่นพื้นหลัง)",
-    Desc = "ปรับความเร็วการหมุนของวงเวทรูนและการลอยของละอองพลังงาน",
-    Value = {
-        Min = 2,
-        Max = 30,
-        Default = tonumber(Config.UIAnimationSpeed) or 10,
-    },
-    Step = 1,
-    Callback = function(val)
-        Config.UIAnimationSpeed = tonumber(val) or 10
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
-DungeonTab:Slider({
-    Title = "Glass Card Transparency (ความโปร่งแสงการ์ดเมนู)",
-    Desc = "ปรับความใสของกรอบปุ่มเพื่อให้มองเห็นเอฟเฟกต์วงเวทและละอองพื้นหลังทะลุขึ้นมาได้ชัดเจน",
-    Value = {
-        Min = 0,
-        Max = 65,
-        Default = tonumber(Config.UIGlassTransparency) or 28,
-    },
-    Step = 1,
-    Suffix = "%",
-    Callback = function(val)
-        Config.UIGlassTransparency = tonumber(val) or 28
-        Window._DungeonThemeEngine.ApplyGlass()
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
-
 DungeonTab:Section({ Title = "🏰 Auto Dungeon Master (ดันเจี้ยนอัตโนมัติ)", Opened = true })
 
 autoDungeonToggle = DungeonTab:Toggle({
@@ -7739,7 +7671,8 @@ TeleportTab:Button({
 ConfigTab:Section({ Title = "🎨 UI Theme & Background FX (ตั้งค่าธีมและพื้นหลังเคลื่อนไหว)", Opened = true })
 
 ConfigTab:Dropdown({
-    Title = "UI Dungeon Theme (เลือกธีมดันเจี้ยน)",
+    Title = "Select Dungeon Theme (เลือกธีมสีดันเจี้ยน)",
+    Desc = "เปลี่ยนโทนสีหน้าต่าง UI และบรรยากาศพื้นหลังตามธีมดันเจี้ยนและบอส",
     Values = Window._DungeonThemeEngine.ThemeNames,
     Value = Config.UITheme or "🎃 Skull King's Crypt (สุสานราชาโครงกระดูก)",
     Callback = function(selected)
@@ -7750,7 +7683,8 @@ ConfigTab:Dropdown({
 })
 
 ConfigTab:Toggle({
-    Title = "Enable Animated Background (เปิดพื้นหลังเคลื่อนไหว)",
+    Title = "Animated Background Effect (เปิดเอฟเฟกต์เคลื่อนไหวพื้นหลัง)",
+    Desc = "แสดงวงเวทรูนดันเจี้ยน, ออร่าเรืองแสง และละอองพลังงานเคลื่อนไหวด้านหลังเมนูแบบเรียลไทม์",
     Value = Config.UIBackgroundAnimation ~= false,
     Callback = function(state)
         Window._DungeonThemeEngine.SetAnimEnabled(state)
@@ -7759,12 +7693,45 @@ ConfigTab:Toggle({
 })
 
 ConfigTab:Dropdown({
-    Title = "Background Animation Style (รูปแบบเอฟเฟกต์พื้นหลัง)",
+    Title = "Background Particle Style (รูปแบบเอฟเฟกต์ละอองพื้นหลัง)",
+    Desc = "เลือกรูปแบบอนิเมชั่นพื้นหลัง (ไฟวิญญาณ, จันทร์สีเลือด, พายุหิมะ, จักรพรรดิเงา, สายลมมังกร, ซากุระ)",
     Values = Window._DungeonThemeEngine.StyleNames,
     Value = Config.UIAnimationStyle or "Auto (ตามธีมดันเจี้ยน)",
     Callback = function(selected)
         Config.UIAnimationStyle = selected
         Window._DungeonThemeEngine.UpdateParticles()
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+ConfigTab:Slider({
+    Title = "Animation Speed (ความเร็วอนิเมชั่นพื้นหลัง)",
+    Desc = "ปรับความเร็วการหมุนของวงเวทรูนและการลอยของละอองพลังงาน",
+    Value = {
+        Min = 2,
+        Max = 30,
+        Default = tonumber(Config.UIAnimationSpeed) or 10,
+    },
+    Step = 1,
+    Callback = function(val)
+        Config.UIAnimationSpeed = tonumber(val) or 10
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+ConfigTab:Slider({
+    Title = "Glass Card Transparency (ความโปร่งแสงการ์ดเมนู)",
+    Desc = "ปรับความใสของกรอบปุ่มเพื่อให้มองเห็นเอฟเฟกต์วงเวทและละอองพื้นหลังทะลุขึ้นมาได้ชัดเจน",
+    Value = {
+        Min = 0,
+        Max = 65,
+        Default = tonumber(Config.UIGlassTransparency) or 28,
+    },
+    Step = 1,
+    Suffix = "%",
+    Callback = function(val)
+        Config.UIGlassTransparency = tonumber(val) or 28
+        Window._DungeonThemeEngine.ApplyGlass()
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
