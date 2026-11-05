@@ -458,6 +458,11 @@ Config = {
     SellTier5 = false,
     MaxSellTier = "Up to Tier 3",
     MaxSellRarity = "Up to Rare",
+    SellRarities = {
+        "Common (ธรรมดา / ขาว)",
+        "Uncommon (ไม่ธรรมดา / เขียว)",
+        "Rare (หายาก / ฟ้า)",
+    },
     SellWeapons = true,
     SellArmors = true,
     SellAccessories = true,
@@ -620,6 +625,26 @@ local function LoadConfig(silent)
                 Config.LootTeleport = false
                 if Config.StealthMagnetLoot == nil then
                     Config.StealthMagnetLoot = true
+                end
+                if Config.SellRarities == nil then
+                    if Config.MaxSellRarity == "Common Only" then
+                        Config.SellRarities = { "Common (ธรรมดา / ขาว)" }
+                    elseif Config.MaxSellRarity == "Up to Uncommon" then
+                        Config.SellRarities = { "Common (ธรรมดา / ขาว)", "Uncommon (ไม่ธรรมดา / เขียว)" }
+                    elseif Config.MaxSellRarity == "Up to Rare" then
+                        Config.SellRarities = { "Common (ธรรมดา / ขาว)", "Uncommon (ไม่ธรรมดา / เขียว)", "Rare (หายาก / ฟ้า)" }
+                    elseif Config.MaxSellRarity == "All Rarities" then
+                        Config.SellRarities = {
+                            "Common (ธรรมดา / ขาว)",
+                            "Uncommon (ไม่ธรรมดา / เขียว)",
+                            "Rare (หายาก / ฟ้า)",
+                            "Epic (มหากาพย์ / ม่วง)",
+                            "Legendary (ตำนาน / ทอง)",
+                            "Mythic (เทพเจ้า / แดง)",
+                        }
+                    else
+                        Config.SellRarities = { "Common (ธรรมดา / ขาว)", "Uncommon (ไม่ธรรมดา / เขียว)", "Rare (หายาก / ฟ้า)" }
+                    end
                 end
                 success = true
                 if not silent and WindUI and WindUI.Notify then
@@ -4892,15 +4917,48 @@ local function getSellableItems()
         maxTierNum = 999
     end
 
-    local maxRarityNum = 2
-    if Config.MaxSellRarity == "Common Only" then
-        maxRarityNum = 0
-    elseif Config.MaxSellRarity == "Up to Uncommon" then
-        maxRarityNum = 1
-    elseif Config.MaxSellRarity == "Up to Rare" then
-        maxRarityNum = 2
-    elseif Config.MaxSellRarity == "All Rarities" then
-        maxRarityNum = 999
+    local function isRarityAllowed(r)
+        local cfg = Config.SellRarities
+        if not cfg then
+            local maxR = 2
+            if Config.MaxSellRarity == "Common Only" then maxR = 0
+            elseif Config.MaxSellRarity == "Up to Uncommon" then maxR = 1
+            elseif Config.MaxSellRarity == "Up to Rare" then maxR = 2
+            elseif Config.MaxSellRarity == "All Rarities" then maxR = 999 end
+            local rN = tonumber(r) or 0
+            return rN <= maxR
+        end
+
+        if type(cfg) ~= "table" then return false end
+
+        local rNum = tonumber(r)
+        local rStr = tostring(r):lower()
+
+        for k, v in pairs(cfg) do
+            local opt = ""
+            if v == true then
+                opt = tostring(k):lower()
+            elseif type(v) == "string" then
+                opt = v:lower()
+            end
+
+            if opt ~= "" then
+                if (rNum == 0 or rStr:find("common")) and opt:find("common") and not opt:find("uncommon") then
+                    return true
+                elseif (rNum == 1 or rStr:find("uncommon")) and opt:find("uncommon") then
+                    return true
+                elseif (rNum == 2 or rStr:find("rare")) and opt:find("rare") then
+                    return true
+                elseif (rNum == 3 or rStr:find("epic")) and opt:find("epic") then
+                    return true
+                elseif (rNum == 4 or rStr:find("legendary") or rStr:find("legend")) and (opt:find("legendary") or opt:find("legend")) then
+                    return true
+                elseif (rNum and rNum >= 5 or rStr:find("mythic") or rStr:find("god") or rStr:find("red")) and (opt:find("mythic") or opt:find("red")) then
+                    return true
+                end
+            end
+        end
+        return false
     end
 
     local sellIds = {}
@@ -4933,7 +4991,7 @@ local function getSellableItems()
                     end
 
                     -- Rarity filter
-                    local rarityAllowed = (rarity <= maxRarityNum)
+                    local rarityAllowed = isRarityAllowed(rarity)
 
                     if tierAllowed and rarityAllowed then
                         local kind = (resolved and resolved.Kind) or ""
@@ -7163,20 +7221,91 @@ AutoSellTab:Toggle({
 
 AutoSellTab:Section({ Title = "Selectable Gear Rarity (เลือกระดับความหายาก)", Opened = true })
 
-AutoSellTab:Dropdown({
-    Title = "Max Rarity to Sell (ความหายากสูงสุด)",
-    Values = {
-        "Common Only",
-        "Up to Uncommon",
-        "Up to Rare",
-        "All Rarities",
-    },
-    Value = Config.MaxSellRarity,
-    Callback = function(val)
-        Config.MaxSellRarity = val
-        if Config.AutoSave then SaveConfig(true) end
-    end,
-})
+do
+    local allSellRarityOptions = {
+        "Common (ธรรมดา / ขาว)",
+        "Uncommon (ไม่ธรรมดา / เขียว)",
+        "Rare (หายาก / ฟ้า)",
+        "Epic (มหากาพย์ / ม่วง)",
+        "Legendary (ตำนาน / ทอง)",
+        "Mythic (เทพเจ้า / แดง)",
+    }
+
+    local sellRarityDropdown = nil
+    sellRarityDropdown = AutoSellTab:Dropdown({
+        Title = "Select Gear Rarities to Sell (เลือกระดับความหายากที่ต้องการขาย)",
+        Desc = "เลือก Rarity ที่ต้องการให้ขายอัตโนมัติ (สามารถเลือกได้หลายระดับพร้อมกัน)",
+        Values = allSellRarityOptions,
+        Value = Config.SellRarities or { "Common (ธรรมดา / ขาว)", "Uncommon (ไม่ธรรมดา / เขียว)", "Rare (หายาก / ฟ้า)" },
+        Multi = true,
+        AllowNone = true,
+        Callback = function(val)
+            Config.SellRarities = val
+            if Config.AutoSave then SaveConfig(true) end
+        end,
+    })
+
+    AutoSellTab:Button({
+        Title = "✅ Select All Rarities (เลือกทุกระดับ)",
+        Desc = "เลือกขายทุกระดับความหายาก (Common ถึง Mythic)",
+        Callback = function()
+            Config.SellRarities = allSellRarityOptions
+            if sellRarityDropdown and sellRarityDropdown.SetValue then
+                pcall(function() sellRarityDropdown:SetValue(allSellRarityOptions) end)
+            end
+            if Config.AutoSave then SaveConfig(true) end
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Auto Sell Rarity",
+                    Content = "เลือกขายทุกระดับความหายากแล้ว (Common - Mythic)",
+                    Duration = 2,
+                    Icon = "check-check"
+                })
+            end
+        end,
+    })
+
+    AutoSellTab:Button({
+        Title = "⚪ Select Common & Uncommon Only (เฉพาะขาว/เขียว)",
+        Desc = "เลือกเฉพาะของธรรมดาและไม่ธรรมดา (ปลอดภัย ไม่ขายของหายาก)",
+        Callback = function()
+            local safeRarities = { "Common (ธรรมดา / ขาว)", "Uncommon (ไม่ธรรมดา / เขียว)" }
+            Config.SellRarities = safeRarities
+            if sellRarityDropdown and sellRarityDropdown.SetValue then
+                pcall(function() sellRarityDropdown:SetValue(safeRarities) end)
+            end
+            if Config.AutoSave then SaveConfig(true) end
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Auto Sell Rarity",
+                    Content = "เลือกขายเฉพาะ Common และ Uncommon เรียบร้อย",
+                    Duration = 2,
+                    Icon = "shield-check"
+                })
+            end
+        end,
+    })
+
+    AutoSellTab:Button({
+        Title = "❌ Clear All Rarities (ยกเลิกทั้งหมด)",
+        Desc = "ยกเลิกการเลือก Rarity ทั้งหมด (ไม่ขายอุปกรณ์ใดๆ)",
+        Callback = function()
+            Config.SellRarities = {}
+            if sellRarityDropdown and sellRarityDropdown.SetValue then
+                pcall(function() sellRarityDropdown:SetValue({}) end)
+            end
+            if Config.AutoSave then SaveConfig(true) end
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Auto Sell Rarity",
+                    Content = "ยกเลิก Rarity ทั้งหมดแล้ว",
+                    Duration = 2,
+                    Icon = "x-circle"
+                })
+            end
+        end,
+    })
+end
 
 AutoSellTab:Section({ Title = "Item Categories (เลือกประเภทที่ต้องการขาย)", Opened = true })
 
