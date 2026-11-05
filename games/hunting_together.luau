@@ -129,14 +129,19 @@ local function safeDestroyExistingUI()
 
     local containers = {}
     pcall(function() if gethui then table.insert(containers, gethui()) end end)
-    pcall(function() table.insert(containers, game:GetService("CoreGui")) end end)
+    pcall(function()
+        local cg = game:GetService("CoreGui")
+        table.insert(containers, cg)
+        local rg = cg:FindFirstChild("RobloxGui")
+        if rg then table.insert(containers, rg) end
+    end)
     pcall(function()
         if LocalPlayer then
             local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
             if pg then table.insert(containers, pg) end
         end
     end)
-    pcall(function() table.insert(containers, game:GetService("StarterGui")) end end)
+    pcall(function() table.insert(containers, game:GetService("StarterGui")) end)
 
     for _, c in ipairs(containers) do
         if c then
