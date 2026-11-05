@@ -4,6 +4,7 @@
 --   1. ⚔️ Anime Galaxies (Lobby & Match Acts)
 --   2. 🎃 Hunting Together (All Fields & Dungeons)
 --   3. ⚽ Blue Lock Farm (Auto Obby, Polisher & Event Farm)
+--   4. 🍗 Throw Food For Animals (Auto Farm & Auto Workout)
 -- Protected with: Universal Whitelist & Key System Web Portal
 -- ==============================================================================
 
@@ -130,6 +131,14 @@ local function detectGame()
         return "blue_lock_farm", "Blue Lock Farm ⚽", "blue_lock_farm.luau"
     end
 
+    -- 4. Throw Food For Animals
+    if uId == 10766972131 or pId == 120219252362013 then
+        return "throw_food", "Throw Food For Animals 🍗", "throw_food.luau"
+    end
+    if game:GetService("ReplicatedStorage"):FindFirstChild("Remotes") and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("Throw_Start") then
+        return "throw_food", "Throw Food For Animals 🍗", "throw_food.luau"
+    end
+
     -- Fallback: Check MarketplaceService Game Title
     local ok, info = pcall(function()
         return game:GetService("MarketplaceService"):GetProductInfo(pId)
@@ -142,6 +151,8 @@ local function detectGame()
             return "hunting_together", "Hunting Together 🎃", "hunting_together.luau"
         elseif title:find("blue lock") then
             return "blue_lock_farm", "Blue Lock Farm ⚽", "blue_lock_farm.luau"
+        elseif title:find("throw food") then
+            return "throw_food", "Throw Food For Animals 🍗", "throw_food.luau"
         end
     end
 
