@@ -7843,6 +7843,104 @@ AutoProgTab:Button({
 })
 
 -- ==================== TAB 6: AUTO REWARDS & QUESTS ====================
+local function executeAutoClaimRewards()
+    -- 1. Server Remote Claims: Online Rewards (1..6), Monthly Check-in, 8-Day Check-in
+    pcall(function()
+        local rewardAction = RemotesLazy.RewardAction or getRemote("RewardAction")
+        if rewardAction then
+            for i = 1, 6 do
+                rewardAction:FireServer("online", i)
+            end
+            rewardAction:FireServer("month", nil)
+            rewardAction:FireServer("c8", nil)
+        end
+    end)
+
+    -- 2. Daily Calendar Claim
+    pcall(function()
+        local dailyClaim = RemotesLazy.DailyClaim or getRemote("DailyClaim")
+        if dailyClaim then
+            dailyClaim:FireServer()
+        end
+    end)
+
+    -- 3. Battle Pass Missions & Rewards
+    pcall(function()
+        local bpAction = RemotesLazy.BattlePassAction or getRemote("BattlePassAction")
+        if bpAction then
+            bpAction:FireServer("claimAll")
+            bpAction:FireServer("missionAll")
+        end
+    end)
+
+    -- 4. Fast GUI Claim Button Clicker for HuntRewardPage & HuntRewards
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, gName in ipairs({"HuntRewardPage", "HuntRewards"}) do
+            local g = pg:FindFirstChild(gName)
+            if g then
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("GuiButton") then
+                        local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text) or ""
+                        if t == "Claim" or t:lower() == "claim" or d.Name == "Status" then
+                            if d.Visible then
+                                clickGuiButton(d)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function executeAutoClaimAchievements()
+    -- 1. Scan all 87 Achievements against AchieveJson attributes
+    pcall(function()
+        local Shared = ReplicatedStorage:FindFirstChild("Shared")
+        if not Shared then return end
+        local AchData = require(Shared:WaitForChild("AchievementData", 2))
+        if not AchData or not AchData.List then return end
+
+        local achieveRaw = LocalPlayer:GetAttribute("AchieveJson") or "{}"
+        local HttpService = game:GetService("HttpService")
+        local data = HttpService:JSONDecode(achieveRaw)
+        local got = data.Got or {}
+        local C = data.C or {}
+        local pLevel = tonumber(LocalPlayer:GetAttribute("Level")) or 1
+
+        local actionRemote = RemotesLazy.AchieveAction or getRemote("AchieveAction")
+        if not actionRemote then return end
+
+        for _, def in ipairs(AchData.List) do
+            if not got[def.Id] then
+                local curVal = (def.Type == "level") and pLevel or (tonumber(C[def.Type]) or 0)
+                local req = def.Count or 1
+                if curVal >= req then
+                    actionRemote:FireServer("claim", def.Id, false)
+                end
+            end
+        end
+    end)
+
+    -- 2. Fast GUI Claim Button Clicker for HuntAchievePage (Adventure Book)
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local page = pg and pg:FindFirstChild("HuntAchievePage")
+        if page and page.Enabled then
+            for _, d in ipairs(page:GetDescendants()) do
+                if d:IsA("GuiButton") and d.Visible then
+                    local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text) or ""
+                    if t == "Claim" or t:lower() == "claim" then
+                        clickGuiButton(d)
+                    end
+                end
+            end
+        end
+    end)
+end
+
 RewardsTab:Section({ Title = "Quests & Daily Rewards", Opened = true })
 
 RewardsTab:Toggle({
@@ -7856,8 +7954,8 @@ RewardsTab:Toggle({
 })
 
 RewardsTab:Toggle({
-    Title = "Auto Claim Daily Login",
-    Desc = "รับของขวัญเช็คอินรายวันอัตโนมัติ",
+    Title = "Auto Claim Online & Daily Rewards (รับรางวัลออนไลน์ & เช็คอินรายวัน)",
+    Desc = "รับรางวัลออนไลน์ประจำวัน (Online Rewards 5m-3h) และของขวัญเช็คอินรายวัน (Monthly Check-in / Daily) อัตโนมัติ",
     Value = Config.AutoClaimDaily,
     Callback = function(state)
         Config.AutoClaimDaily = state
@@ -7866,8 +7964,8 @@ RewardsTab:Toggle({
 })
 
 RewardsTab:Toggle({
-    Title = "Auto Claim Achievements",
-    Desc = "รับรางวัลเหรียญและความสำเร็จที่ปลดล็อคอัตโนมัติ",
+    Title = "Auto Claim Adventure Book (รับรางวัลสมุดการผจญภัย & Achievements)",
+    Desc = "ตรวจสอบและกดรับรางวัลความสำเร็จใน Adventure Book (Achievements & Titles) ที่สำเร็จแล้วทั้งหมดอัตโนมัติ",
     Value = Config.AutoClaimAchieve,
     Callback = function(state)
         Config.AutoClaimAchieve = state
@@ -7886,19 +7984,27 @@ RewardsTab:Toggle({
 })
 
 RewardsTab:Button({
-    Title = "Claim All Pending Rewards Now",
+    Title = "Claim All Pending Rewards Now (กดรับรางวัลทั้งหมดทันที)",
     Callback = function()
-        pcall(function() RemotesLazy.DailyClaim:FireServer() end)
+        executeAutoClaimRewards()
+        executeAutoClaimAchievements()
         pcall(function()
             local hs = HttpService
             local qJson = hs:JSONDecode(LocalPlayer:GetAttribute("QuestsJson") or "{}")
             if qJson and qJson.Active then
                 for qid, _ in pairs(qJson.Active) do
-                    RemotesLazy.QuestAction:FireServer("claim", qid)
+                    if RemotesLazy.QuestAction then
+                        RemotesLazy.QuestAction:FireServer("claim", qid)
+                    end
                 end
             end
         end)
-        WindUI:Notify({ Title = "Rewards", Content = "กดส่งคำสั่งรับรางวัลทั้งหมดแล้ว", Duration = 2, Icon = "gift" })
+        WindUI:Notify({
+            Title = "Rewards & Adventure Book 🎁",
+            Content = "ส่งคำสั่งรับรางวัลออนไลน์, เช็คอินรายวัน, เควสท์ และสมุดความสำเร็จเรียบร้อย!",
+            Duration = 3,
+            Icon = "gift"
+        })
     end,
 })
 
@@ -9447,9 +9553,9 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(8)
-        -- Auto Daily
-        if Config.AutoClaimDaily and RemotesLazy.DailyClaim then
-            pcall(function() RemotesLazy.DailyClaim:FireServer() end)
+        -- Auto Daily & Online Rewards
+        if Config.AutoClaimDaily then
+            executeAutoClaimRewards()
         end
         -- Auto Quests
         if Config.AutoClaimQuests and RemotesLazy.QuestAction then
@@ -9463,13 +9569,9 @@ task.spawn(function()
                 end
             end)
         end
-        -- Auto Achievements
-        if Config.AutoClaimAchieve and RemotesLazy.AchieveAction then
-            pcall(function()
-                if (LocalPlayer:GetAttribute("AchieveReady") or 0) > 0 then
-                    RemotesLazy.AchieveAction:FireServer("claim")
-                end
-            end)
+        -- Auto Achievements & Adventure Book
+        if Config.AutoClaimAchieve then
+            executeAutoClaimAchievements()
         end
         -- Auto Pet
         if Config.AutoPet and RemotesLazy.PetAction then
