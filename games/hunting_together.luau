@@ -38,6 +38,15 @@ local CollectionService = game:GetService("CollectionService")
 local LocalPlayer = Players.LocalPlayer
 local Remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 5)
 
+-- Lazy Remote cache table to conserve top-level local registers
+local RemotesLazy = setmetatable({}, {
+    __index = function(self, key)
+        local r = getRemote(key, 1)
+        rawset(self, key, r)
+        return r
+    end
+})
+
 -- Safe remote getter that never blocks indefinitely
 local function getRemote(name, timeout)
     if not Remotes then
@@ -176,19 +185,12 @@ local autoDungeonToggle = nil
 local skillsDropdown = nil
 local isWarpingZone = false
 local isSelling = false
-local isLooting = false
-local isOpeningBox = false
-local isKnockingHouse = false
-local isPullingGacha = false
-local isReturningFromBoss = false
-local activeBossFight = nil
 local lastBoxScanTime = 0
 local isEnteringDungeon = false
 local isOpeningDungeonChest = false
 local isWaitingForParty = false
 local forceStartDungeonFlag = false
 local lastDungeonEnterAttempt = 0
-local lastDungeonKeyBuyTime = 0
 local lastDungeonReviveTime = 0
 local lastSealNotifyTime = 0
 local dungeonChestsClaimed = 0
@@ -320,15 +322,6 @@ isMonsterAlive = function(monster)
     return mHrp ~= nil
 end
 
-local function getMonsterCombatPart(monster)
-    if not monster then return nil end
-    return monster:FindFirstChild("HumanoidRootPart")
-        or monster.PrimaryPart
-        or monster:FindFirstChild("Base")
-        or monster:FindFirstChild("Shaft")
-        or monster:FindFirstChildOfClass("BasePart")
-end
-
 isBossMonster = function(monster)
     if not monster or not monster.Parent then return false end
     if monster:GetAttribute("IsBoss") == true then return true end
@@ -370,28 +363,7 @@ getPlayerLevel = function()
     return tonumber(lv) or 1
 end
 
-local OpenLootBox = getRemote("OpenLootBox")
-local WarpTo = getRemote("WarpTo", 1)
-local DailyClaim = getRemote("DailyClaim", 1)
-local RespawnChoice = getRemote("RespawnChoice")
-local EquipItem = getRemote("EquipItem")
-local EquipWeapon = getRemote("EquipWeapon")
-local CardAction = getRemote("CardAction")
-local QuestAction = getRemote("QuestAction")
-local AchieveAction = getRemote("AchieveAction")
-local RefineWeapon = getRemote("RefineWeapon")
-local PetAction = getRemote("PetAction")
-local ShopSell = getRemote("ShopSell")
-local ShopSellMany = getRemote("ShopSellMany")
-local ShopSellJunk = getRemote("ShopSellJunk")
-local BagSell = getRemote("BagSell")
-local Dash = getRemote("Dash")
-local BossFx = getRemote("BossFx")
-local MonsterProjectile = getRemote("MonsterProjectile")
-local CombatFx = getRemote("CombatFx")
-local GachaPull = getRemote("GachaPull")
-local EventNpcAction = getRemote("EventNpcAction")
-local TrickTreatFx = getRemote("TrickTreatFx")
+-- Remotes moved to RemotesLazy to conserve top-level registers
 
 -- Shared Modules
 local Shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 3)
@@ -408,7 +380,6 @@ end
 
 -- ==================== CONFIGURATION SYSTEM ====================
 local CONFIG_FILE = "HuntingTogether_Config_" .. tostring(LocalPlayer.UserId) .. ".json"
-local SCRIPT_FILE = "hunting_together_script.lua"
 
 local Config = {
     -- Window & Controls
@@ -2135,7 +2106,7 @@ travelToZone = function(targetField, fieldName, isManual)
     -- 3. Sync zone warp with server remote
     pcall(function()
         if WarpTo then
-            WarpTo:FireServer(targetField)
+            RemotesLazy.WarpTo:FireServer(targetField)
         end
     end)
 
@@ -2509,14 +2480,14 @@ local function executeAutoEquipBest()
     -- 1. Native best armor and accessories
     if Config.AutoEquipBest and EquipItem then
         pcall(function()
-            EquipItem:FireServer("@best")
+            RemotesLazy.EquipItem:FireServer("@best")
         end)
     end
 
     -- 2. Native auto card equip
     if Config.AutoEquipCards and CardAction then
         pcall(function()
-            CardAction:FireServer("auto")
+            RemotesLazy.CardAction:FireServer("auto")
         end)
     end
 
@@ -2550,7 +2521,7 @@ local function executeAutoEquipBest()
             end
 
             if bestWepKey then
-                EquipWeapon:FireServer(bestWepKey)
+                RemotesLazy.EquipWeapon:FireServer(bestWepKey)
             end
         end)
     end
@@ -3412,9 +3383,9 @@ local function openLootBoxTarget(boxObj)
 
         pcall(function()
             if OpenLootBox then
-                OpenLootBox:FireServer(boxPart)
+                RemotesLazy.OpenLootBox:FireServer(boxPart)
                 if boxModel then
-                    OpenLootBox:FireServer(boxModel)
+                    RemotesLazy.OpenLootBox:FireServer(boxModel)
                 end
             end
         end)
@@ -3637,7 +3608,7 @@ local function performHalloweenGacha(pullCount)
     isPullingGacha = true
     local result = nil
     pcall(function()
-        result = GachaPull:InvokeServer(count)
+        result = RemotesLazy.GachaPull:InvokeServer(count)
     end)
     isPullingGacha = false
     return result ~= nil
@@ -3918,7 +3889,7 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
     -- 2. Call game-native Dash Remote (triggers server dash, i-frames, sound & animations)
     pcall(function()
         if Dash then
-            Dash:FireServer()
+            RemotesLazy.Dash:FireServer()
         end
     end)
 
@@ -4126,7 +4097,7 @@ trackConn(CollectionService:GetInstanceAddedSignal("Monster"):Connect(hookMonste
 -- Boss AoE Telegraph Danger Detection (BossFx)
 pcall(function()
     if BossFx then
-        trackConn(BossFx.OnClientEvent:Connect(function(action, bossModel, skillName, zones, duration)
+        trackConn(RemotesLazy.BossFx.OnClientEvent:Connect(function(action, bossModel, skillName, zones, duration)
             if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge then return end
             local inDungeon = isInsideDungeon()
             local hazardKey = tostring(bossModel) .. "|" .. tostring(skillName)
@@ -4243,7 +4214,7 @@ end)
 -- Monster Projectile Detection (MonsterProjectile)
 pcall(function()
     if MonsterProjectile then
-        trackConn(MonsterProjectile.OnClientEvent:Connect(function(mob, targetChar, speed)
+        trackConn(RemotesLazy.MonsterProjectile.OnClientEvent:Connect(function(mob, targetChar, speed)
             if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge or not Config.DodgeProjectiles then return end
             if targetChar == LocalPlayer.Character then
                 local char = LocalPlayer.Character
@@ -4563,7 +4534,7 @@ local function executeAutoSell(silent)
     for _, batch in ipairs(batches) do
         pcall(function()
             if BagSell then
-                BagSell:FireServer(batch)
+                RemotesLazy.BagSell:FireServer(batch)
             end
         end)
         task.wait(0.2)
@@ -4572,7 +4543,7 @@ local function executeAutoSell(silent)
     -- Also fire ShopSellJunk to ensure any remaining monster junk drops are sold
     pcall(function()
         if ShopSellJunk then
-            ShopSellJunk:FireServer()
+            RemotesLazy.ShopSellJunk:FireServer()
         end
     end)
 
@@ -6158,13 +6129,13 @@ RewardsTab:Toggle({
 RewardsTab:Button({
     Title = "Claim All Pending Rewards Now",
     Callback = function()
-        pcall(function() DailyClaim:FireServer() end)
+        pcall(function() RemotesLazy.DailyClaim:FireServer() end)
         pcall(function()
             local hs = HttpService
             local qJson = hs:JSONDecode(LocalPlayer:GetAttribute("QuestsJson") or "{}")
             if qJson and qJson.Active then
                 for qid, _ in pairs(qJson.Active) do
-                    QuestAction:FireServer("claim", qid)
+                    RemotesLazy.QuestAction:FireServer("claim", qid)
                 end
             end
         end)
@@ -6568,8 +6539,8 @@ HalloweenTab:Button({
     Callback = function()
         pcall(function()
             if EventNpcAction then
-                EventNpcAction:FireServer("claimAll")
-                EventNpcAction:FireServer("claimPet")
+                RemotesLazy.EventNpcAction:FireServer("claimAll")
+                RemotesLazy.EventNpcAction:FireServer("claimPet")
             end
         end)
         WindUI:Notify({ Title = "Event Rewards", Content = "ส่งคำสั่งรับรางวัลกิจกรรมและสัตว์เลี้ยงเรียบร้อย!", Duration = 2.5, Icon = "gift" })
@@ -6715,7 +6686,7 @@ TeleportTab:Button({
     Title = "Warp to Selected Area",
     Callback = function()
         pcall(function()
-            WarpTo:FireServer(selectedWarp)
+            RemotesLazy.WarpTo:FireServer(selectedWarp)
             WindUI:Notify({ Title = "Teleport", Content = "วาร์ปไป: " .. selectedWarp, Duration = 2, Icon = "send" })
         end)
     end,
@@ -6724,7 +6695,7 @@ TeleportTab:Button({
 TeleportTab:Button({
     Title = "Quick Return to Town",
     Callback = function()
-        pcall(function() WarpTo:FireServer("Town") end)
+        pcall(function() RemotesLazy.WarpTo:FireServer("Town") end)
     end,
 })
 
@@ -6930,7 +6901,7 @@ MiscTab:Button({
     Title = "Claim Daily Gift",
     Callback = function()
         pcall(function()
-            DailyClaim:FireServer()
+            RemotesLazy.DailyClaim:FireServer()
             WindUI:Notify({ Title = "Daily Gift", Content = "กดรับรางวัลรายวันแล้ว", Duration = 2, Icon = "gift" })
         end)
     end,
@@ -7179,8 +7150,8 @@ task.spawn(function()
             -- Respawn recovery check
             if hum and hum.Health <= 0 then
                 if Config.AutoRespawn and RespawnChoice then
-                    pcall(function() RespawnChoice:FireServer("town") end)
-                    pcall(function() RespawnChoice:FireServer("Town") end)
+                    pcall(function() RemotesLazy.RespawnChoice:FireServer("town") end)
+                    pcall(function() RemotesLazy.RespawnChoice:FireServer("Town") end)
                 end
                 task.wait(2)
             elseif hrp and hum and hum.Health > 0 then
@@ -7521,7 +7492,7 @@ task.spawn(function()
         -- Auto Refine Weapon
         if Config.AutoRefine and RefineWeapon then
             pcall(function()
-                RefineWeapon:FireServer()
+                RemotesLazy.RefineWeapon:FireServer()
             end)
         end
     end
@@ -7675,7 +7646,7 @@ task.spawn(function()
         task.wait(8)
         -- Auto Daily
         if Config.AutoClaimDaily and DailyClaim then
-            pcall(function() DailyClaim:FireServer() end)
+            pcall(function() RemotesLazy.DailyClaim:FireServer() end)
         end
         -- Auto Quests
         if Config.AutoClaimQuests and QuestAction then
@@ -7684,7 +7655,7 @@ task.spawn(function()
                 local qJson = hs:JSONDecode(LocalPlayer:GetAttribute("QuestsJson") or "{}")
                 if qJson and qJson.Active then
                     for qid, _ in pairs(qJson.Active) do
-                        QuestAction:FireServer("claim", qid)
+                        RemotesLazy.QuestAction:FireServer("claim", qid)
                     end
                 end
             end)
@@ -7693,15 +7664,15 @@ task.spawn(function()
         if Config.AutoClaimAchieve and AchieveAction then
             pcall(function()
                 if (LocalPlayer:GetAttribute("AchieveReady") or 0) > 0 then
-                    AchieveAction:FireServer("claim")
+                    RemotesLazy.AchieveAction:FireServer("claim")
                 end
             end)
         end
         -- Auto Pet
         if Config.AutoPet and PetAction then
             pcall(function()
-                PetAction:FireServer("summon")
-                PetAction:FireServer("feed")
+                RemotesLazy.PetAction:FireServer("summon")
+                RemotesLazy.PetAction:FireServer("feed")
             end)
         end
     end
@@ -7741,8 +7712,8 @@ task.spawn(function()
             task.wait(1.5)
             pcall(function()
                 if RespawnChoice then
-                    RespawnChoice:FireServer("town")
-                    RespawnChoice:FireServer("Town")
+                    RemotesLazy.RespawnChoice:FireServer("town")
+                    RemotesLazy.RespawnChoice:FireServer("Town")
                 end
             end)
             task.wait(3)
@@ -7801,8 +7772,8 @@ task.spawn(function()
             -- 1. Auto Claim Event NPC Rewards & Free RonB Pet
             if Config.AutoClaimEventRewards and EventNpcAction then
                 pcall(function()
-                    EventNpcAction:FireServer("claimAll")
-                    EventNpcAction:FireServer("claimPet")
+                    RemotesLazy.EventNpcAction:FireServer("claimAll")
+                    RemotesLazy.EventNpcAction:FireServer("claimPet")
                 end)
             end
 
