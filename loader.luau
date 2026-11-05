@@ -12,7 +12,7 @@
 if getgenv then
     local now = os.clock()
     -- 1. If game script is already running healthy with its UI window active, do NOT reload!
-    if getgenv()._HuntingTogetherRunning == true and getgenv()._HT_CurrentWindow then
+    if getgenv()._HuntingTogetherRunning == true and getgenv()._HT_CurrentWindow and (game.GameId == 10769401924 or game.PlaceId == 117483759937632 or game.PlaceId == 100618538481971 or game.PlaceId == 91627865222791) then
         print("[Song Hub] 🛡️ Script is already running with active UI! Skipping duplicate loader run.")
         return
     end
