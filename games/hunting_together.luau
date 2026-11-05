@@ -66,6 +66,7 @@ local PickupDrop = getRemote("PickupDrop", 3)
 local DungeonAction = getRemote("DungeonAction", 1)
 local DungeonPrompt = getRemote("DungeonPrompt", 1)
 local PartyAction = getRemote("PartyAction", 1)
+local PartyInvite = getRemote("PartyInvite", 1)
 
 -- Graceful thread termination & instance cleanup
 local currentRunId = (getgenv and getgenv()._HT_ScriptRunId or 0) + 1
@@ -165,6 +166,9 @@ local isDodgingUntil = 0
 local monsterDropdown = nil
 local bossDropdown = nil
 local autoFarmToggle = nil
+local autoProgressionToggle = nil
+local autoDungeonToggle = nil
+local skillsDropdown = nil
 local isWarpingZone = false
 local isSelling = false
 local isLooting = false
@@ -429,6 +433,7 @@ local Config = {
     MaxTargetDistance = 70,     -- Keep search strictly within active field
     AutoUseSkills = true,
     AutoUseBuffs = true,
+    SelectedSkills = { "All Skills (ทุกสกิล)" },
     
     -- Auto Equip & Gear
     AutoEquipBest = true,
@@ -522,6 +527,9 @@ local Config = {
     PartyWaitTimeout = 30,                    -- เวลารอคนตอบรับเข้าตี้ (วินาที) ก่อนเริ่มสร้างห้อง
     PartyInviteTarget = "All Server",         -- "All Server", "Friends Only", "Nearby Gate"
     PartyAutoInvite = true,                   -- ส่งคำเชิญชวนเข้าตี้หมู่อัตโนมัติเมื่อเริ่ม
+    AutoAcceptParty = true,                   -- ตอบรับคำเชิญเข้าปาร์ตี้อัตโนมัติ (สำหรับตัวเด็ก / Alt account)
+    PartyAcceptFilter = "Anyone",             -- "Anyone", "Friends Only", "Whitelist"
+    PartyWhitelistUsers = "",                 -- รายชื่อไอดีหลัก เช่น "MainAcc1, MainAcc2"
     
     AutoBuyDungeonKey = false,
     MaxDungeonKeysToBuy = 10,
@@ -1784,6 +1792,21 @@ local function executeDungeonEnterRoutine(isManual)
     if isEnteringDungeon or isInsideDungeon() then return end
     if not isManual and not canScriptMoveOrWarp() then return end
 
+    -- 🛑 Immediately stop AutoProgression (Auto Lv.99) when entering dungeon!
+    Config.AutoProgression = false
+    isCheckingBossArena = false
+    activeBossFight = nil
+    isWarpingZone = false
+    pcall(function()
+        if autoProgressionToggle then
+            if autoProgressionToggle.SetValue then
+                autoProgressionToggle:SetValue(false)
+            elseif autoProgressionToggle.Set then
+                autoProgressionToggle:Set(false)
+            end
+        end
+    end)
+
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -2535,6 +2558,100 @@ end
 
 -- ==================== SMART SKILLS & COMBAT ENGINE ====================
 local skillLastCast = {}
+
+local function getAllAvailableSkills()
+    local list = { "All Skills (ทุกสกิล)" }
+    local seen = { ["All Skills (ทุกสกิล)"] = true }
+
+    -- 1. Learned skills from player attributes
+    pcall(function()
+        local skillsJsonRaw = LocalPlayer:GetAttribute("SkillsJson")
+        if skillsJsonRaw and skillsJsonRaw ~= "" then
+            local learned = HttpService:JSONDecode(skillsJsonRaw)
+            for sId, lv in pairs(learned) do
+                if type(lv) == "number" and lv > 0 and not seen[sId] then
+                    seen[sId] = true
+                    table.insert(list, sId)
+                end
+            end
+        end
+    end)
+
+    -- 2. Hotbar skills
+    pcall(function()
+        local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+        if hotbarRaw and hotbarRaw ~= "" then
+            local hotbar = HttpService:JSONDecode(hotbarRaw)
+            for _, slotVal in pairs(hotbar) do
+                if type(slotVal) == "string" and slotVal:find("^skill:") then
+                    local sId = slotVal:sub(7)
+                    if not seen[sId] then
+                        seen[sId] = true
+                        table.insert(list, sId)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 3. Game's SkillData Module
+    pcall(function()
+        if SkillDataModule and SkillDataModule.Skills then
+            for sId, def in pairs(SkillDataModule.Skills) do
+                if not seen[sId] then
+                    seen[sId] = true
+                    table.insert(list, sId)
+                end
+            end
+        end
+    end)
+
+    -- 4. Known common skills catalog
+    local knownSkills = {
+        "twinfang", "venomknife", "shadowburst", "cross_slash", "sonicblow",
+        "bash", "magnum_break", "bowlingbash", "spiral",
+        "double_strafe", "arrowshower",
+        "firebolt", "coldbolt", "lightningbolt", "soulstrike", "firewall", "meteor", "thunderstorm", "lordofvermilion",
+        "iaigiri", "obororanbu", "issen", "meikyo", "shukuchi",
+        "bigkaboom", "tarflask", "nekoflask", "hammerfall", "cartstrike",
+        "vanish", "stealth", "haste", "blessing", "increase_agi"
+    }
+    for _, sId in ipairs(knownSkills) do
+        if not seen[sId] then
+            seen[sId] = true
+            table.insert(list, sId)
+        end
+    end
+
+    return list
+end
+
+local function isSkillSelected(skillId)
+    if not skillId then return false end
+    local sel = Config.SelectedSkills
+    if not sel or type(sel) ~= "table" or #sel == 0 then return true end
+
+    for k, v in pairs(sel) do
+        local val = (type(k) == "string" and k) or v
+        if type(val) == "string" and (val:find("All Skills") or val == "All") then
+            return true
+        end
+    end
+
+    local cleanTarget = tostring(skillId):lower():gsub("[_%s%-]", "")
+    for k, v in pairs(sel) do
+        local val = (type(k) == "string" and k) or v
+        if type(val) == "string" then
+            local cleanVal = val:lower():gsub("[_%s%-]", "")
+            if cleanVal == cleanTarget or cleanVal:find(cleanTarget, 1, true) or cleanTarget:find(cleanVal, 1, true) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 local SkillCooldownDefaults = {
     twinfang = 0.55,
     venomknife = 7.0,
@@ -2560,6 +2677,7 @@ local SkillCooldownDefaults = {
 
 local function castSmartSkill(skillId, target)
     if not skillId or skillId == "" then return false end
+    if not isSkillSelected(skillId) then return false end
     local now = os.clock()
     local cd = SkillCooldownDefaults[skillId] or 3.0
 
@@ -4989,6 +5107,37 @@ SkillsTab:Toggle({
     end,
 })
 
+skillsDropdown = SkillsTab:Dropdown({
+    Title = "Select Skills to Auto Cast (เลือกสกิลที่จะใช้)",
+    Desc = "เลือกสกิลเฉพาะที่ต้องการให้บอทกดใช้อัตโนมัติ (เลือก All เพื่อใช้ทุกสกิล)",
+    Values = getAllAvailableSkills(),
+    Value = Config.SelectedSkills or { "All Skills (ทุกสกิล)" },
+    Multi = true,
+    AllowNone = true,
+    SearchBarEnabled = true,
+    Callback = function(val)
+        Config.SelectedSkills = val
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+SkillsTab:Button({
+    Title = "🔄 Refresh Skills List (รีเฟรชรายชื่อสกิล)",
+    Desc = "ดึงข้อมูลสกิลที่เพิ่งเรียนใหม่อัปเดตเข้าเมนูเลือกสกิลทันที",
+    Callback = function()
+        local updatedSkills = getAllAvailableSkills()
+        if skillsDropdown and skillsDropdown.SetValues then
+            skillsDropdown:SetValues(updatedSkills)
+        end
+        WindUI:Notify({
+            Title = "Skills Updated",
+            Content = string.format("อัปเดตรายชื่อสกิลทั้งหมด: %d สกิล", #updatedSkills),
+            Duration = 2.5,
+            Icon = "zap",
+        })
+    end,
+})
+
 SkillsTab:Toggle({
     Title = "Auto Cast Buff Skills",
     Desc = "กดบัฟตามคลาสอัตโนมัติ (Stealth, ASPD Buff, Speed Buff)",
@@ -5017,20 +5166,35 @@ SkillsTab:Toggle({
 -- ==================== TAB: DUNGEON HUB (SKULL KING'S CRYPT) ====================
 DungeonTab:Section({ Title = "🏰 Auto Dungeon Master (ดันเจี้ยนอัตโนมัติ)", Opened = true })
 
-DungeonTab:Toggle({
+autoDungeonToggle = DungeonTab:Toggle({
     Title = "Enable Auto Dungeon (เปิดระบบลงดันเจี้ยนอัตโนมัติ)",
     Desc = "ตรวจจับดันเจี้ยน, วาร์ปเข้าประตู, กดยืนยันพร้อม, ตีมอนสเตอร์, ตีเสาพิธีกรรม, ล่าบอส และเปิดหีบรับของ Tier VI ครบวงจร",
     Value = Config.AutoDungeon,
     Callback = function(state)
         Config.AutoDungeon = state
-        if Config.AutoSave then SaveConfig(true) end
         if state then
-            WindUI:Notify({ Title = "Auto Dungeon", Content = "เปิดระบบลงดันเจี้ยนอัตโนมัติ", Duration = 2.5, Icon = "play" })
+            -- 🛑 IMMEDIATELY STOP AUTO LV.99 (AutoProgression)
+            Config.AutoProgression = false
+            isCheckingBossArena = false
+            activeBossFight = nil
+            isWarpingZone = false
+            pcall(function()
+                if autoProgressionToggle then
+                    if autoProgressionToggle.SetValue then
+                        autoProgressionToggle:SetValue(false)
+                    elseif autoProgressionToggle.Set then
+                        autoProgressionToggle:Set(false)
+                    end
+                end
+            end)
+            if Config.AutoSave then SaveConfig(true) end
+            WindUI:Notify({ Title = "Auto Dungeon", Content = "เปิดระบบลงดันเจี้ยนอัตโนมัติ (หยุด Auto Lv.99 แล้ว)", Duration = 2.5, Icon = "play" })
         else
             isEnteringDungeon = false
             isOpeningDungeonChest = false
             currentDungeonPillar = nil
             stopCombatAndTargeting()
+            if Config.AutoSave then SaveConfig(true) end
             WindUI:Notify({ Title = "Auto Dungeon", Content = "ปิดระบบลงดันเจี้ยนและหยุดการทำงานเรียบร้อย", Duration = 2, Icon = "square" })
         end
     end,
@@ -5180,6 +5344,47 @@ DungeonTab:Toggle({
     Value = Config.PartyAutoInvite ~= false,
     Callback = function(state)
         Config.PartyAutoInvite = state
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Toggle({
+    Title = "Auto Accept Party Invites (ตอบรับคำเชิญปาร์ตี้อัตโนมัติ / โหมด Alt)",
+    Desc = "สำหรับตัวเด็ก (Alt Account): เมื่อมีคำเชิญเข้าปาร์ตี้เข้ามา ระบบจะตอบรับเข้าปาร์ตี้ให้อัตโนมัติทันที 100%",
+    Value = Config.AutoAcceptParty ~= false,
+    Callback = function(state)
+        Config.AutoAcceptParty = state
+        if Config.AutoSave then SaveConfig(true) end
+        if state then
+            WindUI:Notify({ Title = "Party Alt Mode", Content = "เปิดระบบตอบรับคำเชิญปาร์ตี้อัตโนมัติแล้ว!", Duration = 2.5, Icon = "user-check" })
+        end
+    end,
+})
+
+DungeonTab:Dropdown({
+    Title = "Party Accept Filter (เงื่อนไขการรับคำเชิญ)",
+    Desc = "เลือกประเภทคำเชิญที่จะตอบรับอัตโนมัติ",
+    Values = { "Anyone (รับทุกคน)", "Friends Only (เฉพาะเพื่อน)", "Whitelist (เฉพาะชื่อที่ระบุ)" },
+    Value = (Config.PartyAcceptFilter == "Friends Only" and "Friends Only (เฉพาะเพื่อน)") or (Config.PartyAcceptFilter == "Whitelist" and "Whitelist (เฉพาะชื่อที่ระบุ)") or "Anyone (รับทุกคน)",
+    Callback = function(val)
+        if val:find("Friend") then
+            Config.PartyAcceptFilter = "Friends Only"
+        elseif val:find("White") then
+            Config.PartyAcceptFilter = "Whitelist"
+        else
+            Config.PartyAcceptFilter = "Anyone"
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+DungeonTab:Input({
+    Title = "Party Whitelist Leaders (ชื่อไอดีหลักที่จะรับตี้)",
+    Desc = "พิมพ์ชื่อ Username หรือ UserId ของไอดีหลักที่จะให้รับตี้อัตโนมัติ (คั่นด้วยเครื่องหมายจุลภาค ,)",
+    Value = Config.PartyWhitelistUsers or "",
+    Placeholder = "เช่น MainPlayer1, 12345678",
+    Callback = function(val)
+        Config.PartyWhitelistUsers = val
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
@@ -5738,16 +5943,29 @@ LootTab:Button({
 -- ==================== TAB 5: AUTO LEVEL 99 ====================
 AutoProgTab:Section({ Title = "Auto Level Progression to Max", Opened = true })
 
-AutoProgTab:Toggle({
+autoProgressionToggle = AutoProgTab:Toggle({
     Title = "Auto Map Progression (Auto Level to 99)",
     Desc = "เช็คเลเวลตัวละครและวาร์ปเปลี่ยน Field อัตโนมัติ เพื่อฟาร์มจุดที่ดีที่สุดจนถึง Lv.99",
     Value = Config.AutoProgression,
     Callback = function(state)
         Config.AutoProgression = state
-        if Config.AutoSave then SaveConfig(true) end
         if state then
+            -- If user turns ON Auto Lv.99, turn OFF Auto Dungeon so they don't clash!
+            if Config.AutoDungeon then
+                Config.AutoDungeon = false
+                pcall(function()
+                    if autoDungeonToggle then
+                        if autoDungeonToggle.SetValue then
+                            autoDungeonToggle:SetValue(false)
+                        elseif autoDungeonToggle.Set then
+                            autoDungeonToggle:Set(false)
+                        end
+                    end
+                end)
+            end
             Config.AutoFarm = true
-            WindUI:Notify({ Title = "Auto Level 99", Content = "เปิดโหมดไต่เลเวล 99 อัตโนมัติแล้ว!", Duration = 3, Icon = "zap" })
+            if Config.AutoSave then SaveConfig(true) end
+            WindUI:Notify({ Title = "Auto Level 99", Content = "เปิดโหมดไต่เลเวล 99 อัตโนมัติแล้ว! (ปิด Auto Dungeon แล้ว)", Duration = 3, Icon = "zap" })
             task.spawn(function()
                 checkAutoProgression(true)
             end)
@@ -5756,6 +5974,7 @@ AutoProgTab:Toggle({
             activeBossFight = nil
             isWarpingZone = false
             stopCombatAndTargeting()
+            if Config.AutoSave then SaveConfig(true) end
             WindUI:Notify({ Title = "Auto Level 99", Content = "ปิดโหมดไต่เลเวล 99 และหยุดการวาร์ปแล้ว", Duration = 2, Icon = "square" })
         end
     end,
@@ -6582,7 +6801,7 @@ if DungeonPrompt then
                 end
             end)
         elseif event == "readystate" or event == "ready" then
-            if Config.AutoReadyDungeon or Config.DungeonPartyMode == "Party" then
+            if Config.AutoReadyDungeon or Config.DungeonPartyMode == "Party" or Config.AutoAcceptParty then
                 task.wait(0.15)
                 pcall(function()
                     local dId = (type(data) == "table" and data.Id) or Config.SelectedDungeon or "halloween"
@@ -6591,6 +6810,73 @@ if DungeonPrompt then
                     end
                 end)
             end
+        end
+    end))
+end
+
+-- ==================== AUTO ACCEPT PARTY INVITES (ALT ACCOUNT SYSTEM) ====================
+if PartyInvite then
+    trackConn(PartyInvite.OnClientEvent:Connect(function(fromUserId, fromName, duration, inviteType)
+        if not isScriptAlive() then return end
+        if not Config.AutoAcceptParty then return end
+
+        local leaderId = tonumber(fromUserId)
+        local leaderName = tostring(fromName or "")
+        local action = (inviteType == "request") and "reqaccept" or "accept"
+
+        -- Check whitelist filter if specified
+        if Config.PartyAcceptFilter == "Whitelist" and Config.PartyWhitelistUsers and Config.PartyWhitelistUsers ~= "" then
+            local allowed = false
+            for user in string.gmatch(Config.PartyWhitelistUsers:lower(), "[%w_]+") do
+                if leaderName:lower() == user or tostring(leaderId) == user then
+                    allowed = true
+                    break
+                end
+            end
+            if not allowed then
+                return
+            end
+        elseif Config.PartyAcceptFilter == "Friends Only" and leaderId then
+            local isFriend = false
+            pcall(function()
+                isFriend = LocalPlayer:IsFriendsWith(leaderId)
+            end)
+            if not isFriend then
+                return
+            end
+        end
+
+        task.wait(0.2)
+        pcall(function()
+            if PartyAction then
+                PartyAction:FireServer(action, leaderId)
+            end
+            local fromPlr = leaderId and Players:GetPlayerByUserId(leaderId)
+            if fromPlr and PartyAction then
+                PartyAction:FireServer(action, fromPlr)
+            end
+        end)
+
+        -- Dismiss native game invite UI if open
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            local lumiParty = pg and pg:FindFirstChild("LumiParty")
+            if lumiParty then
+                for _, desc in ipairs(lumiParty:GetDescendants()) do
+                    if desc:IsA("TextButton") and desc.Text == "Join" then
+                        desc.Parent.Visible = false
+                    end
+                end
+            end
+        end)
+
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "👥 Party Joined (Auto Accept)",
+                Content = string.format("ตอบรับคำเชิญเข้าปาร์ตี้ของ %s เรียบร้อย!", leaderName ~= "" and leaderName or tostring(leaderId)),
+                Duration = 2.5,
+                Icon = "user-check"
+            })
         end
     end))
 end
