@@ -694,7 +694,7 @@ function renderLuaSnippet() {
 -- ==============================================================================
 
 -- 🌐 Option 1: Official GitHub Raw (แจกให้คนอื่นรันได้เลย):
-loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. tostring(os.time())))()
 
 -- ⚡ Option 2: Direct Server Endpoint:
 -- loadstring(game:HttpGet("${host}/loader.luau"))()
