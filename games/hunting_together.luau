@@ -440,6 +440,8 @@ local Config = {
     AutoUseSkills = true,
     AutoUseBuffs = true,
     SelectedSkillSlots = { "ช่อง 1 (Slot 1)", "ช่อง 2 (Slot 2)", "ช่อง 3 (Slot 3)", "ช่อง 4 (Slot 4)", "ช่อง 5 (Slot 5)", "ช่อง 6 (Slot 6)", "ช่อง 7 (Slot 7)" },
+    ServerHopAuto = false,
+    ServerHopInterval = 15, -- minutes
     
     -- Auto Equip & Gear
     AutoEquipBest = true,
@@ -2569,6 +2571,162 @@ local function getMonsterList()
     end
     return list
 end
+
+-- ==================== LOW-PLAYER SERVER HOP SYSTEM ====================
+local isServerHopping = false
+local serverHopNextTick = 0
+
+local function serverHopLowPlayer(silent)
+    if isServerHopping then
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "Server Hop", Content = "กำลังอยู่ระหว่างการย้ายเซิร์ฟเวอร์ กรุณารอสักครู่...", Duration = 2.5, Icon = "clock" })
+        end
+        return
+    end
+    isServerHopping = true
+
+    if not silent and WindUI and WindUI.Notify then
+        WindUI:Notify({
+            Title = "Server Hop",
+            Content = "กำลังค้นหาเซิร์ฟเวอร์ที่มีผู้เล่นน้อยที่สุด...",
+            Duration = 3,
+            Icon = "search"
+        })
+    end
+
+    task.spawn(function()
+        local placeId = game.PlaceId
+        local curJob = game.JobId
+        local cursor = ""
+        local candidates = {}
+
+        -- Fetch up to 2 pages of servers sorted by lowest players first
+        for page = 1, 2 do
+            local url = string.format(
+                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s",
+                placeId,
+                (cursor ~= "" and ("&cursor=" .. cursor) or "")
+            )
+            local ok, body = pcall(function() return game:HttpGet(url) end)
+            if ok and body and type(body) == "string" and #body > 20 then
+                local data = nil
+                pcall(function() data = HttpService:JSONDecode(body) end)
+                if data and data.data then
+                    for _, s in ipairs(data.data) do
+                        if s.id and s.id ~= curJob and s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.playing > 0 then
+                            table.insert(candidates, s)
+                        end
+                    end
+                    cursor = data.nextPageCursor or ""
+                end
+            end
+            if #candidates >= 15 or cursor == "" then
+                break
+            end
+        end
+
+        if #candidates == 0 then
+            isServerHopping = false
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Server Hop",
+                    Content = "ไม่พบเซิร์ฟเวอร์ว่างอื่นในขณะนี้ กรุณาลองใหม่อีกครั้ง",
+                    Duration = 3.5,
+                    Icon = "alert-triangle"
+                })
+            end
+            return
+        end
+
+        -- Sort ascending: lowest players first, then lowest ping
+        table.sort(candidates, function(a, b)
+            if a.playing ~= b.playing then
+                return a.playing < b.playing
+            end
+            return (a.ping or 999) < (b.ping or 999)
+        end)
+
+        -- Pick among the top 3 lowest to avoid colliding on the exact same server
+        local pickPool = math.min(3, #candidates)
+        local targetServer = candidates[math.random(1, pickPool)]
+
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "Server Hop Found!",
+                Content = string.format("พบเซิร์ฟเวอร์: คนเล่น %d/%d คน (Ping: %s)\nกำลังเทเลพอร์ต...", targetServer.playing, targetServer.maxPlayers, tostring(targetServer.ping or "N/A")),
+                Duration = 4,
+                Icon = "zap"
+            })
+        end
+
+        -- Prepare autoexecute across teleport
+        pcall(function()
+            local queueScript = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. tostring(os.time())))()'
+            if syn and syn.queue_on_teleport then
+                syn.queue_on_teleport(queueScript)
+            elseif queue_on_teleport then
+                queue_on_teleport(queueScript)
+            end
+        end)
+
+        task.wait(0.6)
+
+        local TeleportService = game:GetService("TeleportService")
+        local tpOk, tpErr = pcall(function()
+            TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
+        end)
+
+        if not tpOk then
+            isServerHopping = false
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Teleport Error",
+                    Content = "เกิดข้อผิดพลาดในการย้ายเซิร์ฟเวอร์: " .. tostring(tpErr),
+                    Duration = 4,
+                    Icon = "alert-circle"
+                })
+            end
+        end
+    end)
+end
+
+local function rejoinCurrentServer()
+    if WindUI and WindUI.Notify then
+        WindUI:Notify({ Title = "Rejoining", Content = "กำลังรีจอยน์เซิร์ฟเวอร์เดิม...", Duration = 3, Icon = "rotate-cw" })
+    end
+    pcall(function()
+        local queueScript = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. tostring(os.time())))()'
+        if syn and syn.queue_on_teleport then
+            syn.queue_on_teleport(queueScript)
+        elseif queue_on_teleport then
+            queue_on_teleport(queueScript)
+        end
+    end)
+    task.wait(0.5)
+    local TeleportService = game:GetService("TeleportService")
+    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+end
+
+-- Server Hop Background Timer Loop
+task.spawn(function()
+    while isScriptAlive() do
+        task.wait(5)
+        if Config.ServerHopAuto then
+            local now = os.clock()
+            local intervalSecs = math.max(60, (tonumber(Config.ServerHopInterval) or 15) * 60)
+            if serverHopNextTick == 0 then
+                serverHopNextTick = now + intervalSecs
+            end
+            if now >= serverHopNextTick then
+                serverHopNextTick = now + intervalSecs
+                print(string.format("[Server Hop] ⏰ Interval reached (%d mins). Hopping to low-player server...", tonumber(Config.ServerHopInterval) or 15))
+                serverHopLowPlayer(false)
+            end
+        else
+            serverHopNextTick = 0
+        end
+    end
+end)
 
 -- ==================== SMART SKILLS & COMBAT ENGINE ====================
 local skillLastCast = {}
@@ -6646,6 +6804,73 @@ TeleportTab:Button({
     Title = "Quick Return to Town",
     Callback = function()
         pcall(function() WarpTo:FireServer("Town") end)
+    end,
+})
+
+-- ==================== LOW-PLAYER SERVER HOP UI ====================
+TeleportTab:Section({ Title = "🌐 Low-Player Server Hop (ระบบย้ายเซิร์ฟเวอร์คนน้อย)", Opened = true })
+
+TeleportTab:Toggle({
+    Title = "Auto Server Hop (ย้ายเซิร์ฟเวอร์อัตโนมัติ)",
+    Desc = "สลับย้ายไปเซิร์ฟเวอร์ที่มีผู้เล่นน้อยที่สุดตามรอบเวลาที่ตั้งไว้",
+    Value = Config.ServerHopAuto,
+    Callback = function(state)
+        Config.ServerHopAuto = state
+        if state then
+            serverHopNextTick = os.clock() + ((tonumber(Config.ServerHopInterval) or 15) * 60)
+        else
+            serverHopNextTick = 0
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+TeleportTab:Slider({
+    Title = "Server Hop Interval (รอบเวลาในการย้ายเซิร์ฟ)",
+    Desc = "ตั้งเวลาว่าจะให้บอทย้ายเซิร์ฟเวอร์คนน้อยทุกๆ กี่นาที (เช่น 10, 15, 30 นาที)",
+    Min = 1,
+    Max = 120,
+    Default = tonumber(Config.ServerHopInterval) or 15,
+    Step = 1,
+    Suffix = " นาที (mins)",
+    Callback = function(val)
+        Config.ServerHopInterval = val
+        if Config.ServerHopAuto then
+            serverHopNextTick = os.clock() + (val * 60)
+        end
+        if Config.AutoSave then SaveConfig(true) end
+    end,
+})
+
+TeleportTab:Button({
+    Title = "🚀 Server Hop Now (ย้ายไปเซิร์ฟคนน้อยทันที)",
+    Desc = "ค้นหาเซิร์ฟเวอร์คนน้อยที่สุดในขณะนี้และย้ายทันที ไม่ต้องรอรอบเวลา",
+    Callback = function()
+        serverHopLowPlayer(false)
+    end,
+})
+
+TeleportTab:Button({
+    Title = "📊 Current Server Info (ข้อมูลเซิร์ฟปัจจุบัน)",
+    Desc = "ดูจำนวนผู้เล่นและ JobId ของเซิร์ฟเวอร์ที่อยู่ตอนนี้",
+    Callback = function()
+        local playersCount = #game:GetService("Players"):GetPlayers()
+        local maxPlayers = 13
+        pcall(function() maxPlayers = game:GetService("Players").MaxPlayers end)
+        WindUI:Notify({
+            Title = "Server Info",
+            Content = string.format("ผู้เล่นในห้องนี้: %d/%d คน\nJobId: %s", playersCount, maxPlayers, string.sub(tostring(game.JobId), 1, 16) .. "..."),
+            Duration = 4,
+            Icon = "info"
+        })
+    end,
+})
+
+TeleportTab:Button({
+    Title = "🔄 Rejoin Current Server (รีจอยน์ห้องเดิม)",
+    Desc = "เชื่อมต่อกลับเข้ามาที่เซิร์ฟเวอร์เดิมทันที",
+    Callback = function()
+        rejoinCurrentServer()
     end,
 })
 
