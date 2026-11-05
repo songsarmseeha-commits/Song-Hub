@@ -157,6 +157,9 @@
             <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-monetization">
                 <i data-lucide="circle-dollar-sign" class="w-4 h-4 text-emerald-400"></i> Get Key & Monetization
             </button>
+            <button class="nav-tab text-gray-400 hover:text-white flex items-center gap-2 px-4 py-2.5 border-b-2 border-transparent transition" data-target="tab-backup">
+                <i data-lucide="cloud" class="w-4 h-4 text-cyan-400"></i> Database Backup & Cloud
+            </button>
         </div>
 
         <!-- ================================================================== -->
@@ -606,6 +609,92 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- TAB 6: DATABASE CLOUD PERSISTENCE & BACKUP -->
+        <!-- ================================================================== -->
+        <div id="tab-backup" class="tab-pane hidden space-y-6">
+
+            <!-- Cloud Persistence Status Card -->
+            <div class="bg-[#121217] border border-cyan-500/20 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                <div class="absolute -top-12 -right-12 w-40 h-40 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none"></div>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div class="flex items-start gap-4">
+                        <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                            <i data-lucide="cloud-lightning" class="w-6 h-6 text-cyan-400"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-base font-bold text-white">Cloud Database Persistence</h3>
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Active (Auto-Restore on Deploy)
+                                </span>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-1 max-w-2xl leading-relaxed">
+                                ระบบป้องกันฐานข้อมูลสูญหายอัตโนมัติ: เซิร์ฟเวอร์จะทำการสำรองข้อมูลคีย์, HWID, และรายชื่อ Whitelist ไปยัง Private Cloud Storage อัตโนมัติทุกครั้งที่มีการเปลี่ยนแปลง 
+                                แม้ Render จะมีการ Redeploy หรือ Restart เซิร์ฟเวอร์จะกู้คืนข้อมูลเดิมกลับมาอัตโนมัติ 100%!
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="btnForceCloudSync" onclick="forceSyncCloud()" class="px-3.5 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs font-semibold transition flex items-center gap-1.5">
+                            <i data-lucide="cloud-upload" class="w-4 h-4"></i> Sync to Cloud Now
+                        </button>
+                        <button id="btnForceCloudPull" onclick="forcePullCloud()" class="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs font-semibold transition flex items-center gap-1.5">
+                            <i data-lucide="cloud-download" class="w-4 h-4"></i> Pull from Cloud
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual File Backup & Restore Card -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                <!-- Export / Download Backup -->
+                <div class="bg-[#121217] border border-brand-border rounded-2xl p-6 space-y-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                            <i data-lucide="download" class="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-bold text-white">Download Backup (ดาวน์โหลดไฟล์สำรอง)</h4>
+                            <p class="text-xs text-gray-400">บันทึกข้อมูลคีย์และระบบทั้งหมดเป็นไฟล์ JSON ลงคอมพิวเตอร์ของคุณ</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        คุณสามารถดาวน์โหลดไฟล์สำรองเก็บไว้ในเครื่องได้ตลอดเวลา สำหรับนำไปย้ายโฮสต์ กู้คืน หรือเก็บประวัติความปลอดภัย
+                    </p>
+                    <button onclick="downloadDatabaseBackup()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/20 transition flex items-center justify-center gap-2">
+                        <i data-lucide="file-down" class="w-4 h-4"></i> Download Full Backup (.json)
+                    </button>
+                </div>
+
+                <!-- Import / Restore Backup -->
+                <div class="bg-[#121217] border border-brand-border rounded-2xl p-6 space-y-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center">
+                            <i data-lucide="upload" class="w-5 h-5 text-pink-400"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-bold text-white">Restore from Backup (กู้คืนจากไฟล์)</h4>
+                            <p class="text-xs text-gray-400">อัปโหลดไฟล์ JSON เพื่อกู้คืนคีย์และ Whitelist ทั้งหมด</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        เลือกไฟล์สำรอง JSON ที่เคยดาวน์โหลดไว้ ระบบจะทำการนำเข้าคีย์และรายชื่อผู้ใช้กลับมาทันที
+                    </p>
+                    <div class="flex gap-2">
+                        <input type="file" id="backupFileInput" accept=".json" class="hidden" onchange="handleBackupFileSelected(event)">
+                        <button onclick="document.getElementById('backupFileInput').click()" class="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-brand-border text-gray-200 font-semibold text-xs transition flex items-center justify-center gap-2">
+                            <i data-lucide="folder-open" class="w-4 h-4 text-pink-400"></i> Select Backup File (.json)
+                        </button>
+                    </div>
+                    <div id="restoreStatus" class="text-xs text-gray-400 hidden"></div>
+                </div>
+
             </div>
 
         </div>
