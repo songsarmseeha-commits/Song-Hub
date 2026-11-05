@@ -857,17 +857,32 @@ local function hasDungeonLineOfSight(pos1, pos2)
     return (hit == nil)
 end
 
-local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged)
+local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar)
     local wallInstances = getDungeonWallInstances()
 
-    -- Strict melee distance in dungeon: 3.8 - 4.2 studs (guaranteed weapon reach, 0% misses!)
-    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 14.0) or 4.0
+    -- Optimal melee combat distance in dungeon: 3.6 - 4.2 studs (100% weapon reach, never clips into center)
+    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 14.0) or 3.8
 
-    -- All Halloween dungeon ground floors are at Y = 60.0. Player standing on floor has HRP at Y = 62.8
+    -- Accurate ground detection excluding characters and monsters
     local floorY = 62.8
-    local floorRay = workspace:Raycast(Vector3.new(targetPos.X, 75.0, targetPos.Z), Vector3.new(0, -35.0, 0))
-    if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
-        floorY = floorRay.Position.Y + 2.8
+    pcall(function()
+        local rayParamsFloor = RaycastParams.new()
+        rayParamsFloor.FilterType = Enum.RaycastFilterType.Exclude
+        local char = LocalPlayer.Character
+        local monstersFolder = workspace:FindFirstChild("Monsters")
+        local ignore = { char }
+        if monstersFolder then table.insert(ignore, monstersFolder) end
+        rayParamsFloor.FilterDescendantsInstances = ignore
+        local floorRay = workspace:Raycast(Vector3.new(targetPos.X, 75.0, targetPos.Z), Vector3.new(0, -40.0, 0), rayParamsFloor)
+        if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
+            floorY = floorRay.Position.Y + 2.8
+        end
+    end)
+
+    -- If fly mode (not Walk), add slight vertical hover within melee hit range
+    if Config.FarmMode ~= "Walk" then
+        local hover = (isBoss or isPillar) and 2.5 or 1.2
+        floorY = floorY + hover
     end
 
     if #wallInstances == 0 then
@@ -885,30 +900,36 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
     local flatToPlayer = Vector3.new(toPlayer.X, 0, toPlayer.Z)
     local primaryDir = flatToPlayer.Magnitude > 0.5 and flatToPlayer.Unit or -mobLook
 
-    -- Test multiple candidate directions to ensure player is placed in open corridor space:
+    -- 1. Try to keep current facing direction to prevent jittery spinning around the monster
+    local checkDist = effectiveDist + 2.0
+    local rayOrigin = Vector3.new(targetPos.X, 62.0, targetPos.Z)
+    local hitPrimary = workspace:Raycast(rayOrigin, primaryDir * checkDist, rayParams)
+    if not hitPrimary or hitPrimary.Distance >= (effectiveDist + 1.2) then
+        local candidatePos = targetPos + (primaryDir * effectiveDist)
+        return Vector3.new(candidatePos.X, floorY, candidatePos.Z)
+    end
+
+    -- 2. Fallback candidate directions only if primary direction is wall-blocked
     local candidateDirs = {
-        primaryDir,
-        -primaryDir,
-        Vector3.new(-primaryDir.Z, 0, primaryDir.X),
-        Vector3.new(primaryDir.Z, 0, -primaryDir.X),
         -mobLook,
+        Vector3.new(-mobLook.Z, 0, mobLook.X),
+        Vector3.new(mobLook.Z, 0, -mobLook.X),
+        -primaryDir,
     }
 
     local bestPos = nil
     local bestClearance = -1
 
     for _, dir in ipairs(candidateDirs) do
-        local checkDist = effectiveDist + 3.0
-        local rayOrigin = Vector3.new(targetPos.X, 62.0, targetPos.Z)
         local hit = workspace:Raycast(rayOrigin, dir * checkDist, rayParams)
         local clearance = hit and hit.Distance or checkDist
 
-        if clearance >= (effectiveDist + 2.5) then
+        if clearance >= (effectiveDist + 1.5) then
             local candidatePos = targetPos + (dir * effectiveDist)
             return Vector3.new(candidatePos.X, floorY, candidatePos.Z)
         elseif clearance > bestClearance then
             bestClearance = clearance
-            local clampedDist = math.max(2.8, math.min(effectiveDist, clearance - 1.8))
+            local clampedDist = math.max(2.8, math.min(effectiveDist, clearance - 1.5))
             bestPos = targetPos + (dir * clampedDist)
         end
     end
@@ -1001,7 +1022,7 @@ local function getDungeonTarget()
     if currentCombatTarget and isMonsterAlive(currentCombatTarget) and currentCombatTarget:GetAttribute("SealShield") ~= true then
         if (alivePillarCount == 0) or currentIsPillar then
             local tPart = getMonsterCombatPart(currentCombatTarget)
-            if tPart and (hrp.Position - tPart.Position).Magnitude <= 35 then
+            if tPart and (hrp.Position - tPart.Position).Magnitude <= 55 then
                 return currentCombatTarget
             end
         end
@@ -1041,8 +1062,8 @@ local function getDungeonTarget()
                     score = 15000 - dist
                 end
 
-                -- Line of sight wall penalty: if monster is behind a wall and not a pillar, deprioritize so we don't try to aggro through walls
-                if not isPillar and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
+                -- Line of sight wall penalty: only deprioritize far-away mobs (> 35 studs) behind walls
+                if not isPillar and dist > 35 and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
                     score = score - 60000
                 end
 
@@ -1452,33 +1473,27 @@ local function advanceDungeonPath()
         end
     end
 
-    if dist < 1.5 then return end
+    if dist < 1.2 then return end
 
-    local dir = (flatTarget - flatPlayer).Unit
-    local stepDist = math.min(dist, 4.2)
-
-    local wallInstances = getDungeonWallInstances()
-    if #wallInstances > 0 then
-        local rayParams = RaycastParams.new()
-        rayParams.FilterType = Enum.RaycastFilterType.Include
-        rayParams.FilterDescendantsInstances = wallInstances
-        local stepCheck = workspace:Raycast(pPos + Vector3.new(0, 1.5, 0), dir * (stepDist + 1.2), rayParams)
-        if stepCheck then
-            stepDist = math.max(0, stepCheck.Distance - 1.5)
+    if Config.FarmMode == "Walk" then
+        hum.WalkSpeed = Config.WalkFarmSpeed or 28
+        hum:MoveTo(targetWp)
+        if dist <= 8 then
+            currentDungeonWpIndex = math.min(#DungeonPathWaypoints, currentDungeonWpIndex + 1)
+        end
+    else
+        local dir = (flatTarget - flatPlayer).Unit
+        local stepDist = math.min(dist, 14.0)
+        local nextPos = pPos + (dir * stepDist)
+        local targetFloorY = (targetWp.Y > 65) and targetWp.Y or 62.8
+        nextPos = Vector3.new(nextPos.X, targetFloorY, nextPos.Z)
+        hrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+        hrp.Velocity = Vector3.zero
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        if dist <= 10 then
+            currentDungeonWpIndex = math.min(#DungeonPathWaypoints, currentDungeonWpIndex + 1)
         end
     end
-    if stepDist <= 0.2 then return end
-
-    local nextPos = pPos + (dir * stepDist)
-    local targetFloorY = (targetWp.Y > 65) and targetWp.Y or 60.5
-    local floorRay = workspace:Raycast(Vector3.new(nextPos.X, 85, nextPos.Z), Vector3.new(0, -50, 0))
-    if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
-        targetFloorY = floorRay.Position.Y + 2.8
-    end
-    nextPos = Vector3.new(nextPos.X, targetFloorY, nextPos.Z)
-    hrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
-    hrp.Velocity = Vector3.zero
-    hrp.AssemblyLinearVelocity = Vector3.zero
 end
 
 local function executeClaimExitChest()
@@ -8179,7 +8194,7 @@ task.spawn(function()
         local shouldCombat = false
         if canScriptMoveOrWarp() then
             if inDungeon then
-                shouldCombat = (Config.AutoDungeon == true) and (Config.AutoFarm == true)
+                shouldCombat = (Config.AutoDungeon == true) or (Config.AutoFarm == true)
             else
                 shouldCombat = (Config.AutoFarm == true)
             end
@@ -8329,11 +8344,10 @@ task.spawn(function()
                             end
                             local targetFloorY = 62.8
                             if inDungeon then
-                                playerPos = getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged)
+                                playerPos = getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar)
                                 targetFloorY = playerPos.Y
                             else
                                 if Config.FarmMode == "Walk" then
-                                    -- Accurate ground detection via Raycast
                                     local rayParams = RaycastParams.new()
                                     rayParams.FilterType = Enum.RaycastFilterType.Exclude
                                     rayParams.FilterDescendantsInstances = {char, target}
@@ -8357,50 +8371,15 @@ task.spawn(function()
                                 end
                             end
 
-                            -- Anticheat-safe movement (never teleport > 4.5 studs in dungeon to prevent rapid teleport tags)
                             local distToTarget = (playerPos - hrp.Position).Magnitude
-                            if inDungeon and distToTarget > 4.5 then
-                                -- If target is obscured behind a wall, follow waypoints cleanly instead of walking into wall
-                                if not isPillar and not hasDungeonLineOfSight(hrp.Position, targetPos) then
-                                    advanceDungeonPath()
-                                    continue
-                                end
-                                local dir = (playerPos - hrp.Position).Unit
-                                local stepDist = math.min(distToTarget, 4.2)
-                                local wallInstances = getDungeonWallInstances()
-                                if #wallInstances > 0 then
-                                    local rayParams = RaycastParams.new()
-                                    rayParams.FilterType = Enum.RaycastFilterType.Include
-                                    rayParams.FilterDescendantsInstances = wallInstances
-                                    local stepCheck = workspace:Raycast(hrp.Position + Vector3.new(0, 1.5, 0), dir * (stepDist + 1.2), rayParams)
-                                    if stepCheck then
-                                        local safeStep = math.max(0, stepCheck.Distance - 1.8)
-                                        if safeStep >= 0.8 then
-                                            stepDist = safeStep
-                                        else
-                                            advanceDungeonPath()
-                                            continue
-                                        end
-                                    end
-                                end
-                                local nextPos = hrp.Position + (dir * stepDist)
-                                nextPos = Vector3.new(nextPos.X, targetFloorY, nextPos.Z)
-                                hrp.CFrame = CFrame.lookAt(nextPos, targetPos + Vector3.new(0, 0.6, 0))
-                                hrp.Velocity = Vector3.zero
-                                hrp.AssemblyLinearVelocity = Vector3.zero
-                                continue
-                            elseif inDungeon then
-                                hrp.CFrame = CFrame.lookAt(playerPos, targetPos + Vector3.new(0, 0.6, 0))
-                                hrp.Velocity = Vector3.zero
-                                hrp.AssemblyLinearVelocity = Vector3.zero
-                                hrp.AssemblyAngularVelocity = Vector3.zero
-                            elseif Config.FarmMode == "Walk" then
-                                -- ==================== WALK MODE MOVEMENT ====================
-                                hum.WalkSpeed = Config.WalkFarmSpeed or 26
+                            if Config.FarmMode == "Walk" then
+                                -- ==================== WALK MODE (DUNGEON & FIELD) ====================
+                                hum.WalkSpeed = Config.WalkFarmSpeed or 28
                                 local flatDiff = Vector3.new(playerPos.X - hrp.Position.X, 0, playerPos.Z - hrp.Position.Z)
                                 local flatDist = flatDiff.Magnitude
+                                local minStandDist = isRanged and 12.0 or 3.5
 
-                                if flatDist > (safeDist + 1.2) then
+                                if flatDist > (minStandDist + 1.2) then
                                     hum:MoveTo(playerPos)
                                 elseif flatDist > 1.8 then
                                     hum:MoveTo(playerPos)
@@ -8410,9 +8389,9 @@ task.spawn(function()
                                     hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
                                 end
                             else
-                                -- ==================== FLY MODE MOVEMENT ====================
-                                if distToTarget > 65 then
-                                    local steps = math.max(1, math.ceil(distToTarget / 45))
+                                -- ==================== FLY / TELEPORT MODE (DUNGEON & FIELD) ====================
+                                if distToTarget > 60 then
+                                    local steps = math.max(1, math.ceil(distToTarget / 40))
                                     for i = 1, steps do
                                         if not char or not hrp.Parent then break end
                                         local alpha = i / steps
@@ -8421,7 +8400,7 @@ task.spawn(function()
                                         hrp.Velocity = Vector3.zero
                                         task.wait(0.02)
                                     end
-                                elseif distToTarget > 30 then
+                                elseif distToTarget > 25 then
                                     local mid = hrp.Position:Lerp(playerPos, 0.5)
                                     hrp.CFrame = CFrame.lookAt(mid, targetPos + Vector3.new(0, 0.6, 0))
                                     hrp.Velocity = Vector3.zero
