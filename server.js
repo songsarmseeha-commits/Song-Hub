@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('./config');
 const db = require('./database');
+const cloudBackup = require('./cloud_backup');
 
 const app = express();
 
@@ -215,6 +216,7 @@ async function handleVerify(req, res) {
             if (!keyData.activated_at) {
                 db.activateKey(keyData.id, hwid, username, keyData.duration_seconds);
             }
+            cloudBackup.triggerSync(db);
         } else {
             db.logAccess({
                 keyString: key,
@@ -429,6 +431,7 @@ app.post('/api/v1/admin/keys/generate', requireAdmin, (req, res) => {
         generated.push(record);
     }
 
+    cloudBackup.triggerSync(db);
     res.json({ success: true, createdCount: generated.length, keys: generated });
 });
 
@@ -440,6 +443,7 @@ app.post('/api/v1/admin/keys/edit', requireAdmin, (req, res) => {
     const updated = db.updateKey(id, { maxHwid, maxSessions, note, isActive, keyType });
     if (!updated) return res.status(404).json({ success: false, error: 'Key not found' });
 
+    cloudBackup.triggerSync(db);
     res.json({ success: true, key: updated, message: 'Key updated successfully!' });
 });
 
@@ -464,6 +468,7 @@ app.post('/api/v1/admin/keys/remove-hwid', requireAdmin, (req, res) => {
     const { id, hwid } = req.body;
     if (!id || !hwid) return res.status(400).json({ success: false, error: 'Missing key id or hwid' });
     db.removeKeyHwid(id, hwid);
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: 'Device HWID removed successfully!' });
 });
 
@@ -472,6 +477,7 @@ app.post('/api/v1/admin/keys/reset-hwid', requireAdmin, (req, res) => {
     const { id } = req.body;
     if (!id) return res.status(400).json({ success: false, error: 'Missing key id' });
     db.resetKeyHwid(id);
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: 'HWID successfully reset!' });
 });
 
@@ -480,6 +486,7 @@ app.post('/api/v1/admin/keys/toggle', requireAdmin, (req, res) => {
     const { id, isActive } = req.body;
     if (id === undefined) return res.status(400).json({ success: false, error: 'Missing key id' });
     db.toggleKeyStatus(id, isActive);
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: `Key status set to ${isActive ? 'Active' : 'Suspended'}` });
 });
 
@@ -487,6 +494,7 @@ app.post('/api/v1/admin/keys/toggle', requireAdmin, (req, res) => {
 app.delete('/api/v1/admin/keys/:id', requireAdmin, (req, res) => {
     const id = req.params.id;
     db.deleteKey(id);
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: 'Key deleted successfully' });
 });
 
@@ -508,6 +516,7 @@ app.post('/api/v1/admin/whitelist/add', requireAdmin, (req, res) => {
         note: note || ''
     });
 
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: 'User added to whitelist successfully!' });
 });
 
@@ -515,6 +524,7 @@ app.post('/api/v1/admin/whitelist/add', requireAdmin, (req, res) => {
 app.delete('/api/v1/admin/whitelist/:id', requireAdmin, (req, res) => {
     const id = req.params.id;
     db.removeWhitelistedUser(id);
+    cloudBackup.triggerSync(db);
     res.json({ success: true, message: 'User removed from whitelist' });
 });
 
@@ -776,6 +786,7 @@ app.get('/api/v1/getkey/callback', (req, res) => {
     }
 
     db.completeSessionWithKey(sessionId, keyString);
+    cloudBackup.triggerSync(db);
 
     db.logAccess({
         keyString,
@@ -865,6 +876,74 @@ app.get('/api/v1/admin/getkey/sessions', requireAdmin, (req, res) => {
 });
 
 // ==============================================================================
+// CLOUD BACKUP & DATABASE PERSISTENCE ENDPOINTS
+// ==============================================================================
+
+// Download full database backup as JSON
+app.get('/api/v1/admin/database/backup', requireAdmin, (req, res) => {
+    try {
+        const data = db.exportData();
+        const filename = `song_hub_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(JSON.stringify(data, null, 2));
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Restore database from uploaded JSON
+app.post('/api/v1/admin/database/restore', requireAdmin, (req, res) => {
+    try {
+        const payload = req.body;
+        if (!payload || (!payload.keys && !payload.whitelisted_users)) {
+            return res.status(400).json({ success: false, error: 'Invalid backup file structure' });
+        }
+        const replace = req.query.replace === 'true';
+        const result = db.importData(payload, replace);
+        
+        // Auto sync restored state to cloud gist
+        cloudBackup.saveToCloud(db).catch(() => {});
+        
+        res.json({
+            success: true,
+            message: `Successfully imported ${result.importedKeys} keys and ${result.importedUsers} whitelisted users!`,
+            result
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Force sync to Cloud Secret Gist
+app.post('/api/v1/admin/database/sync-cloud', requireAdmin, async (req, res) => {
+    try {
+        const ok = await cloudBackup.saveToCloud(db);
+        if (ok) {
+            res.json({ success: true, message: 'Database successfully synced to private Cloud Storage!' });
+        } else {
+            res.status(500).json({ success: false, error: 'Failed to sync to cloud. Check server logs.' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Force pull from Cloud Secret Gist
+app.post('/api/v1/admin/database/pull-cloud', requireAdmin, async (req, res) => {
+    try {
+        const ok = await cloudBackup.autoRestoreIfEmpty(db, true);
+        if (ok) {
+            res.json({ success: true, message: 'Successfully pulled and restored latest snapshot from Cloud Storage!' });
+        } else {
+            res.status(404).json({ success: false, error: 'No cloud snapshot found or failed to pull.' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================================
 // 4. START SERVER
 // ==============================================================================
 
@@ -874,4 +953,14 @@ app.listen(config.PORT, () => {
     console.log(`🚀 Server running on: http://localhost:${config.PORT}`);
     console.log(`🔐 Admin Panel: http://localhost:${config.PORT}/index.html (Protected)`);
     console.log(`========================================================`);
+
+    // Auto-Restore on boot if container is fresh/clean (Render Redeploy protection)
+    cloudBackup.autoRestoreIfEmpty(db).catch(err => {
+        console.error('[Cloud Backup] Boot auto-restore error:', err.message);
+    });
+
+    // Background safety sync every 15 minutes
+    setInterval(() => {
+        cloudBackup.saveToCloud(db).catch(() => {});
+    }, 15 * 60 * 1000);
 });
