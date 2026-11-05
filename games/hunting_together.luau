@@ -635,8 +635,16 @@ local function registerQueueOnTeleport()
             if getgenv and (getgenv()._HuntingTogetherRunning or getgenv()._UniversalLoaderLoading) then
                 return
             end
-            local sOk, code = pcall(game.HttpGet, game, "https://song-hub-avp8.onrender.com/loader.luau?v=" .. tostring(tick()))
-            if sOk and code and #code > 50 then
+            local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
+            local sOk, code = pcall(function()
+                return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
+            end)
+            if not sOk or not code or #code < 500 then
+                sOk, code = pcall(function()
+                    return game:HttpGet("https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb)
+                end)
+            end
+            if sOk and code and #code > 500 then
                 local fn = loadstring(code)
                 if fn then return fn() end
             end
@@ -4743,7 +4751,7 @@ end)
 local initialKey = Enum.KeyCode[Config.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = WindUI:CreateWindow({
-    Title = "Hunting Together | All-in-One Auto Hub",
+    Title = "Hunting Together | All-in-One Auto Hub [v3.5 - Latest]",
     Icon = "swords",
     Folder = "HuntingTogether_UltimateHub",
     Size = UDim2.fromOffset(600, 490),
@@ -7704,8 +7712,8 @@ pcall(function()
 end)
 
 WindUI:Notify({
-    Title = "Hunting Together",
-    Content = "All-in-One Auto Hub พร้อมใช้งานสมบูรณ์แบบเรียบร้อย!",
-    Duration = 3,
+    Title = "Hunting Together [v3.5]",
+    Content = "อัปเดตเวอร์ชันล่าสุด [v3.5] สำเร็จ!\n- เลือกสกิลที่จะใช้\n- Alt Account รับตี้ออโต้\n- ปิด Auto Lv.99 เมื่อเปิดดันเจี้ยน",
+    Duration = 4,
     Icon = "check-circle",
 })
