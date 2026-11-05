@@ -266,7 +266,6 @@ local function stopCombatAndTargeting()
     safeHoldUntil = 0
     isDodgingUntil = 0
     activeBossFight = nil
-    isEnteringDungeon = false
     isOpeningDungeonChest = false
     currentDungeonPillar = nil
     isCheckingBossArena = false
@@ -574,7 +573,8 @@ Config = {
 
 local function canScriptMoveOrWarp()
     if not isScriptAlive() then return false end
-    if isEnteringDungeon or isWaitingForParty then return true end
+    -- Dungeon entry, room creation, and party waiting take absolute priority: block all background tasks from moving or warping
+    if isEnteringDungeon or isWaitingForParty then return false end
     if isInsideDungeon() then
         return Config.AutoDungeon == true
     else
@@ -2017,9 +2017,11 @@ local function executeDungeonEnterRoutine(isManual)
         return
     end
 
+    -- 🛑 PRIORITY 1: Disengage combat & suspend all conflicting routines for dungeon room creation
+    stopCombatAndTargeting()
     isEnteringDungeon = true
     currentCombatTarget = nil
-    stopCombatAndTargeting()
+    setClientCurrentTarget(nil)
 
     -- 3. Travel to GateKeeper in Village
     local gatePos = Vector3.new(4.8, 5.0, 112.5)
@@ -2073,6 +2075,10 @@ local function executeDungeonEnterRoutine(isManual)
     -- 5. Trigger GateKeeper ProximityPrompt
     local prompt = findDungeonGatePrompt()
     if prompt then
+        pcall(function()
+            prompt.RequiresLineOfSight = false
+            prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 10, 30)
+        end)
         if fireproximityprompt then
             pcall(function() fireproximityprompt(prompt) end)
         end
@@ -2127,6 +2133,7 @@ local function executeDungeonEnterRoutine(isManual)
                 })
             end
             isEnteringDungeon = false
+            isWaitingForParty = false
             return
         end
     end
@@ -2166,6 +2173,7 @@ local function executeDungeonEnterRoutine(isManual)
     if entered or isInsideDungeon() then
         task.wait(1.5)
         isEnteringDungeon = false
+        isWaitingForParty = false
     else
         local waitElapsed = 0
         while waitElapsed < 6 and not isInsideDungeon() do
@@ -2173,6 +2181,7 @@ local function executeDungeonEnterRoutine(isManual)
             waitElapsed = waitElapsed + 0.5
         end
         isEnteringDungeon = false
+        isWaitingForParty = false
     end
 end
 
@@ -2292,7 +2301,7 @@ end
 
 travelToZone = function(targetField, fieldName, isManual)
     if isInsideDungeon() or isWarpingZone then return end
-    if not isManual and not canScriptMoveOrWarp() and not isCheckingBossArena then return end
+    if not isManual and (isEnteringDungeon or isWaitingForParty or not canScriptMoveOrWarp()) and not isCheckingBossArena then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -2399,7 +2408,7 @@ local function getTargetBossZone(level, selectedBoss)
 end
 
 local function executeBossInspection(silent)
-    if isInsideDungeon() then return end
+    if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if isWarpingZone or isSelling or isReturningFromBoss or activeBossFight then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2768,6 +2777,12 @@ local isServerHopping = false
 local serverHopNextTick = 0
 
 local function serverHopLowPlayer(silent)
+    if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then
+        if not silent and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "Server Hop", Content = "กำลังสร้างห้องหรืออยู่ในดันเจี้ยน ปิดการย้ายเซิร์ฟเวอร์ชั่วคราว", Duration = 2.5, Icon = "clock" })
+        end
+        return
+    end
     if isServerHopping then
         if not silent and WindUI and WindUI.Notify then
             WindUI:Notify({ Title = "Server Hop", Content = "กำลังอยู่ระหว่างการย้ายเซิร์ฟเวอร์ กรุณารอสักครู่...", Duration = 2.5, Icon = "clock" })
@@ -2902,6 +2917,9 @@ end
 task.spawn(function()
     while isScriptAlive() do
         task.wait(5)
+        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then
+            continue
+        end
         if Config.ServerHopAuto then
             local now = os.clock()
             local intervalSecs = math.max(60, (tonumber(Config.ServerHopInterval) or 15) * 60)
@@ -3619,6 +3637,7 @@ local function openLootBoxTarget(boxObj)
 end
 
 local function checkAllLootBoxes(customRadius)
+    if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if not canScriptMoveOrWarp() then return end
     if isOpeningBox or isWarpingZone or isSelling then return end
     if not Config.AutoOpenLootBox and not Config.AutoHalloweenBoxes then return end
@@ -4467,7 +4486,13 @@ end
 if LocalPlayer.Character then
     task.spawn(setupDodgeHealthMonitor, LocalPlayer.Character)
 end
-trackConn(LocalPlayer.CharacterAdded:Connect(setupDodgeHealthMonitor))
+trackConn(LocalPlayer.CharacterAdded:Connect(function(newChar)
+    setupDodgeHealthMonitor(newChar)
+    if isEnteringDungeon or isWaitingForParty then
+        isEnteringDungeon = false
+        isWaitingForParty = false
+    end
+end))
 
 
 -- ==================== SMART AUTO SELL HELPER FUNCTIONS ====================
@@ -6209,10 +6234,14 @@ autoDungeonToggle = DungeonTab:Toggle({
                     end
                 end
             end)
+            stopCombatAndTargeting()
+            currentCombatTarget = nil
+            setClientCurrentTarget(nil)
             if Config.AutoSave then SaveConfig(true) end
-            WindUI:Notify({ Title = "Auto Dungeon", Content = "เปิดระบบลงดันเจี้ยนอัตโนมัติ (หยุด Auto Lv.99 แล้ว)", Duration = 2.5, Icon = "play" })
+            WindUI:Notify({ Title = "Auto Dungeon", Content = "เปิดระบบลงดันเจี้ยนอัตโนมัติ (จัดลำดับความสำคัญสูงสุด)", Duration = 2.5, Icon = "play" })
         else
             isEnteringDungeon = false
+            isWaitingForParty = false
             isOpeningDungeonChest = false
             currentDungeonPillar = nil
             stopCombatAndTargeting()
@@ -8129,7 +8158,7 @@ task.spawn(function()
                 performAutoLoot()
             end
         end
-        if canScriptMoveOrWarp() and (Config.AutoOpenLootBox or Config.AutoHalloweenBoxes) then
+        if canScriptMoveOrWarp() and not isEnteringDungeon and not isWaitingForParty and (Config.AutoOpenLootBox or Config.AutoHalloweenBoxes) then
             local nowClock = os.clock()
             if (nowClock - lastBoxScanTime) >= 1.5 then
                 lastBoxScanTime = nowClock
@@ -8512,6 +8541,7 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(2)
+        if isEnteringDungeon or isWaitingForParty then continue end
         if Config.AutoUseBuffs and Config.AutoFarm then
             local char = LocalPlayer.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -8543,6 +8573,7 @@ end)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(3.5)
+        if isEnteringDungeon or isWaitingForParty then continue end
         if Config.AutoEquipBest or Config.AutoEquipBestWeapon or Config.AutoEquipCards then
             executeAutoEquipBest()
         end
@@ -8595,7 +8626,7 @@ task.spawn(function()
         end
 
         -- 5. Periodic World Boss Arena Inspection (Warp to Boss Room)
-        if (Config.AutoWarpToBoss or Config.BossOnly) and Config.AutoBoss then
+        if (Config.AutoWarpToBoss or Config.BossOnly) and Config.AutoBoss and not isEnteringDungeon and not isWaitingForParty then
             local now = os.clock()
             local interval = Config.BossOnly and 12 or (Config.BossCheckInterval or 75)
             if (now - lastBossWarpCheckTime) >= interval then
@@ -8809,7 +8840,7 @@ end))
 task.spawn(function()
     -- Check immediately on script startup
     task.wait(2.0)
-    if Config.AutoSell then
+    if Config.AutoSell and not isEnteringDungeon and not isWaitingForParty and not isInsideDungeon() then
         local used = LocalPlayer:GetAttribute("BagSlotsUsed") or 0
         local max = LocalPlayer:GetAttribute("BagSlotsMax") or 50
         if max > 0 and (used >= max - 3 or (used / max) >= 0.80 or Config.AutoSellPeriodic) then
@@ -8819,6 +8850,7 @@ task.spawn(function()
 
     while isScriptAlive() do
         task.wait(Config.AutoSellInterval or 20)
+        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then continue end
         if Config.AutoSell then
             local used = LocalPlayer:GetAttribute("BagSlotsUsed") or 0
             local max = LocalPlayer:GetAttribute("BagSlotsMax") or 50
