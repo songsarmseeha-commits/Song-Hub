@@ -1114,16 +1114,46 @@ local function getDungeonTarget()
     local bestTarget = nil
     local bestScore = -math.huge
 
-    local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
-    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or ""):lower()
-    if dObj:find("clear all monster") or dObj:find("kill monster") then
-        dStep = 1
-    elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
-        dStep = 2
-    elseif dObj:find("mini boss") or dObj:find("witch") then
-        dStep = 3
-    elseif dObj:find("defeat the boss") or dObj:find("skull king") then
-        dStep = 4
+    local dStep = tonumber(workspace:GetAttribute("DungeonStep") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonStep")))
+    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonObjective")) or ""):lower()
+
+    -- Search PlayerGui for active objective banner / quest list (e.g. "DEFEAT THE POTION WITCH")
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, desc in ipairs(pg:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible and desc.Text and desc.Text ~= "" then
+                    local txt = desc.Text:lower()
+                    if txt:find("defeat the potion witch") or txt:find("potion witch") or (txt:find("mini boss") and not txt:find("cleared")) then
+                        dStep = 3
+                        dObj = "defeat the mini boss"
+                        break
+                    elseif txt:find("defeat the skull king") or txt:find("skull king") then
+                        dStep = 4
+                        dObj = "defeat the boss"
+                        break
+                    elseif txt:find("ritual pillar") or txt:find("destroy the pillar") or txt:find("break the seal") then
+                        dStep = 2
+                        dObj = "destroy the ritual pillars"
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    if not dStep then
+        if dObj:find("clear all monster") or dObj:find("kill monster") then
+            dStep = 1
+        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+            dStep = 2
+        elseif dObj:find("mini boss") or dObj:find("witch") then
+            dStep = 3
+        elseif dObj:find("defeat the boss") or dObj:find("skull king") then
+            dStep = 4
+        else
+            dStep = 1
+        end
     end
 
     local inBossArena = (hrp.Position.X >= -4100 and hrp.Position.Z <= -240)
@@ -1506,16 +1536,46 @@ local function advanceDungeonPath()
         end
     end
 
-    local dStep = tonumber(workspace:GetAttribute("DungeonStep")) or 1
-    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or ""):lower()
-    if dObj:find("clear all monster") or dObj:find("kill monster") then
-        dStep = 1
-    elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
-        dStep = 2
-    elseif dObj:find("mini boss") or dObj:find("witch") then
-        dStep = 3
-    elseif dObj:find("defeat the boss") or dObj:find("skull king") then
-        dStep = 4
+    local dStep = tonumber(workspace:GetAttribute("DungeonStep") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonStep")))
+    local dObj = tostring(workspace:GetAttribute("DungeonObjective") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonObjective")) or ""):lower()
+
+    -- Search PlayerGui for active objective banner / quest list (e.g. "DEFEAT THE POTION WITCH")
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, desc in ipairs(pg:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible and desc.Text and desc.Text ~= "" then
+                    local txt = desc.Text:lower()
+                    if txt:find("defeat the potion witch") or txt:find("potion witch") or (txt:find("mini boss") and not txt:find("cleared")) then
+                        dStep = 3
+                        dObj = "defeat the mini boss"
+                        break
+                    elseif txt:find("defeat the skull king") or txt:find("skull king") then
+                        dStep = 4
+                        dObj = "defeat the boss"
+                        break
+                    elseif txt:find("ritual pillar") or txt:find("destroy the pillar") or txt:find("break the seal") then
+                        dStep = 2
+                        dObj = "destroy the ritual pillars"
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    if not dStep then
+        if dObj:find("clear all monster") or dObj:find("kill monster") then
+            dStep = 1
+        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+            dStep = 2
+        elseif dObj:find("mini boss") or dObj:find("witch") then
+            dStep = 3
+        elseif dObj:find("defeat the boss") or dObj:find("skull king") then
+            dStep = 4
+        else
+            dStep = 1
+        end
     end
 
     local maxAllowedWp = 37
@@ -1567,6 +1627,42 @@ local function advanceDungeonPath()
             return
         elseif currentDungeonWpIndex > 21 then
             currentDungeonWpIndex = 21
+        end
+    end
+
+    -- Boss Room Stagnation Recovery:
+    -- If player reached Skull King Boss Arena (WP >= 32) but Skull King has NOT spawned,
+    -- check if Potion Witch was skipped! If no boss is present, warp back to Witch Lair (WP 21)!
+    if closestIdx >= 32 and not currentCombatTarget then
+        local bossFound = false
+        local mFolder = workspace:FindFirstChild("Monsters")
+        if mFolder then
+            for _, m in ipairs(mFolder:GetChildren()) do
+                if m:IsA("Model") and isMonsterAlive(m) then
+                    local mName = m.Name:lower()
+                    local mId = tostring(m:GetAttribute("MonsterId") or "")
+                    if m:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mId:find("boss") or mId:find("skull") then
+                        bossFound = true
+                        break
+                    end
+                end
+            end
+        end
+
+        if not bossFound and (dStep < 4 or dObj:find("witch") or dObj:find("mini boss")) then
+            currentDungeonWpIndex = 21
+            local witchWp = DungeonPathWaypoints[21]
+            hrp.CFrame = CFrame.new(witchWp.X, 62.8, witchWp.Z)
+            hrp.Velocity = Vector3.zero
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Mini Boss Required! 🧙‍♀️",
+                    Content = "บอสใหญ่ยังไม่เกิดเพราะยังไม่ได้ฆ่า Potion Witch! กำลังวาร์ปไปห้องแม่มด...",
+                    Duration = 3,
+                    Icon = "skull"
+                })
+            end
+            return
         end
     end
 
@@ -7873,20 +7969,18 @@ local function executeAutoClaimRewards()
         end
     end)
 
-    -- 4. Fast GUI Claim Button Clicker for HuntRewardPage & HuntRewards
+    -- 4. Fast GUI Claim Button Clicker for any visible Claim button on screen (Rewards & Check-in)
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         if not pg then return end
-        for _, gName in ipairs({"HuntRewardPage", "HuntRewards"}) do
-            local g = pg:FindFirstChild(gName)
-            if g then
+        for _, g in ipairs(pg:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
                 for _, d in ipairs(g:GetDescendants()) do
-                    if d:IsA("GuiButton") then
-                        local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text) or ""
-                        if t == "Claim" or t:lower() == "claim" or d.Name == "Status" then
-                            if d.Visible then
-                                clickGuiButton(d)
-                            end
+                    if d:IsA("GuiButton") and d.Visible then
+                        local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel", true) and d:FindFirstChildWhichIsA("TextLabel", true).Text) or ""
+                        local lowerT = t:gsub("%s+", " "):lower():match("^%s*(.-)%s*$")
+                        if lowerT == "claim" or lowerT == "รับรางวัล" or lowerT == "claim all" or d.Name == "Status" or d.Name == "ClaimBtn" or d.Name == "ClaimButton" then
+                            clickGuiButton(d)
                         end
                     end
                 end
@@ -7924,16 +8018,19 @@ local function executeAutoClaimAchievements()
         end
     end)
 
-    -- 2. Fast GUI Claim Button Clicker for HuntAchievePage (Adventure Book)
+    -- 2. Fast GUI Claim Button Clicker for Adventure Book (Achievements & Titles)
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local page = pg and pg:FindFirstChild("HuntAchievePage")
-        if page and page.Enabled then
-            for _, d in ipairs(page:GetDescendants()) do
-                if d:IsA("GuiButton") and d.Visible then
-                    local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text) or ""
-                    if t == "Claim" or t:lower() == "claim" then
-                        clickGuiButton(d)
+        if not pg then return end
+        for _, g in ipairs(pg:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("GuiButton") and d.Visible then
+                        local t = (d:IsA("TextButton") and d.Text) or (d:FindFirstChildWhichIsA("TextLabel", true) and d:FindFirstChildWhichIsA("TextLabel", true).Text) or ""
+                        local lowerT = t:gsub("%s+", " "):lower():match("^%s*(.-)%s*$")
+                        if lowerT == "claim" or lowerT == "รับรางวัล" or lowerT == "claim all" or d.Name == "ClaimBtn" or d.Name == "ClaimButton" then
+                            clickGuiButton(d)
+                        end
                     end
                 end
             end
