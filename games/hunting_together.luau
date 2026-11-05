@@ -2610,37 +2610,6 @@ local function getHotbarSkillInSlot(slotNum)
     return nil
 end
 
-local function isSkillAllowedToCast(skillId)
-    if not skillId or skillId == "" then return false end
-
-    -- 1. Check if this skill is equipped in any Hotbar Slot 1-7
-    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-    if hotbarRaw and hotbarRaw ~= "" then
-        local ok, hotbar = pcall(function() return HttpService:JSONDecode(hotbarRaw) end)
-        if ok and hotbar then
-            for slot = 1, 7 do
-                local item = hotbar[tostring(slot)]
-                if item and type(item) == "string" and item:find("^skill:") then
-                    local sname = item:sub(7)
-                    if sname:lower() == skillId:lower() then
-                        return isSlotSelected(slot)
-                    end
-                end
-            end
-        end
-    end
-
-    -- 2. If it is NOT in any Hotbar Slot 1-7:
-    -- Only allow if it's a known class buff AND Config.AutoUseBuffs is ON
-    local buffList = { vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true }
-    if Config.AutoUseBuffs and buffList[skillId:lower()] then
-        return true
-    end
-
-    -- Deselected or unequipped skill is blocked 100%
-    return false
-end
-
 -- Suppress the game's native bot from automatically firing unwanted skills
 pcall(function()
     LocalPlayer:SetAttribute("BotUseSkills", false)
@@ -2655,36 +2624,6 @@ pcall(function()
             if LocalPlayer:GetAttribute("AutoSkill") == true then
                 LocalPlayer:SetAttribute("AutoSkill", false)
             end
-        end))
-    end
-end)
-
--- Network-level barrier: Intercept and block unselected skills from ever firing via UseSkill
-pcall(function()
-    if hookmetamethod and UseSkill then
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if self == UseSkill and (method == "FireServer" or method == "fireServer") then
-                local args = {...}
-                local sId = tostring(args[1] or "")
-                if not isSkillAllowedToCast(sId) then
-                    return
-                end
-            end
-            return oldNamecall(self, ...)
-        end))
-    end
-end)
-
-pcall(function()
-    if hookfunction and UseSkill and UseSkill.FireServer then
-        local oldFireServer
-        oldFireServer = hookfunction(UseSkill.FireServer, newcclosure(function(self, sId, ...)
-            if not isSkillAllowedToCast(tostring(sId or "")) then
-                return
-            end
-            return oldFireServer(self, sId, ...)
         end))
     end
 end)
@@ -2714,7 +2653,6 @@ local SkillCooldownDefaults = {
 
 local function castSmartSkill(skillId, target)
     if not skillId or skillId == "" then return false end
-    if not isSkillAllowedToCast(skillId) then return false end
     local now = os.clock()
     local cd = SkillCooldownDefaults[skillId] or 3.0
 
@@ -7409,7 +7347,7 @@ task.spawn(function()
     end
 end)
 
--- 5. Auto Buffs Loop (Stealth, Vanish, ASPD, Speed)
+-- 5. Auto Buffs Loop (Equipped Hotbar Buffs)
 task.spawn(function()
     while isScriptAlive() do
         task.wait(2)
@@ -7418,9 +7356,21 @@ task.spawn(function()
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 pcall(function()
-                    local buffList = {"vanish", "stealth", "haste", "blessing", "increase_agi"}
-                    for _, buff in ipairs(buffList) do
-                        castSmartSkill(buff, nil)
+                    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+                    if hotbarRaw and hotbarRaw ~= "" then
+                        local hotbar = HttpService:JSONDecode(hotbarRaw)
+                        local buffNames = { meikyo = true, vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true }
+                        for slotNum = 1, 7 do
+                            if isSlotSelected(slotNum) then
+                                local slotVal = hotbar[tostring(slotNum)]
+                                if type(slotVal) == "string" and slotVal:find("^skill:") then
+                                    local sname = slotVal:sub(7)
+                                    if buffNames[sname:lower()] then
+                                        castSmartSkill(sname, nil)
+                                    end
+                                end
+                            end
+                        end
                     end
                 end)
             end
