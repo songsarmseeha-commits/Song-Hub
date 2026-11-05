@@ -100,11 +100,12 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 end)
 
 -- Safe alive check for live-reload / loop management & multi-execute cleanup
-getgenv().__BlueLockFarmRunId = (getgenv().__BlueLockFarmRunId or 0) + 1
+getgenv().__BlueLockFarmRunId = (tonumber(getgenv().__BlueLockFarmRunId) or 0) + 1
 local currentScriptRunId = getgenv().__BlueLockFarmRunId
 
 local function isAlive()
-    if getgenv().__BlueLockFarmRunId ~= currentScriptRunId then
+    local activeRun = tonumber(getgenv().__BlueLockFarmRunId)
+    if activeRun and currentScriptRunId and activeRun > currentScriptRunId then
         return false
     end
     if typeof(STATE) == "table" and typeof(STATE.alive) == "function" then
@@ -344,6 +345,28 @@ local function formatNumber(num)
     return tostring(math.floor(num))
 end
 
+-- Helper: Bulletproof Paragraph Updater (WindUI API + Direct GuiObject fallback)
+local function updateParagraph(para, title, desc)
+    if not para then return end
+    pcall(function()
+        if typeof(para.SetDesc) == "function" then
+            para:SetDesc(desc)
+        elseif typeof(para.Set) == "function" then
+            para:Set({ Title = title, Desc = desc })
+        end
+    end)
+    pcall(function()
+        if para.ElementFrame then
+            for _, d in ipairs(para.ElementFrame:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text ~= title and d.Text ~= "Locked" then
+                    d.Text = desc
+                    break
+                end
+            end
+        end
+    end)
+end
+
 -- Helper: Get Player's Plot
 local function getMyPlot()
     local map = workspace:FindFirstChild("Map")
@@ -420,11 +443,11 @@ local function getCandyAmount()
     end
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local lbl = pg and pg:FindFirstChild("FrontGui")
-            and pg.FrontGui:FindFirstChild("LeftBottomFrame")
-            and pg.FrontGui.LeftBottomFrame:FindFirstChild("CandyHolder")
-            and pg.FrontGui.LeftBottomFrame.CandyHolder:FindFirstChild("ImageLabel")
-            and pg.FrontGui.LeftBottomFrame.CandyHolder.ImageLabel:FindFirstChild("AmountLabel")
+        local fg = pg and pg:FindFirstChild("FrontGui")
+        local lbf = fg and fg:FindFirstChild("LeftBottomFrame")
+        local ch = lbf and lbf:FindFirstChild("CandyHolder")
+        local img = ch and ch:FindFirstChild("ImageLabel")
+        local lbl = img and img:FindFirstChild("AmountLabel")
         if lbl and lbl.Text then
             local num = tonumber(lbl.Text)
             if num then return num end
@@ -1233,12 +1256,25 @@ local function setAutoLoadConfig(name)
     end
 end
 
--- Helper: Ensure value is a table (handles backward compatibility with single string configs)
+-- Helper: Ensure value is a table (handles backward compatibility with single string configs & dictionary format)
 local function toTable(val, default)
-    if type(val) == "table" then
-        return val
-    elseif type(val) == "string" and val ~= "" then
+    if type(val) == "string" and val ~= "" then
         return { val }
+    elseif type(val) == "table" then
+        local flat = {}
+        for k, v in pairs(val) do
+            if type(k) == "number" and type(v) == "string" and v ~= "" then
+                table.insert(flat, v)
+            elseif type(k) == "string" and k ~= "" and (v == true or v == 1) then
+                table.insert(flat, k)
+            elseif type(v) == "string" and v ~= "" then
+                table.insert(flat, v)
+            end
+        end
+        if #flat > 0 then
+            return flat
+        end
+        return default or {}
     end
     return default or {}
 end
@@ -3379,18 +3415,18 @@ local lastGradingWarn = 0
 local lastEquippedWarn = 0
 local lastAffordWarn = 0
 
--- Helper: Match check for multi-select arrays (Clean & Case-Insensitive)
+-- Helper: Match check for multi-select arrays/dicts (Clean & Case-Insensitive)
 local function isBoxAllowed(boxName)
     if not boxName or boxName == "" then return false end
-    if #selectedBoxes == 0 or table.find(selectedBoxes, "All") then
-        return true
-    end
+    if not selectedBoxes or #selectedBoxes == 0 then return true end
     local cleanBox = string.lower(string.gsub(boxName, "[%s_%-]", ""))
-    for _, b in ipairs(selectedBoxes) do
-        if b == "All" or b == boxName then return true end
-        local cleanB = string.lower(string.gsub(b, "[%s_%-]", ""))
-        if cleanB == cleanBox or string.find(cleanBox, cleanB) or string.find(cleanB, cleanBox) then
-            return true
+    for k, v in pairs(selectedBoxes) do
+        local b = (type(v) == "string" and v ~= "" and v) or (type(k) == "string" and k ~= "" and (v == true or v == 1) and k) or (type(k) == "string" and k ~= "" and k)
+        if b then
+            local cleanB = string.lower(string.gsub(b, "[%s_%-]", ""))
+            if cleanB == "all" or cleanB == cleanBox or string.find(cleanBox, cleanB) or string.find(cleanB, cleanBox) then
+                return true
+            end
         end
     end
     return false
@@ -3398,15 +3434,15 @@ end
 
 local function isVariantAllowed(varName)
     varName = (varName and varName ~= "") and varName or "Normal"
-    if #selectedVariants == 0 or table.find(selectedVariants, "All") then
-        return true
-    end
+    if not selectedVariants or #selectedVariants == 0 then return true end
     local cleanVar = string.lower(string.gsub(varName, "[%s_%-]", ""))
-    for _, v in ipairs(selectedVariants) do
-        if v == "All" or v == varName then return true end
-        local cleanV = string.lower(string.gsub(v, "[%s_%-]", ""))
-        if cleanV == cleanVar or string.find(cleanVar, cleanV) or string.find(cleanV, cleanVar) then
-            return true
+    for k, v in pairs(selectedVariants) do
+        local valStr = (type(v) == "string" and v ~= "" and v) or (type(k) == "string" and k ~= "" and (v == true or v == 1) and k) or (type(k) == "string" and k ~= "" and k)
+        if valStr then
+            local cleanV = string.lower(string.gsub(valStr, "[%s_%-]", ""))
+            if cleanV == "all" or cleanV == cleanVar or string.find(cleanVar, cleanV) or string.find(cleanV, cleanVar) then
+                return true
+            end
         end
     end
     return false
@@ -3414,15 +3450,15 @@ end
 
 local function isPlaceBoxAllowed(boxName)
     if not boxName or boxName == "" then return false end
-    if #placeBoxFilter == 0 or table.find(placeBoxFilter, "All") then
-        return true
-    end
+    if not placeBoxFilter or #placeBoxFilter == 0 then return true end
     local cleanBox = string.lower(string.gsub(boxName, "[%s_%-]", ""))
-    for _, b in ipairs(placeBoxFilter) do
-        if b == "All" or b == boxName then return true end
-        local cleanB = string.lower(string.gsub(b, "[%s_%-]", ""))
-        if cleanB == cleanBox or string.find(cleanBox, cleanB) or string.find(cleanB, cleanBox) then
-            return true
+    for k, v in pairs(placeBoxFilter) do
+        local b = (type(v) == "string" and v ~= "" and v) or (type(k) == "string" and k ~= "" and (v == true or v == 1) and k) or (type(k) == "string" and k ~= "" and k)
+        if b then
+            local cleanB = string.lower(string.gsub(b, "[%s_%-]", ""))
+            if cleanB == "all" or cleanB == cleanBox or string.find(cleanBox, cleanB) or string.find(cleanB, cleanBox) then
+                return true
+            end
         end
     end
     return false
@@ -3430,15 +3466,15 @@ end
 
 local function isPlaceVariantAllowed(varName)
     varName = (varName and varName ~= "") and varName or "Normal"
-    if #placeVariantFilter == 0 or table.find(placeVariantFilter, "All") then
-        return true
-    end
+    if not placeVariantFilter or #placeVariantFilter == 0 then return true end
     local cleanVar = string.lower(string.gsub(varName, "[%s_%-]", ""))
-    for _, v in ipairs(placeVariantFilter) do
-        if v == "All" or v == varName then return true end
-        local cleanV = string.lower(string.gsub(v, "[%s_%-]", ""))
-        if cleanV == cleanVar or string.find(cleanVar, cleanV) or string.find(cleanV, cleanVar) then
-            return true
+    for k, v in pairs(placeVariantFilter) do
+        local valStr = (type(v) == "string" and v ~= "" and v) or (type(k) == "string" and k ~= "" and (v == true or v == 1) and k) or (type(k) == "string" and k ~= "" and k)
+        if valStr then
+            local cleanV = string.lower(string.gsub(valStr, "[%s_%-]", ""))
+            if cleanV == "all" or cleanV == cleanVar or string.find(cleanVar, cleanV) or string.find(cleanV, cleanVar) then
+                return true
+            end
         end
     end
     return false
@@ -3705,7 +3741,7 @@ task.spawn(function()
                         if canAffordTarget then
                             -- Money is sufficient! Purchase immediately
                             lastPurchasedRollId = rollId
-                            lockerStatusText = string.format("🛒 Purchasing %s (%s) for $%d...", tostring(currentBox), tostring(currentVariant), price)
+                            lockerStatusText = string.format("🛒 Purchasing %s (%s) for $%s...", tostring(currentBox), tostring(currentVariant), formatNumber(price))
 
                             -- Trigger ProximityPrompt if available on BoxModel
                             local bm = rollPart:FindFirstChild("BoxModel")
@@ -3750,7 +3786,32 @@ task.spawn(function()
                             lastPurchasedRollId = rollId
                         end
 
-                    -- 2. CAN WE ROLL?
+                    -- 2. LOCKER ON CONVEYOR DOES NOT MATCH FILTERS:
+                    elseif hasLockerOnConveyor and not isTargetBox then
+                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
+                        if not isHoldingTarget then
+                            if autoRollLocker then
+                                local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                                if cdRemaining <= 0.1 then
+                                    lockerStatusText = string.format("🔄 Rolling past non-target: %s (%s)", tostring(currentBox), tostring(currentVariant))
+                                    if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                        Remotes.NewRequestConveyorRoll:FireServer()
+                                    elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                        Remotes.RequestConveyorRoll:FireServer()
+                                    end
+                                else
+                                    lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs) - Skipping %s (%s)", math.max(0.1, cdRemaining), tostring(currentBox), tostring(currentVariant))
+                                end
+                            else
+                                if autoBuyLocker then
+                                    lockerStatusText = string.format("⏭️ Ignored: %s (%s) [Not in Target Filters]. Turn ON Auto Roll to roll for targets!", tostring(currentBox), tostring(currentVariant))
+                                else
+                                    lockerStatusText = string.format("💤 Conveyor: %s (%s)", tostring(currentBox), tostring(currentVariant))
+                                end
+                            end
+                        end
+
+                    -- 3. CAN WE ROLL? (No locker on conveyor, or waiting to roll)
                     -- Note: autoRoll is completely FREE! Never block rolling due to minCashBuffer.
                     -- Rolling is only blocked if we are actively holding a target box waiting for cash.
                     elseif autoRollLocker then
@@ -3775,6 +3836,12 @@ task.spawn(function()
                         if not isHoldingTarget then
                             lockerStatusText = "💤 Idle / Ready"
                         end
+                    end
+
+                    if LockerStatusParagraph then
+                        local fastDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
+                            lockerStatusText or "Idle 💤", tostring(currentBox or "None"), tostring(currentVariant or "Normal"), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
+                        updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", fastDesc)
                     end
                 end
             end)
@@ -4154,14 +4221,7 @@ task.spawn(function()
                     #affordableList > 0 and table.concat(affordableList, ", ") or (#selectedBallSkins > 0 and "Ready to Purchase (Server Validated)" or "None selected")
                 )
 
-                if typeof(BallSkinStatusParagraph.Set) == "function" then
-                    BallSkinStatusParagraph:Set({
-                        Title = "Ball Skin Overview",
-                        Desc = statusText
-                    })
-                elseif typeof(BallSkinStatusParagraph.SetDesc) == "function" then
-                    BallSkinStatusParagraph:SetDesc(statusText)
-                end
+                updateParagraph(BallSkinStatusParagraph, "Ball Skin Overview", statusText)
             end
 
             -- Auto Buy Selected Ball Skins
@@ -4252,14 +4312,7 @@ task.spawn(function()
                     statusText = string.format("• Current Weather: Clear Skies ☀️\n• Next Weather Event in: %ds", nextIn)
                 end
 
-                if typeof(WeatherStatusParagraph.SetDesc) == "function" then
-                    WeatherStatusParagraph:SetDesc(statusText)
-                elseif typeof(WeatherStatusParagraph.Set) == "function" then
-                    WeatherStatusParagraph:Set({
-                        Title = "Weather Status",
-                        Desc = statusText
-                    })
-                end
+                updateParagraph(WeatherStatusParagraph, "Weather Status", statusText)
             end
         end)
 
@@ -4310,14 +4363,7 @@ task.spawn(function()
                     "• Admin House (1h): " .. adminStr .. "\n" ..
                     "• Active Graves: " .. gravesCount .. " ready to dig"
 
-                if typeof(HalloweenStatusParagraph.SetDesc) == "function" then
-                    HalloweenStatusParagraph:SetDesc(descStr)
-                elseif typeof(HalloweenStatusParagraph.Set) == "function" then
-                    HalloweenStatusParagraph:Set({
-                        Title = "Halloween Event Status",
-                        Desc = descStr
-                    })
-                end
+                updateParagraph(HalloweenStatusParagraph, "Halloween Event Status", descStr)
             end
         end)
 
@@ -4361,14 +4407,7 @@ task.spawn(function()
                 local zombieDesc = string.format("• Wave Status: %s\n• Active Zombies in World: %d (King Zombies: %d)\n• Anti-Cheat Lockout: %s\n• Session Zombies Slayed: %d 💀",
                     waveStr, #activeZombies, kingCount, lockoutStr, zombieSessionKills)
 
-                if typeof(ZombieWaveStatusParagraph.SetDesc) == "function" then
-                    ZombieWaveStatusParagraph:SetDesc(zombieDesc)
-                elseif typeof(ZombieWaveStatusParagraph.Set) == "function" then
-                    ZombieWaveStatusParagraph:Set({
-                        Title = "Zombie Wave Event Status",
-                        Desc = zombieDesc
-                    })
-                end
+                updateParagraph(ZombieWaveStatusParagraph, "Zombie Wave Event Status", zombieDesc)
             end
         end)
 
@@ -4390,14 +4429,7 @@ task.spawn(function()
                 local sciDesc = string.format("• Predator Variant: %d / 1\n• Shadow Variant: %d / 5\n• Bluetooth Potion: %d / 10\n• Trait Tokens: %d / 100\n• Grade Tokens: %d / 100\n• Synthesis Ready: %s",
                     predatorCount, shadowCount, btPotionCount, traitCount, gradeCount, readyToCraft and "YES! Ready to Craft" or "Gathering materials...")
 
-                if typeof(ScientistStatusParagraph.SetDesc) == "function" then
-                    ScientistStatusParagraph:SetDesc(sciDesc)
-                elseif typeof(ScientistStatusParagraph.Set) == "function" then
-                    ScientistStatusParagraph:Set({
-                        Title = "Mad Scientist Material Status",
-                        Desc = sciDesc
-                    })
-                end
+                updateParagraph(ScientistStatusParagraph, "Mad Scientist Material Status", sciDesc)
 
                 -- Auto Craft if enabled
                 if autoCraftScientist and readyToCraft and Remotes:FindFirstChild("MadScientistCraft") then
@@ -4419,14 +4451,7 @@ task.spawn(function()
 
                 local obbyDesc = string.format("• Easy Obby (5m): %s\n• Medium Obby (10m): %s\n• Hard Obby (15m): %s", easyStr, medStr, hardStr)
 
-                if typeof(ObbyStatusParagraph.SetDesc) == "function" then
-                    ObbyStatusParagraph:SetDesc(obbyDesc)
-                elseif typeof(ObbyStatusParagraph.Set) == "function" then
-                    ObbyStatusParagraph:Set({
-                        Title = "Obby Status & Cooldowns",
-                        Desc = obbyDesc
-                    })
-                end
+                updateParagraph(ObbyStatusParagraph, "Obby Status & Cooldowns", obbyDesc)
             end
         end)
 
@@ -4440,14 +4465,7 @@ task.spawn(function()
                 local towerDesc = string.format("• Status: %s\n• Target Stage: %s (%s)\n• Current Floor: %d\n• Surrender at: %s",
                     statusStr, tostring(selectedTowerStage), tostring(stageDisplay), activeTowerFloor, surrenderStr)
 
-                if typeof(TowerStatusParagraph.SetDesc) == "function" then
-                    TowerStatusParagraph:SetDesc(towerDesc)
-                elseif typeof(TowerStatusParagraph.Set) == "function" then
-                    TowerStatusParagraph:Set({
-                        Title = "Tower Battle Status",
-                        Desc = towerDesc
-                    })
-                end
+                updateParagraph(TowerStatusParagraph, "Tower Battle Status", towerDesc)
             end
         end)
 
@@ -4468,14 +4486,7 @@ task.spawn(function()
                 local lockerDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
                     lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
 
-                if typeof(LockerStatusParagraph.SetDesc) == "function" then
-                    LockerStatusParagraph:SetDesc(lockerDesc)
-                elseif typeof(LockerStatusParagraph.Set) == "function" then
-                    LockerStatusParagraph:Set({
-                        Title = "Locker Rolling & Purchase Status",
-                        Desc = lockerDesc
-                    })
-                end
+                updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", lockerDesc)
             end
         end)
 
