@@ -121,7 +121,7 @@ local function isScriptAlive()
     return true
 end
 
-local function safeDestroyExistingUI()
+pcall(function()
     if getgenv then
         if getgenv()._HT_CurrentWindow then
             pcall(function() getgenv()._HT_CurrentWindow:Destroy() end)
@@ -170,12 +170,12 @@ local function safeDestroyExistingUI()
             end)
         end
     end
-end
-pcall(safeDestroyExistingUI)
+end)
 
 -- Forward declarations for scope stability across functions
 local WindUI = nil
 local Config = nil
+local performAutoLoot = nil
 local currentCombatTarget = nil
 local currentDungeonPillar = nil
 local activeBossFight = nil
@@ -1274,7 +1274,10 @@ trackConn(workspace.DescendantAdded:Connect(function(desc)
     if not isScriptAlive() then return end
     if desc:IsA("ProximityPrompt") then
         if desc.Name == "ChestPrompt" then
-            cachedExitChestPrompt = desc
+            local owner = desc:GetAttribute("OwnerUserId")
+            if owner == nil or owner == LocalPlayer.UserId then
+                cachedExitChestPrompt = desc
+            end
         elseif desc.Name == "RevivePrompt" then
             table.insert(activeRevivePrompts, desc)
         elseif desc.ActionText == "Kick" or desc.ObjectText == "Demon Skull" or (desc.Parent and desc.Parent.Name == "DudPumpkin") then
@@ -1554,108 +1557,214 @@ local function advanceDungeonPath()
 end
 
 local function executeClaimExitChest()
-    if not canScriptMoveOrWarp() or not Config.AutoClaimExitChest then return end
+    if not canScriptMoveOrWarp() then return end
+    if not Config.AutoClaimExitChest and not Config.AutoLeaveOnClear then return end
     if isOpeningDungeonChest then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
 
+    isOpeningDungeonChest = true
     currentDungeonWpIndex = 1
 
-    local targetPrompt = nil
-    if cachedExitChestPrompt and cachedExitChestPrompt.Parent and cachedExitChestPrompt.Enabled then
-        targetPrompt = cachedExitChestPrompt
-    else
-        local h = workspace:FindFirstChild("Halloween")
-        if h then
-            for _, obj in ipairs(h:GetChildren()) do
-                if obj.Name:lower():find("chest") then
-                    local p = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-                    if p and p.Enabled then
-                        targetPrompt = p
-                        cachedExitChestPrompt = p
+    -- Stop all combat immediately so character doesn't swing or get distracted
+    stopCombatAndTargeting()
+
+    -- Helper function to sweep drops until workspace.Drops is confirmed empty
+    local function sweepCurrentDrops(timeoutSec, statusTitle, statusContent)
+        local startTime = os.clock()
+        local maxWait = timeoutSec or 6
+        local dropsFolder = workspace:FindFirstChild("Drops")
+        if statusContent and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = statusTitle or "Auto Loot 🎒",
+                Content = statusContent,
+                Duration = 2.5,
+                Icon = "sparkles"
+            })
+        end
+
+        local emptyStreak = 0
+        while (os.clock() - startTime) < maxWait and isScriptAlive() do
+            local currentChar = LocalPlayer.Character
+            local currentHrp = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
+            if not currentHrp then break end
+
+            if not dropsFolder or not dropsFolder.Parent then break end
+            local drops = dropsFolder:GetChildren()
+            local myDrops = {}
+            local now = workspace:GetServerTimeNow()
+
+            for _, d in ipairs(drops) do
+                local dp = d:IsA("BasePart") and d or (d:IsA("Model") and (d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)))
+                if dp and dp.Parent then
+                    local owner = d:GetAttribute("OwnerUserId") or dp:GetAttribute("OwnerUserId")
+                    local freeAt = d:GetAttribute("FreeAt") or dp:GetAttribute("FreeAt")
+                    if not owner or owner == 0 or owner == LocalPlayer.UserId or (freeAt and now >= freeAt) then
+                        table.insert(myDrops, { obj = d, part = dp })
+                    end
+                end
+            end
+
+            if #myDrops == 0 then
+                emptyStreak = emptyStreak + 1
+                if emptyStreak >= 2 then
+                    break -- Confirmed empty for 2 consecutive checks
+                end
+                task.wait(0.3)
+            else
+                emptyStreak = 0
+                -- 1. Call forward-declared performAutoLoot if available
+                pcall(function()
+                    if performAutoLoot then
+                        performAutoLoot()
+                    end
+                end)
+
+                -- 2. Direct vacuum + remote pickup + touch trigger for each drop
+                for _, item in ipairs(myDrops) do
+                    pcall(function()
+                        local p = item.part
+                        if p and p.Parent then
+                            p.CanCollide = false
+                            if Config.StealthMagnetLoot ~= false and currentHrp then
+                                p.CFrame = currentHrp.CFrame
+                            end
+                            if RemotesLazy and RemotesLazy.PickupDrop then
+                                RemotesLazy.PickupDrop:FireServer(p)
+                                RemotesLazy.PickupDrop:FireServer(item.obj)
+                            end
+                            if firetouchinterest and currentHrp and currentHrp.Parent then
+                                firetouchinterest(currentHrp, p, 0)
+                                firetouchinterest(currentHrp, p, 1)
+                            end
+                            local prompt = p:FindFirstChildWhichIsA("ProximityPrompt", true) or item.obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if prompt and prompt.Enabled then
+                                if fireproximityprompt then
+                                    fireproximityprompt(prompt)
+                                else
+                                    prompt:InputHoldBegin()
+                                    task.wait(0.05)
+                                    prompt:InputHoldEnd()
+                                end
+                            end
+                        end
+                    end)
+                end
+                task.wait(0.25)
+            end
+        end
+    end
+
+    -- ==================== STAGE 1: Boss Drops Vacuum & Sweep ====================
+    -- Give boss drops 0.6s to spawn into workspace.Drops upon death, then collect everything!
+    task.wait(0.6)
+    sweepCurrentDrops(6, "Boss Defeated! 🎁", "กำลังตรวจสอบและเก็บของดรอปจากบอสทั้งหมด...")
+
+    -- ==================== STAGE 2: Claim Personal Exit Chest ====================
+    if Config.AutoClaimExitChest then
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "Exit Chest 🏆",
+                Content = "กำลังค้นหาหีบรับรางวัล Tier VI ส่วนตัว...",
+                Duration = 2.5,
+                Icon = "gift"
+            })
+        end
+
+        local targetPrompt = nil
+        local searchStart = os.clock()
+
+        -- Scan workspace for the player's personal ChestPrompt (retry up to 8s)
+        while (os.clock() - searchStart) < 8 and isScriptAlive() do
+            if cachedExitChestPrompt and cachedExitChestPrompt.Parent and cachedExitChestPrompt.Enabled then
+                local owner = cachedExitChestPrompt:GetAttribute("OwnerUserId")
+                if owner == nil or owner == LocalPlayer.UserId then
+                    targetPrompt = cachedExitChestPrompt
+                    break
+                end
+            end
+
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if desc:IsA("ProximityPrompt") then
+                    local pName = desc.Name
+                    local pObj = tostring(desc.ObjectText or "")
+                    local isChest = (pName == "ChestPrompt") or 
+                        (pName:lower():find("chest") and not pName:lower():find("secret") and not pObj:lower():find("secret"))
+                    if isChest then
+                        local owner = desc:GetAttribute("OwnerUserId")
+                        if (owner == nil or owner == LocalPlayer.UserId) and desc.Enabled then
+                            targetPrompt = desc
+                            cachedExitChestPrompt = desc
+                            break
+                        end
+                    end
+                end
+            end
+            if targetPrompt then break end
+            task.wait(0.4)
+        end
+
+        if targetPrompt and targetPrompt.Parent then
+            local chestPart = targetPrompt.Parent:IsA("BasePart") and targetPrompt.Parent or targetPrompt:FindFirstAncestorWhichIsA("BasePart")
+            if chestPart then
+                local standPos = chestPart.Position + Vector3.new(0, 2.5, 2.8)
+                hrp.CFrame = CFrame.new(standPos, chestPart.Position)
+                task.wait(0.25)
+
+                local holdDur = tonumber(targetPrompt.HoldDuration) or 0.5
+                for attempt = 1, 5 do
+                    if not targetPrompt.Parent or not targetPrompt.Enabled then
+                        break
+                    end
+                    hrp.CFrame = CFrame.new(standPos, chestPart.Position)
+                    if fireproximityprompt then
+                        pcall(function() fireproximityprompt(targetPrompt, holdDur + 0.1) end)
+                        pcall(function() fireproximityprompt(targetPrompt) end)
+                    end
+                    pcall(function()
+                        targetPrompt:InputHoldBegin()
+                        task.wait(holdDur + 0.15)
+                        targetPrompt:InputHoldEnd()
+                    end)
+                    task.wait(0.3)
+                    if not targetPrompt.Parent or not targetPrompt.Enabled then
                         break
                     end
                 end
             end
-        end
-        if not targetPrompt then
-            local mapFolder = workspace:FindFirstChild("Map") or workspace
-            for _, obj in ipairs(mapFolder:GetChildren()) do
-                if obj:IsA("Model") or obj:IsA("Folder") then
-                    for _, p in ipairs(obj:GetChildren()) do
-                        if p:IsA("ProximityPrompt") and p.Name == "ChestPrompt" and p.Enabled then
-                            local ownerId = p:GetAttribute("OwnerUserId")
-                            if ownerId == nil or ownerId == LocalPlayer.UserId then
-                                targetPrompt = p
-                                cachedExitChestPrompt = p
-                                break
-                            end
-                        end
-                    end
-                end
-                if targetPrompt then break end
-            end
+            dungeonChestsClaimed = dungeonChestsClaimed + 1
         end
     end
 
-    local chestPos = Vector3.new(-4038, 60, -260)
-    if targetPrompt and targetPrompt.Parent and targetPrompt.Parent:IsA("BasePart") then
-        chestPos = targetPrompt.Parent.Position + Vector3.new(0, 3, 0)
-    end
+    -- ==================== STAGE 3: Final Post-Chest Loot Verification ====================
+    -- Wait 1.0s to allow chest reward drops to replicate into workspace.Drops, then sweep until 100% empty!
+    task.wait(1.0)
+    sweepCurrentDrops(8, "Loot Verification 🎁", "กำลังตรวจสอบไอเทมดรอปทั้งหมดให้หมดก่อนออกจากดัน...")
 
-    isOpeningDungeonChest = true
-    if WindUI and WindUI.Notify then
-        WindUI:Notify({
-            Title = "Dungeon Cleared! 🏆",
-            Content = "กำลังเปิดหีบรับรางวัล Tier VI...",
-            Duration = 3,
-            Icon = "gift"
-        })
-    end
-
-    -- Approach chest safely
-    hrp.CFrame = CFrame.new(chestPos)
-    task.wait(0.3)
-
-    if targetPrompt then
-        for _ = 1, 3 do
-            if fireproximityprompt then
-                fireproximityprompt(targetPrompt)
-            else
-                pcall(function()
-                    targetPrompt:InputHoldBegin()
-                    task.wait(0.1)
-                    targetPrompt:InputHoldEnd()
-                end)
-            end
-            task.wait(0.2)
-        end
-    end
-
-    dungeonChestsClaimed = dungeonChestsClaimed + 1
-    task.wait(3.0)
-
-    -- Leave dungeon if configured
+    -- ==================== STAGE 4: Safe Dungeon Exit ====================
     if Config.AutoLeaveOnClear then
         if WindUI and WindUI.Notify then
             WindUI:Notify({
-                Title = "Dungeon",
-                Content = "รับของรางวัลเสร็จสิ้น กำลังกลับสู่เมือง...",
-                Duration = 2.5,
+                Title = "Dungeon Complete! 🏆",
+                Content = "เก็บของรางวัลครบทั้งหมดแล้ว กำลังกลับสู่เมือง...",
+                Duration = 3,
                 Icon = "log-out"
             })
         end
+        task.wait(1.2)
         pcall(registerQueueOnTeleport)
         pcall(function()
             if DungeonAction then
                 DungeonAction:FireServer("leave")
             end
         end)
+        task.wait(2.5)
     end
 
-    task.wait(2.0)
     isOpeningDungeonChest = false
+    cachedExitChestPrompt = nil
 end
 
 -- ==================== 👥 PARTY & CO-OP MANAGEMENT SYSTEM ====================
@@ -3617,7 +3726,7 @@ end
 -- ==================== ADVANCED AUTO LOOT & STEALTH MAGNET VACUUM ====================
 isLooting = false
 
-local function performAutoLoot()
+performAutoLoot = function()
     if isLooting or isWarpingZone or isSelling or isEnteringDungeon or isWaitingForParty then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -8309,7 +8418,7 @@ task.spawn(function()
             if isInsideDungeon() then
                 local state = getDungeonState()
                 if state == "cleared" then
-                    if Config.AutoClaimExitChest then
+                    if Config.AutoClaimExitChest or Config.AutoLeaveOnClear then
                         executeClaimExitChest()
                     end
                     task.wait(1.5)
@@ -8409,7 +8518,7 @@ task.spawn(function()
         end
 
         if shouldCombat then
-            if inDungeon and isDungeonDowned() then
+            if inDungeon and (isDungeonDowned() or isOpeningDungeonChest or getDungeonState() == "cleared") then
                 task.wait(0.5)
                 continue
             end
