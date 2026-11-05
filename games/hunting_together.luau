@@ -3970,15 +3970,28 @@ local function getSmartFarmOffset(target)
         return dist, height, isRanged
     end
 
-    dist = isBoss and 6.0 or math.clamp(tonumber(Config.FarmDistance) or 5.5, 3.0, 25.0)
-    height = isBoss and 3.8 or math.clamp(tonumber(Config.SafeFarmHeight) or 5.2, 0.5, 15.0)
+    local baseDist = tonumber(Config.FarmDistance) or 5.5
+    local baseHeight = tonumber(Config.SafeFarmHeight) or 5.2
+    if isBoss then
+        -- World Bosses have huge 25-35 stud hitboxes & lethal ground slams! Keep safe weapon reach!
+        dist = math.clamp(math.max(baseDist, 14.0), 12.0, 25.0)
+        height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(math.max(baseHeight, 6.0), 5.5, 10.0)
+    else
+        dist = math.clamp(baseDist, 3.0, 25.0)
+        height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(baseHeight, 0.5, 15.0)
+    end
 
     return dist, height, isRanged
 end
 
 local function performDodge(reason, evadeDir, customDist, customDuration, sourceMob, targetOverridePos)
     if not isScriptAlive() or not canScriptMoveOrWarp() or not Config.AutoDodge then return false end
-    if Config.FarmMode == "Walk" then return false end
+    if Config.FarmMode == "Walk" then
+        -- Allow dodging lethal boss telegraphs, green circles, and pre-cast skills in Walk Mode to save player's life!
+        if not (reason and (reason:find("Safe Green Circle") or reason:find("Boss Telegraph") or reason:find("Pre-Cast") or reason:find("Pre-Hit") or reason:find("Manual Test"))) then
+            return false
+        end
+    end
 
     local inDungeon = isInsideDungeon()
     local isCombatActive = inDungeon and (Config.AutoDungeon and Config.AutoFarm) or Config.AutoFarm
@@ -7292,9 +7305,26 @@ task.spawn(function()
 
             -- Respawn recovery check
             if hum and hum.Health <= 0 then
-                if Config.AutoRespawn and RespawnChoice then
-                    pcall(function() RemotesLazy.RespawnChoice:FireServer("town") end)
-                    pcall(function() RemotesLazy.RespawnChoice:FireServer("Town") end)
+                if Config.AutoRespawn then
+                    pcall(function()
+                        if RemotesLazy.RespawnChoice then
+                            RemotesLazy.RespawnChoice:FireServer("town")
+                            RemotesLazy.RespawnChoice:FireServer("Town")
+                            RemotesLazy.RespawnChoice:FireServer(1)
+                        end
+                        local deadGui = LocalPlayer.PlayerGui:FindFirstChild("LumiRespawn")
+                        if deadGui then
+                            for _, d in ipairs(deadGui:GetDescendants()) do
+                                if (d:IsA("TextButton") or d:IsA("ImageButton")) and (d.Name:lower():find("town") or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text:lower():find("town"))) then
+                                    if getconnections then
+                                        for _, conn in ipairs(getconnections(d.MouseButton1Click)) do pcall(function() conn:Fire() end) end
+                                        for _, conn in ipairs(getconnections(d.Activated)) do pcall(function() conn:Fire() end) end
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end)
                 end
                 task.wait(2)
             elseif hrp and hum and hum.Health > 0 then
@@ -7852,14 +7882,27 @@ task.spawn(function()
                 end
             end
         elseif hum and hum.Health <= 0 and Config.AutoRespawn then
-            task.wait(1.5)
+            task.wait(1.0)
             pcall(function()
-                if RespawnChoice then
+                if RemotesLazy.RespawnChoice then
                     RemotesLazy.RespawnChoice:FireServer("town")
                     RemotesLazy.RespawnChoice:FireServer("Town")
+                    RemotesLazy.RespawnChoice:FireServer(1)
+                end
+                local deadGui = LocalPlayer.PlayerGui:FindFirstChild("LumiRespawn")
+                if deadGui then
+                    for _, d in ipairs(deadGui:GetDescendants()) do
+                        if (d:IsA("TextButton") or d:IsA("ImageButton")) and (d.Name:lower():find("town") or (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text:lower():find("town"))) then
+                            if getconnections then
+                                for _, conn in ipairs(getconnections(d.MouseButton1Click)) do pcall(function() conn:Fire() end) end
+                                for _, conn in ipairs(getconnections(d.Activated)) do pcall(function() conn:Fire() end) end
+                            end
+                            break
+                        end
+                    end
                 end
             end)
-            task.wait(3)
+            task.wait(2.5)
             if Config.AutoProgression then
                 pcall(function() checkAutoProgression(true) end)
             end
