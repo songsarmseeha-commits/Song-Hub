@@ -474,6 +474,13 @@ local function getCashAmount()
         local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Cash")
         if ok and typeof(val) == "number" and val >= 0 then return val end
     end
+    pcall(function()
+        local cs = require(ReplicatedStorage.Shared.Services.CurrencyService)
+        if cs and typeof(cs.GetCurrencyAmount) == "function" then
+            local ok, val = pcall(cs.GetCurrencyAmount, LocalPlayer, "Cash")
+            if ok and typeof(val) == "number" and val >= 0 then return val end
+        end
+    end)
 
     -- 2. Try ClientDataManager
     if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
@@ -488,7 +495,17 @@ local function getCashAmount()
         end
     end
 
-    -- 3. Try leaderstats
+    -- 3. Try FrontGui (LeftBottomFrame.CashHolder.ImageLabel.AmountLabel)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local fg = pg and pg:FindFirstChild("FrontGui")
+    local cashHolder = fg and fg:FindFirstChild("LeftBottomFrame") and fg.LeftBottomFrame:FindFirstChild("CashHolder")
+    local amountLabel = cashHolder and cashHolder:FindFirstChild("ImageLabel") and cashHolder.ImageLabel:FindFirstChild("AmountLabel")
+    if amountLabel and amountLabel.Text and amountLabel.Text ~= "" then
+        local p = parseSuffixNumber(amountLabel.Text)
+        if p and p >= 0 then return p end
+    end
+
+    -- 4. Try leaderstats
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     if ls then
         for _, name in ipairs({ "Cash", "Money", "Coins", "Gold", "Points" }) do
@@ -499,24 +516,19 @@ local function getCashAmount()
         end
     end
 
-    -- 4. Try Attributes on LocalPlayer
+    -- 5. Try Attributes on LocalPlayer
     for _, attr in ipairs({ "Cash", "Money", "Coins" }) do
         local a = LocalPlayer:GetAttribute(attr)
         if tonumber(a) and tonumber(a) >= 0 then return tonumber(a) end
     end
 
-    -- 5. Try PlayerGui scanning (Topbar / HUD cash text)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    -- 6. Try scanning PlayerGui for any Cash / Amount label
     if pg then
-        for _, gui in ipairs(pg:GetChildren()) do
-            if gui:IsA("ScreenGui") and (string.find(gui.Name, "Topbar") or string.find(gui.Name, "Front") or string.find(gui.Name, "HUD") or string.find(gui.Name, "Main")) then
-                for _, desc in ipairs(gui:GetDescendants()) do
-                    if desc:IsA("TextLabel") and desc.Visible and string.find(desc.Text, "%$") then
-                        local parsed = parseSuffixNumber(desc.Text)
-                        if parsed and parsed > 0 then
-                            return parsed
-                        end
-                    end
+        for _, desc in ipairs(pg:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible and (desc.Name == "CashLabel" or desc.Name == "AmountLabel" or string.find(desc.Text, "%$")) then
+                local parsed = parseSuffixNumber(desc.Text)
+                if parsed and parsed > 0 then
+                    return parsed
                 end
             end
         end
@@ -2052,7 +2064,7 @@ UIElements.waitForCashLocker = TabAutomation:Toggle({
 
 UIElements.minCashBuffer = TabAutomation:Slider({
     Title = "Min Cash Safety Buffer ($)",
-    Desc = "Won't purchase lockers if your cash balance drops below this amount (also pauses rolling if cash is below buffer)",
+    Desc = "Won't purchase lockers if your cash balance drops below this amount after purchase",
     Min = 0,
     Max = 100000,
     Default = 500,
@@ -3598,6 +3610,18 @@ task.spawn(function()
     while isAlive() do
         if autoRollLocker or autoBuyLocker then
             pcall(function()
+                -- 0. Always auto-dismiss WarningNewBoxGui if it appears
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                local warningGui = pg and pg:FindFirstChild("WarningNewBoxGui")
+                if warningGui and warningGui.Enabled then
+                    local okayBtn = warningGui:FindFirstChild("OkayButton", true)
+                    if okayBtn and typeof(firesignal) == "function" then
+                        pcall(function() firesignal(okayBtn.MouseButton1Click) end)
+                        pcall(function() firesignal(okayBtn.Activated) end)
+                    end
+                    warningGui.Enabled = false
+                end
+
                 local plot = getMyPlot()
                 local rollPart = plot and plot:FindFirstChild("Systems")
                     and plot.Systems:FindFirstChild("RollStation")
@@ -3643,58 +3667,62 @@ task.spawn(function()
                                 Remotes.PurchaseConveyorRoll:FireServer(currentBox, currentVariant, price)
                             end
 
-                            task.wait(0.4)
+                            task.wait(0.3)
 
                             -- After purchasing, if autoRollLocker is active, resume rolling immediately once cooldown allows
                             if autoRollLocker and Remotes:FindFirstChild("NewRequestConveyorRoll") then
                                 local postCooldown = rollPart:GetAttribute("RollCooldownUntil")
                                 local postNow = workspace:GetServerTimeNow()
-                                if not postCooldown or postNow >= postCooldown then
+                                if not postCooldown or postNow >= (postCooldown - 0.1) then
                                     Remotes.NewRequestConveyorRoll:FireServer()
                                 end
                             end
-                        else
-                            -- MONEY INSUFFICIENT:
+                        elseif waitForCashLocker then
+                            -- MONEY INSUFFICIENT AND waitForCashLocker IS TRUE:
                             -- Pause rolling! Hold this locker on conveyor until cash is ready!
-                            lockerStatusText = string.format("⏸️ Waiting for Cash to Buy %s (%s): $%d / $%d (Need $%d more)",
-                                tostring(currentBox), tostring(currentVariant), cash, targetCost, math.max(0, targetCost - cash))
+                            lockerStatusText = string.format("⏸️ Waiting for Cash to Buy %s (%s): $%s / $%s",
+                                tostring(currentBox), tostring(currentVariant), formatNumber(cash), formatNumber(targetCost))
 
                             if lastNotifiedWaitRollId ~= rollId then
                                 lastNotifiedWaitRollId = rollId
                                 WindUI:Notify({
                                     Title = "Holding Target Locker (Waiting for Cash)",
-                                    Content = string.format("Found %s (%s)! Pausing rolls until cash reaches $%d (Current: $%d)",
-                                        tostring(currentBox), tostring(currentVariant), targetCost, cash),
+                                    Content = string.format("Found %s (%s)! Pausing rolls until cash reaches $%s (Current: $%s)",
+                                        tostring(currentBox), tostring(currentVariant), formatNumber(targetCost), formatNumber(cash)),
                                     Duration = 4,
                                     Icon = "pause-circle"
                                 })
                             end
                             -- DO NOT ROLL! DO NOT SKIP!
+                        else
+                            -- waitForCashLocker is FALSE: user chose not to wait, so allow rolling next!
+                            lastPurchasedRollId = rollId
                         end
 
-                    -- 2. IF IT'S NOT A TARGET BOX (OR EMPTY / PURCHASED), CAN WE ROLL?
-                    elseif autoRollLocker and (not rollCooldown or now >= rollCooldown) then
-                        -- Never roll if we are holding a target box waiting for cash
-                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget)
+                    -- 2. CAN WE ROLL?
+                    -- Note: autoRoll is completely FREE! Never block rolling due to minCashBuffer.
+                    -- Rolling is only blocked if we are actively holding a target box waiting for cash.
+                    elseif autoRollLocker then
+                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
 
                         if not isHoldingTarget then
-                            -- If cash is below minCashBuffer, pause rolling until cash recovers
-                            if minCashBuffer > 0 and cash < minCashBuffer then
-                                lockerStatusText = string.format("⏸️ Rolling Paused: Cash ($%d) < Buffer ($%d)", cash, minCashBuffer)
-                            else
+                            local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                            if cdRemaining <= 0.1 then
                                 lockerStatusText = "🔄 Rolling for lockers..."
                                 if Remotes:FindFirstChild("NewRequestConveyorRoll") then
                                     Remotes.NewRequestConveyorRoll:FireServer()
                                 elseif Remotes:FindFirstChild("RequestConveyorRoll") then
                                     Remotes.RequestConveyorRoll:FireServer()
                                 end
+                            else
+                                lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs)", math.max(0.1, cdRemaining))
                             end
                         end
                     else
                         if not isAlive() then return end
-                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget)
+                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
                         if not isHoldingTarget then
-                            lockerStatusText = "💤 Idle / Waiting Cooldown"
+                            lockerStatusText = "💤 Idle / Ready"
                         end
                     end
                 end
