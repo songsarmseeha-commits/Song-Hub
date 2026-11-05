@@ -585,5 +585,23 @@ task.spawn(function()
             end
         end
     })
+
+    TabKey:Button({
+        Title = "💬 Join Discord Community",
+        Desc = "Copy Discord invite link (https://discord.gg/cecytf4MHE) to clipboard",
+        Icon = "message-circle",
+        Callback = function()
+            local discordLink = "https://discord.gg/cecytf4MHE"
+            if setclipboard then
+                setclipboard(discordLink)
+            end
+            WindUI:Notify({
+                Title = "Discord Link Copied! 💬",
+                Content = "Discord: " .. discordLink .. "\nJoin Song Hub Discord for support, updates & keys!",
+                Duration = 5,
+                Icon = "clipboard-check"
+            })
+        end
+    })
 end)
 
