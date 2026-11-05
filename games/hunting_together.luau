@@ -438,7 +438,7 @@ local Config = {
     MaxTargetDistance = 70,     -- Keep search strictly within active field
     AutoUseSkills = true,
     AutoUseBuffs = true,
-    SelectedSkills = { "All Skills (ทุกสกิล)" },
+    SelectedSkillSlots = { "ช่อง 1 (Slot 1)", "ช่อง 2 (Slot 2)", "ช่อง 3 (Slot 3)", "ช่อง 4 (Slot 4)", "ช่อง 5 (Slot 5)", "ช่อง 6 (Slot 6)", "ช่อง 7 (Slot 7)" },
     
     -- Auto Equip & Gear
     AutoEquipBest = true,
@@ -2572,97 +2572,41 @@ end
 -- ==================== SMART SKILLS & COMBAT ENGINE ====================
 local skillLastCast = {}
 
-local function getAllAvailableSkills()
-    local list = { "All Skills (ทุกสกิล)" }
-    local seen = { ["All Skills (ทุกสกิล)"] = true }
+local function isSlotSelected(slotNum)
+    local cfg = Config.SelectedSkillSlots
+    if not cfg then return true end
+    if type(cfg) ~= "table" then return true end
 
-    -- 1. Learned skills from player attributes
-    pcall(function()
-        local skillsJsonRaw = LocalPlayer:GetAttribute("SkillsJson")
-        if skillsJsonRaw and skillsJsonRaw ~= "" then
-            local learned = HttpService:JSONDecode(skillsJsonRaw)
-            for sId, lv in pairs(learned) do
-                if type(lv) == "number" and lv > 0 and not seen[sId] then
-                    seen[sId] = true
-                    table.insert(list, sId)
-                end
-            end
-        end
-    end)
+    local hasAny = false
+    for _ in pairs(cfg) do
+        hasAny = true
+        break
+    end
+    if not hasAny then return false end
 
-    -- 2. Hotbar skills
-    pcall(function()
-        local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-        if hotbarRaw and hotbarRaw ~= "" then
-            local hotbar = HttpService:JSONDecode(hotbarRaw)
-            for _, slotVal in pairs(hotbar) do
-                if type(slotVal) == "string" and slotVal:find("^skill:") then
-                    local sId = slotVal:sub(7)
-                    if not seen[sId] then
-                        seen[sId] = true
-                        table.insert(list, sId)
-                    end
-                end
-            end
-        end
-    end)
-
-    -- 3. Game's SkillData Module
-    pcall(function()
-        if SkillDataModule and SkillDataModule.Skills then
-            for sId, def in pairs(SkillDataModule.Skills) do
-                if not seen[sId] then
-                    seen[sId] = true
-                    table.insert(list, sId)
-                end
-            end
-        end
-    end)
-
-    -- 4. Known common skills catalog
-    local knownSkills = {
-        "twinfang", "venomknife", "shadowburst", "cross_slash", "sonicblow",
-        "bash", "magnum_break", "bowlingbash", "spiral",
-        "double_strafe", "arrowshower",
-        "firebolt", "coldbolt", "lightningbolt", "soulstrike", "firewall", "meteor", "thunderstorm", "lordofvermilion",
-        "iaigiri", "obororanbu", "issen", "meikyo", "shukuchi",
-        "bigkaboom", "tarflask", "nekoflask", "hammerfall", "cartstrike",
-        "vanish", "stealth", "haste", "blessing", "increase_agi"
-    }
-    for _, sId in ipairs(knownSkills) do
-        if not seen[sId] then
-            seen[sId] = true
-            table.insert(list, sId)
+    local slotStr = tostring(slotNum)
+    for k, v in pairs(cfg) do
+        if v == true then
+            if tostring(k):find(slotStr) then return true end
+        elseif type(v) == "string" then
+            if v:find(slotStr) then return true end
+        elseif type(v) == "number" then
+            if v == slotNum then return true end
         end
     end
-
-    return list
+    return false
 end
 
-local function isSkillSelected(skillId)
-    if not skillId then return false end
-    local sel = Config.SelectedSkills
-    if not sel or type(sel) ~= "table" or #sel == 0 then return true end
-
-    for k, v in pairs(sel) do
-        local val = (type(k) == "string" and k) or v
-        if type(val) == "string" and (val:find("All Skills") or val == "All") then
-            return true
-        end
+local function getHotbarSkillInSlot(slotNum)
+    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+    if not hotbarRaw or hotbarRaw == "" then return nil end
+    local ok, hotbar = pcall(function() return HttpService:JSONDecode(hotbarRaw) end)
+    if not ok or not hotbar then return nil end
+    local item = hotbar[tostring(slotNum)]
+    if type(item) == "string" and item:find("^skill:") then
+        return item:sub(7)
     end
-
-    local cleanTarget = tostring(skillId):lower():gsub("[_%s%-]", "")
-    for k, v in pairs(sel) do
-        local val = (type(k) == "string" and k) or v
-        if type(val) == "string" then
-            local cleanVal = val:lower():gsub("[_%s%-]", "")
-            if cleanVal == cleanTarget or cleanVal:find(cleanTarget, 1, true) or cleanTarget:find(cleanVal, 1, true) then
-                return true
-            end
-        end
-    end
-
-    return false
+    return nil
 end
 
 local SkillCooldownDefaults = {
@@ -2690,7 +2634,6 @@ local SkillCooldownDefaults = {
 
 local function castSmartSkill(skillId, target)
     if not skillId or skillId == "" then return false end
-    if not isSkillSelected(skillId) then return false end
     local now = os.clock()
     local cd = SkillCooldownDefaults[skillId] or 3.0
 
@@ -2771,31 +2714,17 @@ end
 
 local function castAllAoESkills(targetMob)
     if not Config.AutoUseSkills and not Config.AoEMultiBurst then return end
-    local skillsJsonRaw = LocalPlayer:GetAttribute("SkillsJson") or "{}"
-    local learned = {}
-    pcall(function() learned = HttpService:JSONDecode(skillsJsonRaw) or {} end)
-
-    local aoeSkills = {
-        "bigkaboom", "tarflask", "nekoflask", "thunderstorm", "hammerfall", "cartstrike",
-        "bowlingbash", "magnumbreak", "spiral", "shadowburst", "cross_slash",
-        "arrowshower", "meteor", "lordofvermilion", "firewall", "firebolt"
-    }
-
-    for _, sname in ipairs(aoeSkills) do
-        if learned[sname] and learned[sname] > 0 then
-            castSmartSkill(sname, targetMob)
-        end
-    end
-
-    -- Hotbar skills
     local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
     if hotbarRaw and hotbarRaw ~= "" then
         pcall(function()
             local hotbar = HttpService:JSONDecode(hotbarRaw)
-            for _, slotVal in pairs(hotbar) do
-                if type(slotVal) == "string" and slotVal:find("^skill:") then
-                    local sname = slotVal:sub(7)
-                    castSmartSkill(sname, targetMob)
+            for slotNum = 1, 7 do
+                if isSlotSelected(slotNum) then
+                    local slotVal = hotbar[tostring(slotNum)]
+                    if type(slotVal) == "string" and slotVal:find("^skill:") then
+                        local sname = slotVal:sub(7)
+                        castSmartSkill(sname, targetMob)
+                    end
                 end
             end
         end)
@@ -4732,7 +4661,9 @@ end))
 local WindUI = nil
 if isfile and isfile("WindUI_cache.lua") and readfile then
     local ok, res = pcall(function() return loadstring(readfile("WindUI_cache.lua"))() end)
-    if ok and res then WindUI = res end
+    if ok and res and type(res) == "table" and res.CreateWindow then 
+        WindUI = res 
+    end
 end
 if not WindUI then
     local content = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
@@ -4741,8 +4672,6 @@ if not WindUI then
         pcall(function() writefile("WindUI_cache.lua", content) end)
     end
 end
-
-pcall(safeDestroyExistingUI)
 
 -- Purge any residual window objects in cached WindUI
 pcall(function()
@@ -5120,33 +5049,101 @@ SkillsTab:Toggle({
     end,
 })
 
+local skillSlotLabels = {
+    "ช่อง 1 (Slot 1)",
+    "ช่อง 2 (Slot 2)",
+    "ช่อง 3 (Slot 3)",
+    "ช่อง 4 (Slot 4)",
+    "ช่อง 5 (Slot 5)",
+    "ช่อง 6 (Slot 6)",
+    "ช่อง 7 (Slot 7)"
+}
+
 skillsDropdown = SkillsTab:Dropdown({
-    Title = "Select Skills to Auto Cast (เลือกสกิลที่จะใช้)",
-    Desc = "เลือกสกิลเฉพาะที่ต้องการให้บอทกดใช้อัตโนมัติ (เลือก All เพื่อใช้ทุกสกิล)",
-    Values = getAllAvailableSkills(),
-    Value = Config.SelectedSkills or { "All Skills (ทุกสกิล)" },
+    Title = "Select Skill Slots to Auto Cast (เลือกช่องสกิล 1-7)",
+    Desc = "เลือกช่อง 1-7 ที่ต้องการให้บอทกดใช้อัตโนมัติ (ไม่ต้องเลือกชื่อสกิล)",
+    Values = skillSlotLabels,
+    Value = Config.SelectedSkillSlots or skillSlotLabels,
     Multi = true,
     AllowNone = true,
-    SearchBarEnabled = true,
     Callback = function(val)
-        Config.SelectedSkills = val
+        Config.SelectedSkillSlots = val
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
 
 SkillsTab:Button({
-    Title = "🔄 Refresh Skills List (รีเฟรชรายชื่อสกิล)",
-    Desc = "ดึงข้อมูลสกิลที่เพิ่งเรียนใหม่อัปเดตเข้าเมนูเลือกสกิลทันที",
+    Title = "✅ Select All Slots (เลือกทุกช่อง 1-7)",
+    Desc = "เปิดใช้งานช่องสกิล 1 ถึง 7 ทั้งหมดทันที",
     Callback = function()
-        local updatedSkills = getAllAvailableSkills()
-        if skillsDropdown and skillsDropdown.SetValues then
-            skillsDropdown:SetValues(updatedSkills)
+        local allSlots = {
+            "ช่อง 1 (Slot 1)",
+            "ช่อง 2 (Slot 2)",
+            "ช่อง 3 (Slot 3)",
+            "ช่อง 4 (Slot 4)",
+            "ช่อง 5 (Slot 5)",
+            "ช่อง 6 (Slot 6)",
+            "ช่อง 7 (Slot 7)"
+        }
+        Config.SelectedSkillSlots = allSlots
+        if skillsDropdown and skillsDropdown.SetValue then
+            pcall(function() skillsDropdown:SetValue(allSlots) end)
         end
+        if Config.AutoSave then SaveConfig(true) end
         WindUI:Notify({
-            Title = "Skills Updated",
-            Content = string.format("อัปเดตรายชื่อสกิลทั้งหมด: %d สกิล", #updatedSkills),
-            Duration = 2.5,
-            Icon = "zap",
+            Title = "Skill Slots",
+            Content = "เลือกช่องสกิล 1-7 ทั้งหมดแล้ว",
+            Duration = 2,
+            Icon = "check"
+        })
+    end,
+})
+
+SkillsTab:Button({
+    Title = "❌ Clear All Slots (ล้างการเลือกทั้งหมด)",
+    Desc = "ยกเลิกทุกช่อง (หยุดกดสกิลอัตโนมัติ)",
+    Callback = function()
+        Config.SelectedSkillSlots = {}
+        if skillsDropdown and skillsDropdown.SetValue then
+            pcall(function() skillsDropdown:SetValue({}) end)
+        end
+        if Config.AutoSave then SaveConfig(true) end
+        WindUI:Notify({
+            Title = "Skill Slots",
+            Content = "ยกเลิกช่องสกิลทั้งหมดแล้ว",
+            Duration = 2,
+            Icon = "x"
+        })
+    end,
+})
+
+SkillsTab:Button({
+    Title = "📋 View Hotbar Slots (ดูสกิลในช่อง 1-7 ปัจจุบัน)",
+    Desc = "แสดงรายชื่อสกิลที่ติดตั้งอยู่ในแต่ละช่อง 1-7",
+    Callback = function()
+        local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+        local msg = ""
+        if hotbarRaw and hotbarRaw ~= "" then
+            local ok, hotbar = pcall(function() return HttpService:JSONDecode(hotbarRaw) end)
+            if ok and hotbar then
+                local parts = {}
+                for s = 1, 7 do
+                    local item = hotbar[tostring(s)]
+                    if item and item:find("^skill:") then
+                        table.insert(parts, string.format("ช่อง %d: %s", s, item:sub(7)))
+                    else
+                        table.insert(parts, string.format("ช่อง %d: [ว่าง]", s))
+                    end
+                end
+                msg = table.concat(parts, " | ")
+            end
+        end
+        if msg == "" then msg = "ไม่พบข้อมูล Hotbar ในขณะนี้" end
+        WindUI:Notify({
+            Title = "Hotbar Slots 1-7",
+            Content = msg,
+            Duration = 4,
+            Icon = "list"
         })
     end,
 })
@@ -7231,41 +7228,20 @@ task.spawn(function()
                         end)
 
 
-                        -- 3. Smart Skills Trigger (Auto casts hotbar & active skills with maximum DPS in dungeon)
+                        -- 3. Smart Skills Trigger (Auto casts selected slots 1-7 in order)
                         if Config.AutoUseSkills then
                             pcall(function()
-                                local anyCast = false
-
-                                -- Priority 1: Check Hotbar skills (actively equipped player skills)
                                 local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
                                 if hotbarRaw and type(hotbarRaw) == "string" and hotbarRaw ~= "" then
                                     local hotbar = HttpService:JSONDecode(hotbarRaw)
-                                    for _, slotVal in pairs(hotbar) do
-                                        if type(slotVal) == "string" and slotVal:find("^skill:") then
-                                            local sname = slotVal:sub(7)
-                                            if castSmartSkill(sname, target) then
-                                                anyCast = true
+                                    for slotNum = 1, 7 do
+                                        if isSlotSelected(slotNum) then
+                                            local slotVal = hotbar[tostring(slotNum)]
+                                            if type(slotVal) == "string" and slotVal:find("^skill:") then
+                                                local sname = slotVal:sub(7)
+                                                castSmartSkill(sname, target)
                                             end
                                         end
-                                    end
-                                end
-
-                                -- Priority 2: Cast learned active skills
-                                local skillsJsonRaw = LocalPlayer:GetAttribute("SkillsJson") or "{}"
-                                local learnedSkills = HttpService:JSONDecode(skillsJsonRaw)
-                                for skillName, lv in pairs(learnedSkills) do
-                                    if type(lv) == "number" and lv > 0 then
-                                        if castSmartSkill(skillName, target) then
-                                            anyCast = true
-                                        end
-                                    end
-                                end
-
-                                -- Fallback combat skills if none cast
-                                if not anyCast then
-                                    local fallbackSkills = {"iaigiri", "obororanbu", "issen", "twinfang", "venomknife", "shadowburst", "cross_slash", "sonicblow", "bash", "firebolt"}
-                                    for _, sname in ipairs(fallbackSkills) do
-                                        castSmartSkill(sname, target)
                                     end
                                 end
                             end)
