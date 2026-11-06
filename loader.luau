@@ -6,7 +6,7 @@
 if getgenv and not getgenv()._SongHubFreshLoaded then
     getgenv()._SongHubFreshLoaded = true
     local buster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-    local freshUrl = "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. buster
+    local freshUrl = "https://song-hub-avp8.onrender.com/load?v=" .. buster
     local ok, freshCode = pcall(game.HttpGet, game, freshUrl)
     if ok and type(freshCode) == "string" and #freshCode > 1000 then
         local fn = loadstring(freshCode)
@@ -241,7 +241,7 @@ pcall(function()
             LocalPlayer.OnTeleport:Connect(function(state)
                 if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
                     pcall(function()
-                        qot([[loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. tostring(os.time())))()]])
+                        qot([[loadstring(game:HttpGet("https://song-hub-avp8.onrender.com/load?v=" .. tostring(os.time())))()]])
                     end)
                 end
             end)
@@ -264,7 +264,7 @@ local function startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchFn)
         task.wait(120)
         while task.wait(90) do
             pcall(function()
-                local vUrl = "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/version.json?v=" .. tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
+                local vUrl = "https://song-hub-avp8.onrender.com/version?v=" .. tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
                 local ok, res = pcall(game.HttpGet, game, vUrl)
                 if ok and type(res) == "string" and #res > 10 then
                     local vData = HttpService:JSONDecode(res)
@@ -346,12 +346,9 @@ local function launchGameScript(scriptFileName, gameTitle)
 
     local candidateUrls = {}
     if oneTimeToken then
-        -- Priority 1: Live Render Production Server with One-Time Security Token
+        -- Secure Render Production Server with One-Time Security Token (Primary & Protected)
         table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
     end
-    -- Fallback 2 & 3: Cloud Mirror Repositories
-    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
-    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
 
     for _, url in ipairs(candidateUrls) do
         local dlOk, code = pcall(function()
