@@ -66,11 +66,42 @@ pcall(function()
 end)
 
 -- ==============================================================================
--- 🚗 2. CAR & VEHICLE CONTROLLER
+-- 🚗 2. CAR & VEHICLE CONTROLLER (RCDRIVE INTEGRATED PHYSICS ENGINE)
 -- ==============================================================================
+local function getRCDrive()
+    local rcd = nil
+    pcall(function()
+        if getrenv then
+            local renv = getrenv()
+            if renv and renv.shared and renv.shared.RCDrive then
+                rcd = renv.shared.RCDrive
+            end
+        end
+    end)
+    if not rcd then
+        pcall(function()
+            if rawget(shared, "RCDrive") then
+                rcd = rawget(shared, "RCDrive")
+            end
+        end)
+    end
+    if not rcd then
+        pcall(function()
+            if rawget(_G, "RCDrive") then
+                rcd = rawget(_G, "RCDrive")
+            end
+        end)
+    end
+    return rcd
+end
+
 local function getMyCar()
+    local rcd = getRCDrive()
+    if rcd and rcd.car and rcd.car.Parent then
+        return rcd.car
+    end
     local car = workspace:FindFirstChild("MyCar")
-    if car and car:FindFirstChild("Root") then
+    if car and (car:FindFirstChild("Root") or car.PrimaryPart) then
         return car
     end
     local char = LocalPlayer.Character
@@ -85,11 +116,94 @@ local function getMyCar()
 end
 
 local function getCarRoot()
+    local rcd = getRCDrive()
+    if rcd and rcd.car then
+        local r = rcd.car:FindFirstChild("Root") or rcd.car.PrimaryPart
+        if r then return r end
+    end
     local car = getMyCar()
     if car then
         return car:FindFirstChild("Root") or car.PrimaryPart
     end
     return nil
+end
+
+local function teleportCar(targetCF)
+    if typeof(targetCF) == "Vector3" then
+        targetCF = CFrame.new(targetCF + Vector3.new(0, 1.5, 0))
+    end
+    if not targetCF then return end
+
+    -- 1. Sync through game's native RCDrive system (Prevents physics snap-back)
+    local rcd = getRCDrive()
+    if rcd then
+        if type(rcd.teleport) == "function" then
+            pcall(function()
+                rcd.teleport(targetCF)
+            end)
+        end
+        if type(rcd.phys) == "table" then
+            pcall(function()
+                rcd.phys.cf = targetCF
+                rcd.phys.p = targetCF.Position
+                rcd.phys.v = Vector3.zero
+                if rcd.phys.brake ~= nil then rcd.phys.brake = 0 end
+                if rcd.phys.throttle ~= nil then rcd.phys.throttle = 0 end
+            end)
+        end
+    end
+
+    -- 2. Fallback / Roblox engine sync
+    local root = getCarRoot()
+    if root then
+        root.CFrame = targetCF
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+    local car = getMyCar()
+    if car and car.PrimaryPart then
+        pcall(function()
+            car:PivotTo(targetCF)
+        end)
+    end
+end
+
+local function driveCarStep(targetPos, speedKmh, isAir)
+    local root = getCarRoot()
+    local rcd = getRCDrive()
+    local currentPos = root and root.Position or (rcd and rcd.phys and rcd.phys.p)
+    if not currentPos then return end
+
+    local dir = targetPos - currentPos
+    local dist = dir.Magnitude
+    if dist < 0.5 then return end
+
+    local unitDir = dir.Unit
+    local flatDir = Vector3.new(unitDir.X, 0, unitDir.Z).Unit
+    local moveDir = isAir and unitDir or flatDir
+    local speedMps = (speedKmh or 300) / 3.6
+    local stepVel = moveDir * speedMps
+
+    if rcd and type(rcd.phys) == "table" then
+        pcall(function()
+            rcd.phys.throttle = 1
+            rcd.phys.brake = 0
+            rcd.phys.boosting = true
+            rcd.phys.handbrake = false
+            if isAir then
+                rcd.phys.airMode = true
+            end
+            rcd.phys.v = stepVel
+            local nextP = rcd.phys.p + stepVel * 0.08
+            rcd.phys.p = nextP
+            rcd.phys.cf = CFrame.lookAt(nextP, nextP + moveDir * 10)
+        end)
+    end
+
+    if root then
+        root.CFrame = CFrame.lookAt(root.Position + stepVel * 0.08, root.Position + moveDir * 10)
+        root.AssemblyLinearVelocity = stepVel
+    end
 end
 
 -- ==============================================================================
@@ -161,6 +275,33 @@ end)
 -- ==============================================================================
 -- 💬 5. AUTO DIALOGUE SKIPPER & QUEST ACCEPTER
 -- ==============================================================================
+local function pressReturnKey()
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        if vim then
+            vim:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+            task.wait(0.02)
+            vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+        end
+    end)
+end
+
+local function fireGuiClick(btn)
+    if not btn then return end
+    pcall(function()
+        if firesignal then
+            firesignal(btn.Activated)
+            firesignal(btn.MouseButton1Click)
+            firesignal(btn.MouseButton1Up)
+        end
+        if getconnections then
+            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+            for _, c in ipairs(getconnections(btn.MouseButton1Up)) do c:Fire() end
+        end
+    end)
+end
+
 task.spawn(function()
     while true do
         task.wait(0.05)
@@ -173,42 +314,51 @@ task.spawn(function()
                 if qGui then
                     -- 1. Advance NPC Dialogue (NpcDialog)
                     local npcDialog = qGui:FindFirstChild("NpcDialog", true)
-                    if npcDialog then
-                        local nextBtn = npcDialog:FindFirstChild("Next", true)
-                        if nextBtn and nextBtn.Visible then
-                            for _, c in ipairs(getconnections(nextBtn.Activated)) do c:Fire() end
-                            for _, c in ipairs(getconnections(nextBtn.MouseButton1Click)) do c:Fire() end
+                    if npcDialog and npcDialog.Visible then
+                        local nextBtn = npcDialog:FindFirstChild("Next", true) or npcDialog:FindFirstChild("ต่อไป", true)
+                        if nextBtn then
+                            fireGuiClick(nextBtn)
                         end
                         if qUi and qUi._dialogEnter then
                             pcall(function() qUi._dialogEnter() end)
                         end
+                        pressReturnKey()
                     end
 
                     -- 2. Auto Accept Quest Offer (MissionOffer)
-                    -- Note: In Raycity RB, MissionOffer container has Visible=false, but its child 'Yes' is Visible=true!
                     local missionOffer = qGui:FindFirstChild("MissionOffer", true)
                     if missionOffer then
                         local yesBtn = missionOffer:FindFirstChild("Yes", true)
-                        if yesBtn and yesBtn.Visible then
-                            for _, c in ipairs(getconnections(yesBtn.Activated)) do c:Fire() end
-                            for _, c in ipairs(getconnections(yesBtn.MouseButton1Click)) do c:Fire() end
-                            if qUi and qUi._offerAnswer then
-                                pcall(function() qUi._offerAnswer(true) end)
+                        if yesBtn then
+                            fireGuiClick(yesBtn)
+                        end
+                        -- Scan for buttons with Thai text or positive confirmation
+                        for _, d in ipairs(missionOffer:GetDescendants()) do
+                            if d:IsA("GuiButton") and d.Name ~= "No" and d.Name ~= "Close" then
+                                local label = d:FindFirstChildWhichIsA("TextLabel")
+                                local txt = (d:IsA("TextButton") and d.Text) or (label and label.Text) or ""
+                                if not txt:find("ปฏิเสธ") and not txt:find("ยกเลิก") then
+                                    fireGuiClick(d)
+                                end
                             end
                         end
+                        if qUi and qUi._offerAnswer then
+                            pcall(function() qUi._offerAnswer(true) end)
+                        end
+                        pressReturnKey()
                     end
 
                     -- Fallback for generic offer frames
                     local otherOffer = qGui:FindFirstChild("Offer", true) or qGui:FindFirstChild("QuestOffer", true)
                     if otherOffer and otherOffer ~= missionOffer then
                         local acceptBtn = otherOffer:FindFirstChild("Accept", true) or otherOffer:FindFirstChild("Ok", true) or otherOffer:FindFirstChild("Yes", true)
-                        if acceptBtn and acceptBtn.Visible then
-                            for _, c in ipairs(getconnections(acceptBtn.Activated)) do c:Fire() end
-                            for _, c in ipairs(getconnections(acceptBtn.MouseButton1Click)) do c:Fire() end
-                            if qUi and qUi._offerAnswer then
-                                pcall(function() qUi._offerAnswer(true) end)
-                            end
+                        if acceptBtn then
+                            fireGuiClick(acceptBtn)
                         end
+                        if qUi and qUi._offerAnswer then
+                            pcall(function() qUi._offerAnswer(true) end)
+                        end
+                        pressReturnKey()
                     end
 
                     -- 3. Auto Close / Claim Result Dialog (MissionResult, Result, QuestResult, Drops)
@@ -220,9 +370,19 @@ task.spawn(function()
                             if qUi._dialogEnter then pcall(function() qUi._dialogEnter() end) end
                         end
                         local closeBtn = resultDialog:FindFirstChild("Close", true) or resultDialog:FindFirstChild("Confirm", true) or resultDialog:FindFirstChild("Ok", true)
-                        if closeBtn and closeBtn.Visible then
-                            for _, c in ipairs(getconnections(closeBtn.Activated)) do c:Fire() end
-                            for _, c in ipairs(getconnections(closeBtn.MouseButton1Click)) do c:Fire() end
+                        if closeBtn then
+                            fireGuiClick(closeBtn)
+                        end
+                        pressReturnKey()
+                    end
+                end
+
+                -- Auto confirm AutoDrive popup or generic confirm windows if present
+                for _, g in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+                    if g:IsA("ScreenGui") and (g.Name:lower():find("confirm") or g.Name:lower():find("autodrive")) then
+                        local yes = g:FindFirstChild("Yes", true) or g:FindFirstChild("Confirm", true) or g:FindFirstChild("Ok", true)
+                        if yes and yes:IsA("GuiButton") then
+                            fireGuiClick(yes)
                         end
                     end
                 end
@@ -241,7 +401,23 @@ local function getActiveQuestDestination()
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
             if okGl and gl and gl.target then
-                return gl.target, nil, gl.points
+                -- Match marker object if present
+                local destObj = nil
+                local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers") or workspace:FindFirstChild("RBRCQuestGuide")
+                if qMarkers then
+                    local bestDist = 9999
+                    for _, m in ipairs(qMarkers:GetChildren()) do
+                        local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
+                        if p then
+                            local d = (p.Position - gl.target).Magnitude
+                            if d < bestDist then
+                                bestDist = d
+                                destObj = p
+                            end
+                        end
+                    end
+                end
+                return gl.target, destObj, gl.points
             end
         end
         if nav.getGuide then
@@ -258,7 +434,7 @@ local function getActiveQuestDestination()
         for _, m in ipairs(qMarkers:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, m, nil
+                return p.Position, p, nil
             end
         end
     end
@@ -269,7 +445,7 @@ local function getActiveQuestDestination()
         for _, m in ipairs(qGuide:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart")
             if p then
-                return p.Position, m, nil
+                return p.Position, p, nil
             end
         end
     end
@@ -290,7 +466,7 @@ local function getActiveQuestDestination()
         for _, m in ipairs(navFolder:GetChildren()) do
             local p = m:IsA("BasePart") and m or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, m, nil
+                return p.Position, p, nil
             end
         end
     end
@@ -307,19 +483,19 @@ local stuckCounter = 0
 
 task.spawn(function()
     while true do
-        task.wait(0.08)
+        task.wait(0.06)
         if Config.AutoFarmQuests then
             local root = getCarRoot()
             if root then
                 local destPos, destObj, points = getActiveQuestDestination()
 
                 -- Anti-Stuck Detection
-                if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 2 then
+                if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 1.5 then
                     stuckCounter = stuckCounter + 1
-                    if stuckCounter >= 8 then -- Stuck for ~1 second
-                        -- Execute auto un-stuck hop
-                        root.AssemblyLinearVelocity = Vector3.new(0, 45, 0)
-                        task.wait(0.2)
+                    if stuckCounter >= 10 then -- Stuck for ~0.6 second
+                        -- Execute auto un-stuck: hop forward
+                        local forward = root.CFrame.LookVector
+                        teleportCar(root.CFrame + Vector3.new(0, 3, 0) + forward * 8)
                         stuckCounter = 0
                     end
                 else
@@ -336,78 +512,50 @@ task.spawn(function()
 
                     if Config.QuestDriveMode == "Instant Warp" then
                         -- Fast waypoint sweep to register route checkpoint gates
-                        if points and #points > 0 and dist > 40 then
-                            local step = math.max(1, math.floor(#points / 10))
+                        if points and #points > 0 and dist > 35 then
+                            local step = math.max(1, math.floor(#points / 12))
                             for i = 1, #points, step do
-                                root.CFrame = CFrame.new(points[i] + Vector3.new(0, 1.5, 0))
-                                task.wait(0.01)
+                                teleportCar(CFrame.new(points[i] + Vector3.new(0, 1.5, 0)))
+                                task.wait(0.015)
                             end
                         end
                         -- Warp directly to the destination marker
-                        root.CFrame = CFrame.new(destPos + Vector3.new(0, 1.5, 0))
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
+                        teleportCar(CFrame.new(destPos + Vector3.new(0, 1.5, 0)))
                         dist = 0
                     end
 
-                    if dist > 20 then
+                    if dist > 22 then
                         if Config.QuestDriveMode == "Hyper Sonic Glide" then
                             -- High-Speed Aerial Glide straight to destination (Bypasses all obstacles)
-                            local dir = (destPos - root.Position).Unit
-                            root.AssemblyLinearVelocity = dir * (Config.QuestDriveSpeed / 3.6)
-                            root.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(dir.X, 0, dir.Z))
+                            driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
 
                         elseif Config.QuestDriveMode == "Realistic Road Drive" then
-                            -- Drive along actual Seoul roads using boosted AutoDrive
-                            pcall(function()
-                                local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
-                                if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
-                                    local ad = require(RaycityUi.AutoDrive)
-                                    if ad then
-                                        if ad.C then
-                                            ad.C.maxSpeed = Config.QuestDriveSpeed / 3.6
-                                            ad.C.cap1 = 90
-                                            ad.C.cap2 = 70
-                                            ad.C.cap3 = 60
-                                            ad.C.arriveSlowM = 5
-                                            ad.C.arriveSlowerM = 2
-                                        end
-                                        if not (ad.isActive and ad.isActive()) then
-                                            if ad.request then
-                                                ad.request(destPos)
-                                            elseif ad.start then
-                                                ad.start(destPos)
-                                            end
-                                        end
+                            -- Drive along actual Seoul roads using Navigation waypoints
+                            local nextWp = nil
+                            if points and #points > 0 then
+                                for i = 1, #points do
+                                    local pDist = (points[i] - root.Position).Magnitude
+                                    if pDist > 10 and (points[i] - root.Position):Dot(destPos - root.Position) > -5 then
+                                        nextWp = points[i]
+                                        break
                                     end
                                 end
-                            end)
-
-                            -- Also steer and assist forward velocity
-                            local dir = (destPos - root.Position).Unit
-                            local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
-                            local currentKmh = root.AssemblyLinearVelocity.Magnitude * 3.6
-                            if currentKmh < Config.QuestDriveSpeed then
-                                root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(flatDir * (Config.QuestDriveSpeed / 3.6), 0.25)
                             end
+                            local driveTarget = nextWp or destPos
+                            driveCarStep(driveTarget, Config.QuestDriveSpeed, false)
 
                         elseif Config.QuestDriveMode == "Hybrid Cruise" then
                             -- High-Speed Ground Cruise with obstacle hopping
-                            local dir = (destPos - root.Position).Unit
-                            local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
-                            root.AssemblyLinearVelocity = flatDir * (Config.QuestDriveSpeed / 3.6) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-                            root.CFrame = CFrame.lookAt(root.Position, root.Position + flatDir * 5)
+                            driveCarStep(destPos, Config.QuestDriveSpeed, false)
                         end
                     else
                         -- ==========================================================
                         -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
                         -- ==========================================================
                         questFarmState = "DELIVERING"
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-                        root.CFrame = CFrame.new(destPos + Vector3.new(0, 1.5, 0))
+                        teleportCar(CFrame.new(destPos + Vector3.new(0, 1.5, 0)))
 
-                        -- Stop native AutoDrive
+                        -- Stop native AutoDrive if running
                         pcall(function()
                             local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
                             if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
@@ -415,15 +563,26 @@ task.spawn(function()
                             end
                         end)
 
+                        -- Trigger Touch on destination marker
+                        if destObj and destObj:IsA("BasePart") and firetouchinterest then
+                            pcall(function()
+                                firetouchinterest(root, destObj, 0)
+                                task.wait(0.02)
+                                firetouchinterest(root, destObj, 1)
+                            end)
+                        end
+
                         -- Submit delivery via server remotes
                         pcall(function()
                             local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                             if qRemotes then
                                 if qRemotes:FindFirstChild("QuestEventUp") then
-                                    qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name)
+                                    qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
                                 end
                                 if qRemotes:FindFirstChild("QuestRequest") then
                                     qRemotes.QuestRequest:InvokeServer("ClaimCurrentQuest")
+                                    qRemotes.QuestRequest:InvokeServer("CompleteQuest")
+                                    qRemotes.QuestRequest:InvokeServer("FinishQuest")
                                 end
                             end
                         end)
@@ -438,7 +597,10 @@ task.spawn(function()
                             end
                         end)
 
-                        task.wait(0.35)
+                        -- Send Enter key to confirm delivery
+                        pressReturnKey()
+
+                        task.wait(0.3)
                     end
                 else
                     -- ==========================================================
@@ -465,26 +627,21 @@ task.spawn(function()
                         if nearestNpc then
                             if Config.QuestDriveMode == "Instant Warp" then
                                 -- Instantly warp right in front of the NPC
-                                root.CFrame = CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 7), nearestNpc.Position)
-                                root.AssemblyLinearVelocity = Vector3.zero
-                                root.AssemblyAngularVelocity = Vector3.zero
-                                nearestDist = 7
+                                teleportCar(CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 6), nearestNpc.Position))
+                                nearestDist = 6
                             end
 
                             if nearestDist > 14 then
                                 -- Drive smoothly towards quest NPC
-                                local dir = (nearestNpc.Position - root.Position).Unit
-                                local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
                                 if Config.QuestDriveMode == "Hyper Sonic Glide" then
-                                    root.AssemblyLinearVelocity = dir * (Config.QuestDriveSpeed / 3.6)
+                                    driveCarStep(nearestNpc.Position + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
                                 else
-                                    root.AssemblyLinearVelocity = flatDir * (Config.QuestDriveSpeed / 3.6)
+                                    driveCarStep(nearestNpc.Position, Config.QuestDriveSpeed, false)
                                 end
-                                root.CFrame = CFrame.lookAt(root.Position, root.Position + flatDir * 5)
                             else
                                 -- Arrived at NPC: stop and interact to take quest!
-                                root.AssemblyLinearVelocity = Vector3.zero
-                                root.AssemblyAngularVelocity = Vector3.zero
+                                teleportCar(CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 6), nearestNpc.Position))
+
                                 pcall(function()
                                     local interactRemote = ReplicatedStorage:FindFirstChild("RaycityInteract") 
                                         and ReplicatedStorage.RaycityInteract:FindFirstChild("Remotes") 
@@ -499,6 +656,7 @@ task.spawn(function()
                                         qUi._dialogEnter()
                                     end
                                 end)
+                                pressReturnKey()
                                 task.wait(0.25)
                             end
                         end
@@ -582,6 +740,18 @@ RunService.Heartbeat:Connect(function(dt)
     -- Flight handling
     if Config.FlyEnabled then
         updateFlyState()
+        pcall(function()
+            local rcd = getRCDrive()
+            if rcd and rcd.phys then
+                rcd.phys.airMode = true
+                rcd.phys.brake = 0
+                if flyBodyVelocity then
+                    rcd.phys.v = flyBodyVelocity.Velocity
+                    rcd.phys.p = root.Position
+                    rcd.phys.cf = root.CFrame
+                end
+            end
+        end)
         return
     end
 
@@ -595,6 +765,15 @@ RunService.Heartbeat:Connect(function(dt)
             if currentKmh < Config.TargetSpeedKmh then
                 local targetVel = forward * (Config.TargetSpeedKmh / 3.6)
                 root.AssemblyLinearVelocity = currentVel:Lerp(targetVel, math.clamp(dt * Config.AccelerationMultiplier * 3, 0, 1))
+                pcall(function()
+                    local rcd = getRCDrive()
+                    if rcd and rcd.phys then
+                        rcd.phys.throttle = 1
+                        rcd.phys.brake = 0
+                        rcd.phys.boosting = true
+                        rcd.phys.v = root.AssemblyLinearVelocity
+                    end
+                end)
             end
         end
     end
@@ -607,8 +786,8 @@ RunService.Heartbeat:Connect(function(dt)
             local look = root.CFrame.LookVector
             local flatLook = Vector3.new(look.X, 0, look.Z).Unit
             if flatLook.Magnitude > 0.1 then
-                root.CFrame = CFrame.lookAt(currentPos + Vector3.new(0, 2, 0), currentPos + flatLook * 10)
-                root.AssemblyAngularVelocity = Vector3.zero
+                local uprightCF = CFrame.lookAt(currentPos + Vector3.new(0, 2, 0), currentPos + flatLook * 10)
+                teleportCar(uprightCF)
             end
         end
     end
@@ -623,6 +802,14 @@ UserInputService.InputBegan:Connect(function(input, processed)
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
         end
+        pcall(function()
+            local rcd = getRCDrive()
+            if rcd and rcd.phys then
+                rcd.phys.v = Vector3.zero
+                rcd.phys.throttle = 0
+                rcd.phys.brake = 1
+            end
+        end)
     end
 end)
 
@@ -637,6 +824,10 @@ task.spawn(function()
                     car:SetAttribute("CurrentSP", 1000)
                     car:SetAttribute("MaxSP", 1000)
                     car:SetAttribute("BoosterActive", true)
+                end
+                local rcd = getRCDrive()
+                if rcd and rcd.phys then
+                    rcd.phys.boosting = true
                 end
             end)
         end
@@ -764,14 +955,6 @@ local CITY_WAYPOINTS = {
     ["🏁 Highway Strip"] = Vector3.new(0, 45, -1200)
 }
 
-local function teleportCar(targetPos)
-    local root = getCarRoot()
-    if root then
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-    end
-end
 
 -- ==============================================================================
 -- 🎨 12. WINDUI GUI CREATION
