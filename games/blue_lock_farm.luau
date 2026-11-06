@@ -463,27 +463,45 @@ local function getCandyAmount()
     return 0
 end
 
--- Helper: Parse formatted number strings with suffixes (e.g. "$25M", "500K", "1.2B")
+-- Helper: Parse formatted number strings with suffixes (e.g. "$25M", "500K", "$1Sp", "1.5Qa")
 local function parseSuffixNumber(str)
-    if not str or typeof(str) ~= "string" then return nil end
-    local clean = string.gsub(str, "[,%$%s]", "")
-    local num, suffix = string.match(clean, "^([%d%.]+)([a-zA-Z]*)$")
+    if not str then return nil end
+    if typeof(str) == "number" then return str end
+    if typeof(str) ~= "string" then return nil end
+    -- 1. Strip RichText / HTML tags (<font ...>, </font>, <b>, etc.)
+    local clean = string.gsub(str, "<[^>]->", "")
+    -- 2. Strip commas, dollar signs, spaces, non-breaking spaces, quotes
+    clean = string.gsub(clean, "[,%$%s\'\"]", "")
+    if clean == "" then return nil end
+    -- 3. Check for direct scientific notation or pure number
+    local direct = tonumber(clean)
+    if direct and direct >= 0 then return direct end
+    -- 4. Match number and suffix
+    local num, suffix = string.match(clean, "([%d%.]+)%s*([a-zA-Z]*)")
     if not num then return nil end
     local n = tonumber(num)
     if not n then return nil end
     suffix = string.lower(suffix or "")
     local multipliers = {
-        k = 1e3,
-        m = 1e6,
-        b = 1e9,
-        t = 1e12,
-        qa = 1e15,
-        qi = 1e18,
-        sx = 1e21,
-        sp = 1e24,
-        oc = 1e27,
-        no = 1e30,
-        dc = 1e33,
+        k   = 1e3,
+        m   = 1e6,
+        b   = 1e9,
+        t   = 1e12,
+        qa  = 1e15,
+        q   = 1e15,
+        qi  = 1e18,
+        sx  = 1e21,
+        sp  = 1e24,
+        s   = 1e24,
+        oc  = 1e27,
+        o   = 1e27,
+        no  = 1e30,
+        n   = 1e30,
+        dc  = 1e33,
+        d   = 1e33,
+        ud  = 1e36,
+        dd  = 1e39,
+        td  = 1e42,
     }
     if suffix ~= "" and multipliers[suffix] then
         return n * multipliers[suffix]
@@ -500,18 +518,25 @@ local function getCashAmount()
         if ok and d then
             if d.Currency then
                 local c = d.Currency.Cash or d.Currency.cash or d.Currency.Money or d.Currency.Coins
-                if tonumber(c) and tonumber(c) >= 0 then
-                    lastKnownCash = tonumber(c)
-                    return tonumber(c)
+                local p = parseSuffixNumber(c)
+                if p and p >= 0 then
+                    lastKnownCash = p
+                    return p
                 end
             end
-            if d.Cash and tonumber(d.Cash) and tonumber(d.Cash) >= 0 then
-                lastKnownCash = tonumber(d.Cash)
-                return tonumber(d.Cash)
+            if d.Cash ~= nil then
+                local p = parseSuffixNumber(d.Cash)
+                if p and p >= 0 then
+                    lastKnownCash = p
+                    return p
+                end
             end
-            if d.Money and tonumber(d.Money) and tonumber(d.Money) >= 0 then
-                lastKnownCash = tonumber(d.Money)
-                return tonumber(d.Money)
+            if d.Money ~= nil then
+                local p = parseSuffixNumber(d.Money)
+                if p and p >= 0 then
+                    lastKnownCash = p
+                    return p
+                end
             end
         end
     end
@@ -519,9 +544,12 @@ local function getCashAmount()
     -- 2. Try CurrencyService
     if CurrencyService and typeof(CurrencyService.GetCurrencyAmount) == "function" then
         local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Cash")
-        if ok and typeof(val) == "number" and val >= 0 then
-            lastKnownCash = val
-            return val
+        if ok and val ~= nil then
+            local p = parseSuffixNumber(val)
+            if p and p >= 0 then
+                lastKnownCash = p
+                return p
+            end
         end
     end
 
@@ -543,9 +571,12 @@ local function getCashAmount()
     if ls then
         for _, name in ipairs({ "Cash", "Money", "Coins", "Gold", "Points" }) do
             local val = ls:FindFirstChild(name)
-            if val and val:IsA("ValueBase") and tonumber(val.Value) and tonumber(val.Value) >= 0 then
-                lastKnownCash = tonumber(val.Value)
-                return tonumber(val.Value)
+            if val and val:IsA("ValueBase") and val.Value ~= nil then
+                local p = parseSuffixNumber(val.Value)
+                if p and p >= 0 then
+                    lastKnownCash = p
+                    return p
+                end
             end
         end
     end
@@ -553,9 +584,12 @@ local function getCashAmount()
     -- 5. Try Attributes on LocalPlayer
     for _, attr in ipairs({ "Cash", "Money", "Coins" }) do
         local a = LocalPlayer:GetAttribute(attr)
-        if tonumber(a) and tonumber(a) >= 0 then
-            lastKnownCash = tonumber(a)
-            return tonumber(a)
+        if a ~= nil then
+            local p = parseSuffixNumber(a)
+            if p and p >= 0 then
+                lastKnownCash = p
+                return p
+            end
         end
     end
 
@@ -582,36 +616,51 @@ local function getConveyorLockerPrice(boxName, variant, rollPart)
     
     if BoxService and typeof(BoxService.GetConveyorBoxPrice) == "function" then
         local ok, p = pcall(function() return BoxService.GetConveyorBoxPrice(boxName, variant) end)
-        if ok and typeof(p) == "number" and p > 0 then
-            return p
+        if ok and p ~= nil then
+            local parsed = parseSuffixNumber(p)
+            if parsed and parsed > 0 then return parsed end
         end
     end
     if BoxService and typeof(BoxService.GetBoxPrice) == "function" then
         local ok, p = pcall(function() return BoxService.GetBoxPrice(boxName, variant) end)
-        if ok and typeof(p) == "number" and p > 0 then
-            return p
+        if ok and p ~= nil then
+            local parsed = parseSuffixNumber(p)
+            if parsed and parsed > 0 then return parsed end
         end
     end
 
-    -- Fallback 1: inspect BillboardGui on BoxModel (Handles all suffixes: K, M, B, T, Qa, Qi, Sx, Sp, etc.)
+    -- Fallback 1: Deep scan all TextLabels on rollPart / BoxModel for price (e.g. "$1Sp")
     if rollPart then
-        local bm = rollPart:FindFirstChild("BoxModel")
-        local bgui = bm and bm:FindFirstChild("BoxPriceBillboardGui")
-        local frame = bgui and bgui:FindFirstChild("Frame")
-        local priceLabel = frame and frame:FindFirstChild("PriceLabel")
-        if priceLabel and priceLabel.Text and priceLabel.Text ~= "" then
-            local p = parseSuffixNumber(priceLabel.Text)
-            if p and p > 0 then return p end
+        for _, desc in ipairs(rollPart:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Text and string.find(desc.Text, "%$") then
+                local p = parseSuffixNumber(desc.Text)
+                if p and p > 0 then return p end
+            end
         end
     end
 
-    -- Fallback 2: BoxesLibrary lookup
-    if BoxesLibrary and BoxesLibrary[boxName] and BoxesLibrary[boxName].BoxPrice then
-        local bp = BoxesLibrary[boxName].BoxPrice
-        if variant and variant ~= "Normal" then
-            bp = bp * 50
+    -- Fallback 2: BoxesLibrary lookup (handles spaced and unspaced names)
+    if BoxesLibrary and type(BoxesLibrary) == "table" then
+        local cleanKey = string.gsub(boxName, "%s+", "")
+        local boxData = BoxesLibrary[boxName] or BoxesLibrary[cleanKey]
+        if not boxData then
+            for k, v in pairs(BoxesLibrary) do
+                if string.gsub(k, "%s+", ""):lower() == cleanKey:lower() then
+                    boxData = v
+                    break
+                end
+            end
         end
-        return bp
+        if boxData then
+            local bp = boxData.BoxPrice or boxData.Price or boxData.Cost
+            if bp then
+                local numBp = parseSuffixNumber(bp) or 0
+                if variant and variant ~= "Normal" then
+                    numBp = numBp * 50
+                end
+                if numBp > 0 then return numBp end
+            end
+        end
     end
 
     return 0
@@ -751,14 +800,15 @@ local function isUnitSelected(guid, uData, selectedList)
     local specificDisplay = unitOptionByGuid and unitOptionByGuid[guid]
 
     for _, target in ipairs(selectedList) do
-        if target == guid then return true end
-        if specificDisplay and target == specificDisplay then return true end
-        if target == cleanName or target == rawName then return true end
-        if not string.find(target, "(", 1, true) and (cleanName:lower() == target:lower() or rawName:lower() == target:lower()) then
+        local targetStr = tostring(target)
+        if targetStr == guid then return true end
+        if specificDisplay and targetStr == specificDisplay then return true end
+        if targetStr == cleanName or targetStr == rawName then return true end
+        if cleanName:lower() == targetStr:lower() or rawName:lower() == targetStr:lower() then
             return true
         end
-        if string.find(target, cleanName, 1, true) or string.find(target, rawName, 1, true) then
-            local targetLvl = string.match(target, "Lvl%s+(%d+)")
+        if string.find(targetStr:lower(), cleanName:lower(), 1, true) or string.find(targetStr:lower(), rawName:lower(), 1, true) then
+            local targetLvl = string.match(targetStr, "Lvl%s+(%d+)")
             if targetLvl then
                 if tostring(uData.Level or 1) == targetLvl then
                     return true
@@ -2628,6 +2678,133 @@ TabAutomation:Button({
     end
 })
 
+-- Universal Missions & Event Claim Engine (Handles Event & Daily tabs, GUI Claim Buttons, & Remotes)
+local function claimAllMissionsUniversal()
+    local count = 0
+    pcall(function()
+        local lp = LocalPlayer
+        -- 1. Direct Server Remote Claims
+        if Remotes:FindFirstChild("TryClaimMission") then
+            if MissionService and MissionLibrary then
+                for mName, _ in pairs(MissionLibrary) do
+                    local ok, can = pcall(function() return MissionService.IsMissionClaimable(lp, mName) end)
+                    if ok and can == true then
+                        Remotes.TryClaimMission:FireServer(mName)
+                        count = count + 1
+                        task.wait(0.08)
+                    end
+                end
+            end
+            -- Halloween & Event Mission list fallback
+            local eventNames = {
+                "Lucky Streak", "Bad Neighbors", "Zombie Slayer", "Kingslayer", "Night Owl",
+                "Trick or Treat", "Halloween", "Event_1", "Event_2", "Event_3", "Event_4", "Event_5",
+                "Daily_1", "Daily_2", "Daily_3", "Daily_4", "Daily_5"
+            }
+            for _, em in ipairs(eventNames) do
+                pcall(function() Remotes.TryClaimMission:FireServer(em) end)
+            end
+        end
+
+        -- 2. GUI Tab & Button Scanner (Handles Screenshot 3 Missions UI: Event/Daily tabs + Claim button)
+        local pg = lp:FindFirstChild("PlayerGui")
+        if not pg then return end
+
+        local function clickGuiBtn(b)
+            if not b then return end
+            pcall(function()
+                if getconnections then
+                    for _, c in ipairs(getconnections(b.MouseButton1Click)) do pcall(c.Fire, c) end
+                    for _, c in ipairs(getconnections(b.Activated)) do pcall(c.Fire, c) end
+                end
+            end)
+        end
+
+        local function clickVisibleClaimButtons(root)
+            if not root then return end
+            for _, desc in ipairs(root:GetDescendants()) do
+                if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+                    local t = (desc:IsA("TextButton") and desc.Text:lower()) or desc.Name:lower()
+                    if t == "claim" or t == "claimbtn" or t == "claimbutton" or t:find("claim") or t:find("รับรางวัล") then
+                        clickGuiBtn(desc)
+                        count = count + 1
+                        task.wait(0.08)
+                    end
+                end
+            end
+        end
+
+        -- Scan all ScreenGuis in PlayerGui
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:lower():find("mission") or gui:FindFirstChild("MainFrame", true) or gui:FindFirstChild("Missions", true)) then
+                -- Step A: Click any ready Claim button right away
+                clickVisibleClaimButtons(gui)
+
+                -- Step B: Locate Tab Buttons (e.g. "Event", "Daily")
+                local tabButtons = {}
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) then
+                        local btnText = (desc:IsA("TextButton") and desc.Text) or desc.Name
+                        if btnText == "Event" or btnText == "Daily" then
+                            table.insert(tabButtons, desc)
+                        end
+                    end
+                end
+
+                local function processCurrentTabItems()
+                    clickVisibleClaimButtons(gui)
+                    for _, sc in ipairs(gui:GetDescendants()) do
+                        if sc:IsA("ScrollingFrame") then
+                            for _, item in ipairs(sc:GetChildren()) do
+                                if item:IsA("GuiObject") and item.Name ~= "Default" and item.Name ~= "UIListLayout" and item.Name ~= "UIPadding" then
+                                    -- Check for completed/notification badge (red circle with '!', NotificationLabel, etc.)
+                                    local hasAlert = false
+                                    for _, b in ipairs(item:GetDescendants()) do
+                                        if b.Visible and (b.Name:find("Notif") or b.Name:find("Alert") or b.Name:find("Exclamation") or (b:IsA("TextLabel") and b.Text == "!")) then
+                                            hasAlert = true
+                                            break
+                                        end
+                                    end
+
+                                    if hasAlert then
+                                        -- Select the mission item to populate detail pane
+                                        if item:IsA("TextButton") or item:IsA("ImageButton") then
+                                            clickGuiBtn(item)
+                                        else
+                                            local clicker = item:FindFirstChildWhichIsA("TextButton") or item:FindFirstChildWhichIsA("ImageButton")
+                                            if clicker then clickGuiBtn(clicker) end
+                                        end
+                                        task.wait(0.1)
+
+                                        -- Click the green Claim button in detail pane
+                                        clickVisibleClaimButtons(gui)
+
+                                        if Remotes:FindFirstChild("TryClaimMission") then
+                                            Remotes.TryClaimMission:FireServer(item.Name)
+                                        end
+                                        task.wait(0.08)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- Process default/first view
+                processCurrentTabItems()
+
+                -- Switch tabs and process each
+                for _, tb in ipairs(tabButtons) do
+                    clickGuiBtn(tb)
+                    task.wait(0.15)
+                    processCurrentTabItems()
+                end
+            end
+        end
+    end)
+    return count
+end
+
 TabAutomation:Section({ Title = "Missions & Quests" })
 
 UIElements.autoClaimMissions = TabAutomation:Toggle({
@@ -2641,40 +2818,10 @@ UIElements.autoClaimMissions = TabAutomation:Toggle({
 
 TabAutomation:Button({
     Title = "Claim All Available Missions Now",
-    Desc = "Checks all missions and claims every ready reward",
+    Desc = "Checks all missions across Event and Daily tabs and claims every ready reward",
     Callback = function()
         task.spawn(function()
-            local count = 0
-            pcall(function()
-                if not Remotes:FindFirstChild("TryClaimMission") then return end
-                if MissionService and MissionLibrary then
-                    for mName, _ in pairs(MissionLibrary) do
-                        local ok, can = pcall(function() return MissionService.IsMissionClaimable(LocalPlayer, mName) end)
-                        if ok and can == true then
-                            Remotes.TryClaimMission:FireServer(mName)
-                            count = count + 1
-                            task.wait(0.12)
-                        end
-                    end
-                end
-                local mg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MissionGui")
-                local sf = mg and mg:FindFirstChild("MainFrame") 
-                    and mg.MainFrame:FindFirstChild("ScrollingFrameHolder") 
-                    and mg.MainFrame.ScrollingFrameHolder:FindFirstChild("ScrollingFrame")
-                if sf then
-                    for _, item in ipairs(sf:GetChildren()) do
-                        if item:IsA("GuiObject") and item.Name ~= "Default" then
-                            local notif = item:FindFirstChild("NotificationLabel", true)
-                            local comp = item:FindFirstChild("CompletedLabel", true)
-                            if notif and notif.Visible == true and (not comp or comp.Visible ~= true) then
-                                Remotes.TryClaimMission:FireServer(item.Name)
-                                count = count + 1
-                                task.wait(0.12)
-                            end
-                        end
-                    end
-                end
-            end)
+            local count = claimAllMissionsUniversal()
             WindUI:Notify({
                 Title = "Missions Claimed",
                 Content = count > 0 and ("Claimed " .. count .. " missions!") or "All ready missions have been claimed!",
@@ -4160,7 +4307,8 @@ task.spawn(function()
 
                     local cash = getCashAmount()
                     local targetCost = price + (minCashBuffer or 0)
-                    local canAffordTarget = (cash >= targetCost)
+                    -- Free/unknown price ($0) is always affordable; if price > 0, check cash >= targetCost
+                    local canAffordTarget = (price == 0) or (cash >= targetCost) or (cash == 0 and price == 0)
                     local invCount, invMax, hasInvSpace = getLockerInventoryInfo()
 
                     -- =========================================================================
@@ -4670,7 +4818,7 @@ task.spawn(function()
                                             end
 
                                             local cash = getCashAmount()
-                                            local canAffordCash = (cash >= rawCost)
+                                            local canAffordCash = (rawCost == 0) or (cash >= rawCost)
 
                                             if rerollCurrencyMode == "Grade Tokens Only" then
                                                 if tokenCount >= 1 then useTokens = true canAfford = true end
@@ -4838,38 +4986,11 @@ task.spawn(function()
     end
 end)
 
--- 6. Missions Auto Claim Loop (Service & UI Dual Scanner)
+-- 6. Missions Auto Claim Loop (Service & UI Dual Scanner + Tab Switcher)
 task.spawn(function()
     while isAlive() do
-        if autoClaimMissions and Remotes:FindFirstChild("TryClaimMission") then
-            pcall(function()
-                local lp = LocalPlayer
-                if MissionService and MissionLibrary then
-                    for mName, _ in pairs(MissionLibrary) do
-                        local ok, can = pcall(function() return MissionService.IsMissionClaimable(lp, mName) end)
-                        if ok and can == true then
-                            Remotes.TryClaimMission:FireServer(mName)
-                            task.wait(0.15)
-                        end
-                    end
-                end
-                local mg = lp:FindFirstChild("PlayerGui") and lp.PlayerGui:FindFirstChild("MissionGui")
-                local sf = mg and mg:FindFirstChild("MainFrame") 
-                    and mg.MainFrame:FindFirstChild("ScrollingFrameHolder") 
-                    and mg.MainFrame.ScrollingFrameHolder:FindFirstChild("ScrollingFrame")
-                if sf then
-                    for _, item in ipairs(sf:GetChildren()) do
-                        if item:IsA("GuiObject") and item.Name ~= "Default" then
-                            local notif = item:FindFirstChild("NotificationLabel", true)
-                            local comp = item:FindFirstChild("CompletedLabel", true)
-                            if notif and notif.Visible == true and (not comp or comp.Visible ~= true) then
-                                Remotes.TryClaimMission:FireServer(item.Name)
-                                task.wait(0.15)
-                            end
-                        end
-                    end
-                end
-            end)
+        if autoClaimMissions then
+            claimAllMissionsUniversal()
         end
         task.wait(2.0)
     end
