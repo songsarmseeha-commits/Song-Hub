@@ -2643,23 +2643,45 @@ TabAutomation:Button({
     Title = "Claim All Available Missions Now",
     Desc = "Checks all missions and claims every ready reward",
     Callback = function()
-        local count = 0
-        if MissionService and MissionLibrary and Remotes:FindFirstChild("TryClaimMission") then
-            for mName, _ in pairs(MissionLibrary) do
-                local ok, can = pcall(MissionService.IsMissionClaimable, mName, LocalPlayer)
-                if ok and can then
-                    Remotes.TryClaimMission:FireServer(mName)
-                    count = count + 1
-                    task.wait(0.1)
+        task.spawn(function()
+            local count = 0
+            pcall(function()
+                if not Remotes:FindFirstChild("TryClaimMission") then return end
+                if MissionService and MissionLibrary then
+                    for mName, _ in pairs(MissionLibrary) do
+                        local ok, can = pcall(function() return MissionService.IsMissionClaimable(LocalPlayer, mName) end)
+                        if ok and can == true then
+                            Remotes.TryClaimMission:FireServer(mName)
+                            count = count + 1
+                            task.wait(0.12)
+                        end
+                    end
                 end
-            end
-        end
-        WindUI:Notify({
-            Title = "Missions Claimed",
-            Content = count > 0 and ("Claimed " .. count .. " missions!") or "No missions ready to claim.",
-            Duration = 3,
-            Icon = "award"
-        })
+                local mg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MissionGui")
+                local sf = mg and mg:FindFirstChild("MainFrame") 
+                    and mg.MainFrame:FindFirstChild("ScrollingFrameHolder") 
+                    and mg.MainFrame.ScrollingFrameHolder:FindFirstChild("ScrollingFrame")
+                if sf then
+                    for _, item in ipairs(sf:GetChildren()) do
+                        if item:IsA("GuiObject") and item.Name ~= "Default" then
+                            local notif = item:FindFirstChild("NotificationLabel", true)
+                            local comp = item:FindFirstChild("CompletedLabel", true)
+                            if notif and notif.Visible == true and (not comp or comp.Visible ~= true) then
+                                Remotes.TryClaimMission:FireServer(item.Name)
+                                count = count + 1
+                                task.wait(0.12)
+                            end
+                        end
+                    end
+                end
+            end)
+            WindUI:Notify({
+                Title = "Missions Claimed",
+                Content = count > 0 and ("Claimed " .. count .. " missions!") or "All ready missions have been claimed!",
+                Duration = 3.5,
+                Icon = "award"
+            })
+        end)
     end
 })
 
@@ -4816,17 +4838,35 @@ task.spawn(function()
     end
 end)
 
--- 6. Missions Auto Claim Loop
+-- 6. Missions Auto Claim Loop (Service & UI Dual Scanner)
 task.spawn(function()
     while isAlive() do
-        if autoClaimMissions and MissionService and MissionLibrary and Remotes:FindFirstChild("TryClaimMission") then
+        if autoClaimMissions and Remotes:FindFirstChild("TryClaimMission") then
             pcall(function()
                 local lp = LocalPlayer
-                for mName, _ in pairs(MissionLibrary) do
-                    local ok, can = pcall(MissionService.IsMissionClaimable, mName, lp)
-                    if ok and can == true then
-                        Remotes.TryClaimMission:FireServer(mName)
-                        task.wait(0.15)
+                if MissionService and MissionLibrary then
+                    for mName, _ in pairs(MissionLibrary) do
+                        local ok, can = pcall(function() return MissionService.IsMissionClaimable(lp, mName) end)
+                        if ok and can == true then
+                            Remotes.TryClaimMission:FireServer(mName)
+                            task.wait(0.15)
+                        end
+                    end
+                end
+                local mg = lp:FindFirstChild("PlayerGui") and lp.PlayerGui:FindFirstChild("MissionGui")
+                local sf = mg and mg:FindFirstChild("MainFrame") 
+                    and mg.MainFrame:FindFirstChild("ScrollingFrameHolder") 
+                    and mg.MainFrame.ScrollingFrameHolder:FindFirstChild("ScrollingFrame")
+                if sf then
+                    for _, item in ipairs(sf:GetChildren()) do
+                        if item:IsA("GuiObject") and item.Name ~= "Default" then
+                            local notif = item:FindFirstChild("NotificationLabel", true)
+                            local comp = item:FindFirstChild("CompletedLabel", true)
+                            if notif and notif.Visible == true and (not comp or comp.Visible ~= true) then
+                                Remotes.TryClaimMission:FireServer(item.Name)
+                                task.wait(0.15)
+                            end
+                        end
                     end
                 end
             end)
