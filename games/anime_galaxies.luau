@@ -959,9 +959,9 @@ TabMain:Section({ Title = "🎮 Game Mode Selection (เลือกโหมด
 
 TabMain:Dropdown({
     Title = "Select Game Mode (เลือกโหมด)",
-    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless, Tower)",
-    Values = { "Story", "Raids", "Challenges", "Endless", "Tower" },
-    Value = selectedGameMode,
+    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless - โหมด Tower ให้ใช้แท็บ Tower Climb 🏰)",
+    Values = { "Story", "Raids", "Challenges", "Endless" },
+    Value = (selectedGameMode == "Tower") and "Story" or selectedGameMode,
     Callback = function(val)
         selectedGameMode = val
         triggerAutoSave()
@@ -1032,27 +1032,6 @@ TabMain:Dropdown({
     Value = selectedEndlessMap,
     Callback = function(val)
         selectedEndlessMap = val
-        triggerAutoSave()
-    end
-})
-
-TabMain:Dropdown({
-    Title = "Tower Floor (เลือกชั้น Tower)",
-    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการลงเล่น",
-    Values = { "1", "5", "10", "15", "20", "25", "30", "35", "40", "45", "50", "60", "70", "80", "90", "100" },
-    Value = tostring(selectedTowerFloor or 1),
-    Callback = function(val)
-        selectedTowerFloor = tonumber(val) or 1
-        triggerAutoSave()
-    end
-})
-
-TabMain:Toggle({
-    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
-    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะปรับบวก 1 ชั้นถัดไปให้อัตโนมัติ (เช่น ชั้น 1 -> ชั้น 2)",
-    Value = autoNextTowerFloor,
-    Callback = function(state)
-        autoNextTowerFloor = state
         triggerAutoSave()
     end
 })
@@ -1272,18 +1251,10 @@ local function findFreeDoor(mode)
     local query = (mode or "Story"):lower()
     if query == "raids" then query = "raid" end
     if query == "challenges" then query = "challenge" end
-    local isTower = (query == "tower" or query:find("tower", 1, true) ~= nil)
 
     for _, room in ipairs(workspace.Rooms:GetChildren()) do
         local rName = room.Name:lower()
-        local matches = false
-        if isTower then
-            matches = (rName:find("tower", 1, true) ~= nil) or (rName:find("infinit", 1, true) ~= nil)
-        else
-            matches = (rName:find(query, 1, true) ~= nil)
-        end
-
-        if matches then
+        if rName:find(query, 1, true) ~= nil then
             local door = room:FindFirstChild("Door")
             local detailsUI = room:FindFirstChild("DetailsUI", true)
             local count = detailsUI and detailsUI:FindFirstChild("Count")
@@ -1298,14 +1269,7 @@ local function findFreeDoor(mode)
     -- Fallback: Any door matching mode with < 4 players
     for _, room in ipairs(workspace.Rooms:GetChildren()) do
         local rName = room.Name:lower()
-        local matches = false
-        if isTower then
-            matches = (rName:find("tower", 1, true) ~= nil) or (rName:find("infinit", 1, true) ~= nil)
-        else
-            matches = (rName:find(query, 1, true) ~= nil)
-        end
-
-        if matches then
+        if rName:find(query, 1, true) ~= nil then
             local door = room:FindFirstChild("Door") or room:FindFirstChildWhichIsA("BasePart")
             if door then
                 local isReady = door:GetAttribute("Ready") == true
@@ -1318,26 +1282,103 @@ local function findFreeDoor(mode)
         end
     end
 
-    -- Universal Fallback for Tower if no specific tower room exists: pick any empty room
-    if isTower then
-        for _, room in ipairs(workspace.Rooms:GetChildren()) do
-            local door = room:FindFirstChild("Door") or room:FindFirstChildWhichIsA("BasePart")
-            local detailsUI = room:FindFirstChild("DetailsUI", true)
-            local count = detailsUI and detailsUI:FindFirstChild("Count")
-            local isReady = door and door:GetAttribute("Ready") == true
-            local isCountZero = (not count) or (count.Value == 0)
-            if door and door:IsA("BasePart") and (not isReady) and isCountZero then
-                return door, room
-            end
-        end
-    end
-
     return nil
 end
 
--- Robust Room Creator & Enter
+-- ==============================================================================
+-- DEDICATED TOWER SYSTEM CONTROLLER (NATIVE OFFICIAL LAUNCHER)
+-- ==============================================================================
+local function getTowerTeamList()
+    local team = {}
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data then
+        local towerFolder = data:FindFirstChild("Tower")
+        local teamVal = towerFolder and towerFolder:FindFirstChild("Team")
+        if teamVal and teamVal:IsA("StringValue") and #teamVal.Value > 2 then
+            local ok, parsed = pcall(function() return HttpService:JSONDecode(teamVal.Value) end)
+            if ok and type(parsed) == "table" and #parsed > 0 then
+                return parsed
+            end
+        end
+        pcall(function()
+            local unitsMod = require(ReplicatedStorage.Master.Modules.UI_Client.Units)
+            local list = unitsMod.list(data)
+            for i = 1, math.min(#list, 4) do
+                table.insert(team, list[i].Id)
+            end
+        end)
+    end
+    return team
+end
+
+local function startTowerBattle()
+    -- Auto equip specified team for Tower
+    if towerTeam and towerTeam ~= "Equipped Team" then
+        local tNum = tonumber(towerTeam:match("%d+"))
+        if tNum then
+            pcall(function()
+                publishRemote("Units", { Action = "EquipTeam", Team = tNum })
+                publishRemote("Units", { Action = "SetTeam", Team = tNum })
+                publishRemote("Team", { Action = "Equip", Slot = tNum })
+            end)
+        end
+    end
+
+    local teamList = getTowerTeamList()
+    local data = LocalPlayer:FindFirstChild("Data")
+    local towerFolder = data and data:FindFirstChild("Tower")
+    local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
+    local isActive = activeVal and activeVal.Value == true
+    local streakVal = towerFolder and towerFolder:FindFirstChild("Streak")
+    local currentStreak = streakVal and streakVal.Value or 0
+
+    local action = (isActive or currentStreak > 0) and "Continue" or "Start"
+
+    -- 1. Official Network_Client Publish
+    local sent = false
+    pcall(function()
+        local net = require(ReplicatedStorage.Master.Modules.Network_Client)
+        if net and net.Publish then
+            net.Publish(net, "Tower", { Action = action, Team = teamList })
+            sent = true
+        end
+    end)
+
+    -- 2. Direct RemoteService Handler Fallback
+    publishRemote("Tower", {
+        Action = action,
+        Team = teamList
+    })
+
+    WindUI:Notify({ Title = "Tower Climb", Content = "🚀 ส่งคำสั่งเริ่มเล่น Tower (" .. action .. ") เรียบร้อย!", Duration = 3, Icon = "castle" })
+    return true
+end
+
+local function forfeitTower()
+    pcall(function()
+        local net = require(ReplicatedStorage.Master.Modules.Network_Client)
+        if net and net.Publish then
+            net.Publish(net, "Tower", { Action = "Forfeit" })
+        end
+    end)
+    publishRemote("Tower", { Action = "Forfeit" })
+    towerCurrentFloor = 1
+    selectedTowerFloor = 1
+    pcall(function()
+        if towerCurrentFloorSlider and towerCurrentFloorSlider.SetValue then
+            towerCurrentFloorSlider:SetValue(1)
+        end
+    end)
+    triggerAutoSave()
+    WindUI:Notify({ Title = "Tower Climb", Content = "🏳️ ยอมแพ้และรีเซ็ตหอคอยกลับไปเริ่มต้นชั้น 1 เรียบร้อย!", Duration = 3, Icon = "rotate-ccw" })
+end
+
+-- Robust Room Creator & Enter (Story, Raids, Challenges, Endless)
 local function enterOrActionRoom(mode, forceSolo)
     mode = mode or selectedGameMode
+    if mode == "Tower" then
+        return startTowerBattle()
+    end
     local isSolo = if forceSolo ~= nil then forceSolo else not roomFriendsOnly
 
     local worldIdx = WORLD_INDEX_MAP[selectedWorld] or 1
@@ -1697,6 +1738,26 @@ TabTower:Button({
     end
 })
 
+TabTower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง)" })
+
+TabTower:Button({
+    Title = "🚀 เริ่มเล่น / สร้างห้อง Tower ทันที (Instant Start Tower)",
+    Desc = "ส่งคำสั่งเข้าเล่น Tower ทันที 1 คลิก (Start/Continue)",
+    Icon = "circle-play",
+    Callback = function()
+        startTowerBattle()
+    end
+})
+
+TabTower:Button({
+    Title = "🏳️ ยอมแพ้และรีเซ็ตหอคอย (Forfeit Tower & Reset)",
+    Desc = "ส่งคำสั่งยอมแพ้ เพื่อเริ่มรันใหม่ตั้งแต่ชั้น 1 (Forfeit)",
+    Icon = "rotate-ccw",
+    Callback = function()
+        forfeitTower()
+    end
+})
+
 -- Background loop for Auto Farm & Room Automation & Tower Climb
 task.spawn(function()
     local lastEnterAttempt = 0
@@ -1787,9 +1848,8 @@ task.spawn(function()
                             local reachedStop = towerEnableStopAt and (towerCurrentFloor >= (towerStopAtBattle or 22))
                             if reachedStop then
                                 if towerAtStopBattle == "Forfeit And Restart" then
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! รีเซ็ตกลับไปเริ่มชั้น 1", Duration = 4, Icon = "rotate-ccw" })
-                                    towerCurrentFloor = 1
-                                    selectedTowerFloor = 1
+                                    WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ส่งคำสั่ง Forfeit และเริ่มใหม่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
+                                    forfeitTower()
                                 elseif towerAtStopBattle == "Return To Lobby" then
                                     WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
                                     towerAutoJoin = false
@@ -1809,9 +1869,8 @@ task.spawn(function()
                         else
                             -- Loss / Defeat
                             if towerAfterLoss == "Start New Run" then
-                                WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! เริ่มรันใหม่ที่ชั้น 1 ตามที่ตั้งค่าไว้", Duration = 4, Icon = "rotate-ccw" })
-                                towerCurrentFloor = 1
-                                selectedTowerFloor = 1
+                                WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! ส่งคำสั่ง Forfeit และเริ่มรันใหม่ที่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
+                                forfeitTower()
                             elseif towerAfterLoss == "Retry Floor" then
                                 WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! พยายามเล่นชั้นเดิมซ้ำ: Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "refresh-cw" })
                             elseif towerAfterLoss == "Return To Lobby" then
@@ -1834,20 +1893,10 @@ task.spawn(function()
                         task.wait(4)
                     end
                 else
-                    -- Outside Match (Lobby or In Room)
-                    if inRoom then
-                        local offRooms = getOfficialRooms()
-                        if offRooms and offRooms.OnStart then
-                            pcall(offRooms.OnStart)
-                        end
-                        publishRemote("Room", {Action = "Start"})
-                        publishRemote("Controls", {Action = "VoteStart"})
-                        task.wait(2.5)
-                    else
-                        if tick() - lastEnterAttempt > 3.0 then
-                            lastEnterAttempt = tick()
-                            enterOrActionRoom("Tower", true)
-                        end
+                    -- In Lobby: auto start tower battle
+                    if tick() - lastEnterAttempt > 3.0 then
+                        lastEnterAttempt = tick()
+                        startTowerBattle()
                     end
                 end
 
