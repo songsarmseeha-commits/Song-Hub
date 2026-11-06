@@ -133,8 +133,11 @@ try {
 const Database = {
     // --- KEY OPERATIONS ---
     findKey(keyString) {
-        const stmt = db.prepare('SELECT * FROM keys WHERE key_string = ?');
-        return stmt.get(keyString);
+        if (!keyString) return null;
+        const clean = String(keyString).replace(/[\u200B-\u200D\uFEFF\s'"]/g, '').toUpperCase();
+        if (!clean) return null;
+        const stmt = db.prepare('SELECT * FROM keys WHERE UPPER(TRIM(key_string)) = ?');
+        return stmt.get(clean);
     },
 
     findKeyById(id) {
