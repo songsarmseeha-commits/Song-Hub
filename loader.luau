@@ -1,4 +1,25 @@
 -- ==============================================================================
+-- 🚀 Self-Bypassing Executor Cache Engine
+-- Ensures that EVEN IF an executor executes an old cached URL,
+-- it will immediately fetch the freshest loader code from GitHub using a dynamic timestamp!
+-- ==============================================================================
+if getgenv and not getgenv()._SongHubFreshLoaded then
+    getgenv()._SongHubFreshLoaded = true
+    local buster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+    local freshUrl = "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. buster
+    local ok, freshCode = pcall(game.HttpGet, game, freshUrl)
+    if ok and type(freshCode) == "string" and #freshCode > 1000 then
+        local fn = loadstring(freshCode)
+        if fn then
+            return fn()
+        end
+    end
+end
+if getgenv then
+    getgenv()._SongHubFreshLoaded = nil
+end
+
+-- ==============================================================================
 -- 👑 UNIVERSAL ALL-IN-ONE MULTI-GAME HUB LOADER WITH KEY SYSTEM
 -- Supported Games:
 --   1. ⚔️ Anime Galaxies (Lobby & Match Acts)
@@ -13,7 +34,10 @@
 if getgenv then
     local now = os.clock()
     -- 1. If game script is already running healthy with its UI window active, do NOT reload!
-    if getgenv()._HuntingTogetherRunning == true and getgenv()._HT_CurrentWindow then
+    if (getgenv()._HuntingTogetherRunning and getgenv()._HT_CurrentWindow)
+        or (getgenv()._BlueLockFarmRunning and getgenv()._BLF_Window)
+        or (getgenv()._AnimeGalaxiesRunning and getgenv()._AG_Window)
+        or (getgenv()._ThrowFoodRunning and getgenv()._TF_Window) then
         print("[Universal Hub] 🛡️ Script is already running with active UI! Skipping duplicate loader run.")
         return
     end
@@ -205,6 +229,68 @@ end
 -- ==============================================================================
 -- 3. SCRIPT EXECUTION ENGINE (ALWAYS FETCH LATEST FROM CLOUD)
 -- ==============================================================================
+-- ==============================================================================
+-- 🌐 Global Server Hop & Teleport Auto-Reload Persistence
+-- ==============================================================================
+pcall(function()
+    if getgenv and not getgenv()._SongHubTeleportHooked then
+        getgenv()._SongHubTeleportHooked = true
+        local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+        if qot and LocalPlayer then
+            LocalPlayer.OnTeleport:Connect(function(state)
+                if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
+                    pcall(function()
+                        qot([[loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. tostring(os.time())))()]])
+                    end)
+                end
+            end)
+        end
+    end
+end)
+
+-- ==============================================================================
+-- 🔄 Live In-Game Auto-Update Engine (Hot-Reloading)
+-- Periodically checks GitHub release timestamp; if developer pushes update,
+-- automatically reloads the script in real-time without player needing to do anything!
+-- ==============================================================================
+local function startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchFn)
+    if getgenv and getgenv()._SongHubLiveUpdateStarted then return end
+    if getgenv then getgenv()._SongHubLiveUpdateStarted = true end
+
+    task.spawn(function()
+        local initialTime = os.time()
+        -- Initial grace period: wait 120 seconds before first check
+        task.wait(120)
+        while task.wait(90) do
+            pcall(function()
+                local vUrl = "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/version.json?v=" .. tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
+                local ok, res = pcall(game.HttpGet, game, vUrl)
+                if ok and type(res) == "string" and #res > 10 then
+                    local vData = HttpService:JSONDecode(res)
+                    if vData and vData.updatedAt then
+                        local updateTs = math.floor(vData.updatedAt / 1000)
+                        if updateTs > (initialTime + 15) then
+                            print(string.format("[Universal Hub] 🚀 New update detected on GitHub (%s)! Hot-reloading %s...", tostring(vData.updatedAt), gameTitle))
+                            initialTime = updateTs
+                            pcall(function()
+                                local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+                                WindUI:Notify({
+                                    Title = "🚀 Song Hub Auto-Updated!",
+                                    Content = "Found new update from server! Reloading latest script version automatically...",
+                                    Duration = 5,
+                                    Icon = "refresh-cw"
+                                })
+                            end)
+                            task.wait(1.5)
+                            launchFn(scriptFileName, gameTitle)
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
 local function launchGameScript(scriptFileName, gameTitle)
     print(string.format("[Universal Hub] 🚀 Launching latest script for %s...", gameTitle))
     if getgenv then
@@ -240,6 +326,7 @@ local function launchGameScript(scriptFileName, gameTitle)
                     end
                 end)
                 task.spawn(fn)
+                startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchGameScript)
                 return
             else
                 warn("[Universal Hub] ⚠️ Compile error from " .. url .. ": " .. tostring(err))
