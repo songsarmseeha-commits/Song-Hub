@@ -434,6 +434,8 @@ end
 
 -- Helper: Get player's Candy currency
 local function getCandyAmount()
+    local attr = LocalPlayer:GetAttribute("CurrencyHalloween_2026") or LocalPlayer:GetAttribute("Candy")
+    if attr and tonumber(attr) and tonumber(attr) > 0 then return tonumber(attr) end
     if CurrencyService and typeof(CurrencyService.GetCurrencyAmount) == "function" then
         local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Halloween_2026")
         if ok and typeof(val) == "number" and val > 0 then return val end
@@ -1599,38 +1601,70 @@ end
 -- UPGRADES, SHOP, & BALL SKIN LISTS
 --------------------------------------------------------------------------------
 local UpgradesList = {
-    "ConveyorLuck",
-    "OpenTimeBoost",
-    "PlayerSpeed",
+    "WalkSpeed",
     "Luck",
-    "DropSpeed",
-    "MultiOpen",
-    "DropChance",
-    "InventoryCapacity",
-    "BallSkinLuck",
+    "OpenTimeBoost",
+    "PlayerUnitExpansion",
+    "CrateCashBoost",
+    "ConveyorLuck",
     "CratePolisherUnlock",
     "CratePolisher",
-    "CrateCashBoost",
 }
 
 local HalloweenShopCostMap = {
+    ["CashPotion"] = 20,
+    ["GradeSpeedPotion"] = 25,
+    ["GradeTokens"] = 50,
+    ["TraitTokens"] = 50,
+    ["BluetoothPotion"] = 50,
+    ["PumpkinPotion"] = 200,
+    ["HalloweenVariantToken"] = 200,
+    ["BallRetriever"] = 200,
     ["HauntedHorrors"] = 250,
-    ["JackJackpot"] = 500,
-    ["SpiderBall"] = 750,
-    ["PumpkinAura"] = 1200,
-    ["SpookyGhostAura"] = 2500,
-    ["GraveyardPlotSkin"] = 5000,
-    ["CandyCornCrate"] = 100,
+    ["CandyPotion"] = 300,
+    ["PlotCandyBag50"] = 500,
+    ["TimeSkip2h"] = 500,
+    ["HalloweenGlobe"] = 1000,
+    ["GoldenGlobe"] = 1000,
+    ["PlotCandyBag100"] = 1000,
+    ["JackpotToken"] = 1500,
+    ["InventorySpace50"] = 1500,
+    ["SpiderBall"] = 2500,
+    ["PumpkinBall"] = 3000,
+    ["MummyBall"] = 3000,
+    ["PumpkinAura"] = 5000,
+    ["SkullsAura"] = 5000,
+    ["BatAura"] = 5000,
+    ["TrickStrikerTitle"] = 10000,
+    ["HalloweenPlotSkin"] = 25000,
 }
 
 local HalloweenShopOptions = {
     "HauntedHorrors (250)",
-    "JackJackpot (500)",
-    "SpiderBall (750)",
-    "PumpkinAura (1200)",
-    "SpookyGhostAura (2500)",
-    "GraveyardPlotSkin (5000)",
-    "CandyCornCrate (100)",
+    "JackpotToken (1500)",
+    "PlotCandyBag50 (500)",
+    "PlotCandyBag100 (1000)",
+    "HalloweenGlobe (1000)",
+    "GoldenGlobe (1000)",
+    "CashPotion (20)",
+    "GradeSpeedPotion (25)",
+    "GradeTokens (50)",
+    "TraitTokens (50)",
+    "BluetoothPotion (50)",
+    "PumpkinPotion (200)",
+    "HalloweenVariantToken (200)",
+    "BallRetriever (200)",
+    "CandyPotion (300)",
+    "TimeSkip2h (500)",
+    "InventorySpace50 (1500)",
+    "SpiderBall (2500)",
+    "PumpkinBall (3000)",
+    "MummyBall (3000)",
+    "PumpkinAura (5000)",
+    "SkullsAura (5000)",
+    "BatAura (5000)",
+    "TrickStrikerTitle (10000)",
+    "HalloweenPlotSkin (25000)",
 }
 
 local WeatherGlobeOptions = {
@@ -2621,10 +2655,52 @@ TabUpgrades:Section({ Title = "Stat Upgrades" })
 
 UIElements.autoBuyUpgrades = TabUpgrades:Toggle({
     Title = "Auto Purchase All Upgrades",
-    Desc = "Keeps ConveyorLuck, OpenTimeBoost, PlayerSpeed, Luck, and Capacity maxed",
+    Desc = "Keeps WalkSpeed, Luck, OpenTimeBoost, PlayerUnitExpansion, and ConveyorLuck maxed",
     Value = false,
     Callback = function(val)
         autoBuyUpgrades = val
+    end
+})
+
+TabUpgrades:Button({
+    Title = "Purchase All Affordable Upgrades Now",
+    Desc = "Scans all available tycoon upgrades and purchases everything you can currently afford",
+    Callback = function()
+        task.spawn(function()
+            local purchasedCount = 0
+            pcall(function()
+                local cash = getCashAmount()
+                local ul = UpgradesLibrary
+                local us = UpgradesService
+                for _, upg in ipairs(UpgradesList) do
+                    local canBuy = true
+                    if ul and ul[upg] then
+                        local lvl = (us and typeof(us.GetTimesPurchased) == "function" and us.GetTimesPurchased(LocalPlayer, upg)) or 0
+                        local max = ul[upg].MaxPurchases
+                        if max and lvl >= max then
+                            canBuy = false
+                        else
+                            local price = ul[upg].GetPrice and ul[upg].GetPrice(lvl + 1)
+                            if price and cash < price then
+                                canBuy = false
+                            end
+                        end
+                    end
+                    if canBuy and Remotes:FindFirstChild("PurchaseUpgrade") then
+                        Remotes.PurchaseUpgrade:FireServer(upg)
+                        purchasedCount = purchasedCount + 1
+                        task.wait(0.2)
+                        cash = getCashAmount()
+                    end
+                end
+            end)
+            WindUI:Notify({
+                Title = "Upgrades Processed",
+                Content = string.format("Purchased %d affordable upgrades! Current Cash: $%s", purchasedCount, formatNumber(getCashAmount())),
+                Duration = 3,
+                Icon = "check"
+            })
+        end)
     end
 })
 
@@ -2641,25 +2717,137 @@ UIElements.autoClaimRewards = TabUpgrades:Toggle({
 
 TabUpgrades:Button({
     Title = "Claim All Rewards Now",
-    Desc = "Triggers all claim remotes in parallel immediately",
+    Desc = "Triggers all claim remotes in order immediately",
+    Callback = function()
+        task.spawn(function()
+            pcall(function()
+                if Remotes:FindFirstChild("ClaimOfflineEarnings") then Remotes.ClaimOfflineEarnings:FireServer() end
+                if Remotes:FindFirstChild("ClaimDailyReward") then
+                    local dls = DailyLoginService
+                    if dls and typeof(dls.GetNextClaimableDay) == "function" then
+                        local day = dls.GetNextClaimableDay(LocalPlayer)
+                        if day then Remotes.ClaimDailyReward:FireServer(day) end
+                    end
+                    Remotes.ClaimDailyReward:FireServer()
+                end
+                if Remotes:FindFirstChild("ClaimAllIndexRewards") then Remotes.ClaimAllIndexRewards:FireServer() end
+                if Remotes:FindFirstChild("ClaimObbyBonus") then Remotes.ClaimObbyBonus:FireServer() end
+                if Remotes:FindFirstChild("ClaimPlaytimeReward") then
+                    for i = 1, 12 do
+                        Remotes.ClaimPlaytimeReward:FireServer(i)
+                        task.wait(0.12)
+                    end
+                end
+            end)
+            WindUI:Notify({
+                Title = "Rewards Claimed",
+                Content = "Executed claim for Playtime 1-12, Daily, Index & Offline Earnings!",
+                Duration = 3,
+                Icon = "gift"
+            })
+        end)
+    end
+})
+
+TabUpgrades:Section({ Title = "In-Game Menus & Quick Shortcuts" })
+
+TabUpgrades:Button({
+    Title = "Toggle In-Game Inventory Menu",
+    Desc = "Opens or closes the official in-game locker and units inventory window",
     Callback = function()
         pcall(function()
-            if Remotes:FindFirstChild("ClaimOfflineEarnings") then Remotes.ClaimOfflineEarnings:FireServer() end
-            if Remotes:FindFirstChild("ClaimDailyReward") then Remotes.ClaimDailyReward:FireServer() end
-            if Remotes:FindFirstChild("ClaimAllIndexRewards") then Remotes.ClaimAllIndexRewards:FireServer() end
-            if Remotes:FindFirstChild("ClaimObbyBonus") then Remotes.ClaimObbyBonus:FireServer() end
-            if Remotes:FindFirstChild("ClaimPlaytimeReward") then
-                for i = 1, 12 do
-                    Remotes.ClaimPlaytimeReward:FireServer(i)
+            local holder = LocalPlayer.PlayerGui.FrontGui.LeftFrame.SquareHolder
+            local btn = holder and holder:FindFirstChild("Inventory")
+            if btn and typeof(firesignal) == "function" then
+                firesignal(btn.MouseButton1Click)
+                firesignal(btn.Activated)
+            else
+                local ig = LocalPlayer.PlayerGui:FindFirstChild("InventoryGui")
+                if ig and ig:FindFirstChild("MainFrame") then
+                    ig.MainFrame.Visible = not ig.MainFrame.Visible
                 end
             end
         end)
-        WindUI:Notify({
-            Title = "Rewards Claimed",
-            Content = "All claim remotes executed!",
-            Duration = 3,
-            Icon = "gift"
-        })
+    end
+})
+
+TabUpgrades:Button({
+    Title = "Toggle In-Game Shop Menu",
+    Desc = "Opens or closes the official in-game gamepass, boost & Robux shop window",
+    Callback = function()
+        pcall(function()
+            local holder = LocalPlayer.PlayerGui.FrontGui.LeftFrame.SquareHolder
+            local btn = holder and (holder:FindFirstChild("Shop") or LocalPlayer.PlayerGui.FrontGui.LeftFrame.RectangleHolder:FindFirstChild("Shop"))
+            if btn and typeof(firesignal) == "function" then
+                firesignal(btn.MouseButton1Click)
+                firesignal(btn.Activated)
+            else
+                local sg = LocalPlayer.PlayerGui:FindFirstChild("ShopGui")
+                if sg and sg:FindFirstChild("MainFrame") then
+                    sg.MainFrame.Visible = not sg.MainFrame.Visible
+                end
+            end
+        end)
+    end
+})
+
+TabUpgrades:Button({
+    Title = "Toggle In-Game Rewards Menu",
+    Desc = "Opens or closes the official playtime rewards & daily claim window",
+    Callback = function()
+        pcall(function()
+            local holder = LocalPlayer.PlayerGui.FrontGui.LeftFrame.SquareHolder
+            local btn = holder and holder:FindFirstChild("Rewards")
+            if btn and typeof(firesignal) == "function" then
+                firesignal(btn.MouseButton1Click)
+                firesignal(btn.Activated)
+            else
+                local rg = LocalPlayer.PlayerGui:FindFirstChild("PlaytimeRewardsGui")
+                if rg and rg:FindFirstChild("MainFrame") then
+                    rg.MainFrame.Visible = not rg.MainFrame.Visible
+                end
+            end
+        end)
+    end
+})
+
+TabUpgrades:Button({
+    Title = "Toggle In-Game Upgrades Menu",
+    Desc = "Opens or closes the official in-game tycoon upgrades window",
+    Callback = function()
+        pcall(function()
+            local holder = LocalPlayer.PlayerGui.FrontGui.LeftFrame.SquareHolder
+            local btn = holder and holder:FindFirstChild("Upgrades")
+            if btn and typeof(firesignal) == "function" then
+                firesignal(btn.MouseButton1Click)
+                firesignal(btn.Activated)
+            else
+                local ug = LocalPlayer.PlayerGui:FindFirstChild("UpgradesGui")
+                if ug and ug:FindFirstChild("MainFrame") then
+                    ug.MainFrame.Visible = not ug.MainFrame.Visible
+                end
+            end
+        end)
+    end
+})
+
+TabUpgrades:Button({
+    Title = "Toggle In-Game Index Menu",
+    Desc = "Opens or closes the official in-game striker unit index book window",
+    Callback = function()
+        pcall(function()
+            local holder = LocalPlayer.PlayerGui.FrontGui.LeftFrame.SquareHolder
+            local btn = holder and holder:FindFirstChild("Index")
+            if btn and typeof(firesignal) == "function" then
+                firesignal(btn.MouseButton1Click)
+                firesignal(btn.Activated)
+            else
+                local ig = LocalPlayer.PlayerGui:FindFirstChild("IndexGui")
+                if ig and ig:FindFirstChild("MainFrame") then
+                    ig.MainFrame.Visible = not ig.MainFrame.Visible
+                end
+            end
+        end)
     end
 })
 
@@ -4033,17 +4221,25 @@ task.spawn(function()
         if autoPlaceLocker or autoOpenLocker or autoSkipLocker or autoEquipBestUnits or autoLevelUnits or autoRerollGrades then
             pcall(function()
                 local plot = getMyPlot()
-                local droppersFolder = plot and plot:FindFirstChild("Systems")
-                    and plot.Systems:FindFirstChild("TycoonConveyor")
-                    and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
-                    and plot.Systems.TycoonConveyor.Conveyors:FindFirstChild("Conveyor1")
-                    and plot.Systems.TycoonConveyor.Conveyors.Conveyor1:FindFirstChild("Droppers")
+                local droppersList = {}
+                if plot and plot:FindFirstChild("Systems") and plot.Systems:FindFirstChild("TycoonConveyor") and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors") then
+                    for _, conv in ipairs(plot.Systems.TycoonConveyor.Conveyors:GetChildren()) do
+                        local df = conv:FindFirstChild("Droppers")
+                        if df then
+                            for _, d in ipairs(df:GetChildren()) do
+                                if d:IsA("BasePart") then
+                                    table.insert(droppersList, d)
+                                end
+                            end
+                        end
+                    end
+                end
                 
-                if droppersFolder then
+                if #droppersList > 0 then
                     local invBoxes = (autoPlaceLocker and getInventoryBoxes()) or {}
 
-                    for _, dropper in ipairs(droppersFolder:GetChildren()) do
-                        if dropper:IsA("BasePart") and dropper:GetAttribute("Unlocked") == true then
+                    for _, dropper in ipairs(droppersList) do
+                        if dropper:GetAttribute("Unlocked") == true then
                             local dType = dropper:GetAttribute("Type")
                             if dType == "Box" then
                                 -- Skip Timer
@@ -4318,31 +4514,79 @@ task.spawn(function()
     while isAlive() do
         if autoBuyUpgrades and Remotes:FindFirstChild("PurchaseUpgrade") then
             pcall(function()
+                local cash = getCashAmount()
+                local ul = UpgradesLibrary
+                local us = UpgradesService
                 for _, upg in ipairs(UpgradesList) do
-                    Remotes.PurchaseUpgrade:FireServer(upg)
+                    local canBuy = true
+                    if ul and ul[upg] then
+                        local lvl = (us and typeof(us.GetTimesPurchased) == "function" and us.GetTimesPurchased(LocalPlayer, upg)) or 0
+                        local max = ul[upg].MaxPurchases
+                        if max and lvl >= max then
+                            canBuy = false
+                        else
+                            local price = ul[upg].GetPrice and ul[upg].GetPrice(lvl + 1)
+                            if price and cash < price then
+                                canBuy = false
+                            end
+                        end
+                    end
+                    if canBuy then
+                        Remotes.PurchaseUpgrade:FireServer(upg)
+                        task.wait(0.2)
+                        cash = getCashAmount()
+                    end
                 end
             end)
         end
 
         if autoClaimRewards then
             pcall(function()
-                if Remotes:FindFirstChild("ClaimOfflineEarnings") then Remotes.ClaimOfflineEarnings:FireServer() end
-                if Remotes:FindFirstChild("ClaimDailyReward") then Remotes.ClaimDailyReward:FireServer() end
+                -- 1. Offline Earnings
+                if Remotes:FindFirstChild("ClaimOfflineEarnings") then
+                    Remotes.ClaimOfflineEarnings:FireServer()
+                end
+
+                -- 2. Daily Rewards
+                if Remotes:FindFirstChild("ClaimDailyReward") then
+                    local dls = DailyLoginService
+                    if dls and typeof(dls.GetNextClaimableDay) == "function" then
+                        local day = dls.GetNextClaimableDay(LocalPlayer)
+                        if day then Remotes.ClaimDailyReward:FireServer(day) end
+                    end
+                    Remotes.ClaimDailyReward:FireServer()
+                end
+
+                -- 3. All Index Rewards
                 if Remotes:FindFirstChild("ClaimAllIndexRewards") then
                     Remotes.ClaimAllIndexRewards:FireServer()
                 elseif Remotes:FindFirstChild("ClaimIndexReward") then
                     Remotes.ClaimIndexReward:FireServer()
                 end
-                if Remotes:FindFirstChild("ClaimObbyBonus") then Remotes.ClaimObbyBonus:FireServer() end
+
+                -- 4. Obby Bonus
+                if Remotes:FindFirstChild("ClaimObbyBonus") then
+                    Remotes.ClaimObbyBonus:FireServer()
+                end
+
+                -- 5. Playtime Rewards (1-12)
                 if Remotes:FindFirstChild("ClaimPlaytimeReward") then
+                    local ps = PlaytimeRewardsService
                     for i = 1, 12 do
-                        Remotes.ClaimPlaytimeReward:FireServer(i)
+                        local shouldClaim = true
+                        if ps and typeof(ps.CanClaim) == "function" then
+                            shouldClaim = ps.CanClaim(LocalPlayer, i)
+                        end
+                        if shouldClaim then
+                            Remotes.ClaimPlaytimeReward:FireServer(i)
+                            task.wait(0.12)
+                        end
                     end
                 end
             end)
         end
 
-        task.wait(3.0)
+        task.wait(2.5)
     end
 end)
 
