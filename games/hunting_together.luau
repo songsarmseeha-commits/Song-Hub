@@ -855,9 +855,16 @@ local function getDungeonWallInstances()
     local walls = {}
     local h = workspace:FindFirstChild("Halloween")
     if h then
-        for _, name in ipairs({ "Wall", "Blockers", "Cave", "Barriers", "Throne", "BossDoor", "Decor" }) do
+        for _, name in ipairs({ "Wall", "Blockers", "Cave", "Barriers", "Throne", "Decor" }) do
             local item = h:FindFirstChild(name)
             if item then table.insert(walls, item) end
+        end
+        local bDoor = h:FindFirstChild("BossDoor")
+        if bDoor then
+            local slab = bDoor:FindFirstChild("Slab")
+            if slab and slab.CanCollide then
+                table.insert(walls, bDoor)
+            end
         end
     end
     -- Also include all objects tagged DungeonLosWall by the native game engine
@@ -899,8 +906,8 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-    -- Optimal melee combat distance in dungeon: 3.4 - 3.6 studs (100% weapon reach, never clips inside monster or wall)
-    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 13.0) or 3.5
+    -- Optimal melee combat distance in dungeon: 3.4 - 3.6 studs (or 4.8 - 5.2 for large bosses)
+    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 13.0) or (isBoss and 5.0 or 3.5)
 
     -- Accurate ground detection excluding characters and monsters
     local floorY = targetPos.Y
@@ -1117,40 +1124,39 @@ local function getDungeonTarget()
     local dStep = tonumber(workspace:GetAttribute("DungeonStep") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonStep")))
     local dObj = tostring(workspace:GetAttribute("DungeonObjective") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonObjective")) or ""):lower()
 
-    -- Search PlayerGui for active objective banner / quest list (e.g. "DEFEAT THE POTION WITCH")
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if pg then
-            for _, desc in ipairs(pg:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Visible and desc.Text and desc.Text ~= "" then
-                    local txt = desc.Text:lower()
-                    if txt:find("defeat the potion witch") or txt:find("potion witch") or (txt:find("mini boss") and not txt:find("cleared")) then
-                        dStep = 3
-                        dObj = "defeat the mini boss"
-                        break
-                    elseif txt:find("defeat the skull king") or txt:find("skull king") then
-                        dStep = 4
-                        dObj = "defeat the boss"
-                        break
-                    elseif txt:find("ritual pillar") or txt:find("destroy the pillar") or txt:find("break the seal") then
-                        dStep = 2
-                        dObj = "destroy the ritual pillars"
-                        break
-                    end
+    if not dStep or dStep <= 0 then
+        -- Primary fallback: Active objective banner on screen (WaveRow)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local lumiDungeon = pg and pg:FindFirstChild("LumiDungeon")
+            local waveRow = lumiDungeon and lumiDungeon:FindFirstChild("WaveRow")
+            local banner = waveRow and waveRow:FindFirstChildWhichIsA("TextLabel")
+            if banner and banner.Visible and banner.Text ~= "" then
+                local txt = banner.Text:lower()
+                if txt:find("skull king") or txt:find("defeat the boss") then
+                    dStep = 4
+                    dObj = "defeat the skull king"
+                elseif txt:find("potion witch") or txt:find("mini boss") or txt:find("witch") then
+                    dStep = 3
+                    dObj = "defeat the potion witch"
+                elseif txt:find("pillar") or txt:find("ritual") or txt:find("seal") then
+                    dStep = 2
+                    dObj = "destroy the ritual pillars"
+                elseif txt:find("clear") or txt:find("monster") then
+                    dStep = 1
+                    dObj = "clear all monsters"
                 end
             end
-        end
-    end)
+        end)
+    end
 
-    if not dStep then
-        if dObj:find("clear all monster") or dObj:find("kill monster") then
-            dStep = 1
-        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
-            dStep = 2
+    if not dStep or dStep <= 0 then
+        if dObj:find("skull king") or dObj:find("defeat the boss") or dObj:find("boss") then
+            dStep = 4
         elseif dObj:find("mini boss") or dObj:find("witch") then
             dStep = 3
-        elseif dObj:find("defeat the boss") or dObj:find("skull king") then
-            dStep = 4
+        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+            dStep = 2
         else
             dStep = 1
         end
@@ -1539,40 +1545,39 @@ local function advanceDungeonPath()
     local dStep = tonumber(workspace:GetAttribute("DungeonStep") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonStep")))
     local dObj = tostring(workspace:GetAttribute("DungeonObjective") or (workspace:FindFirstChild("Dungeon") and workspace.Dungeon:GetAttribute("DungeonObjective")) or ""):lower()
 
-    -- Search PlayerGui for active objective banner / quest list (e.g. "DEFEAT THE POTION WITCH")
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if pg then
-            for _, desc in ipairs(pg:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Visible and desc.Text and desc.Text ~= "" then
-                    local txt = desc.Text:lower()
-                    if txt:find("defeat the potion witch") or txt:find("potion witch") or (txt:find("mini boss") and not txt:find("cleared")) then
-                        dStep = 3
-                        dObj = "defeat the mini boss"
-                        break
-                    elseif txt:find("defeat the skull king") or txt:find("skull king") then
-                        dStep = 4
-                        dObj = "defeat the boss"
-                        break
-                    elseif txt:find("ritual pillar") or txt:find("destroy the pillar") or txt:find("break the seal") then
-                        dStep = 2
-                        dObj = "destroy the ritual pillars"
-                        break
-                    end
+    if not dStep or dStep <= 0 then
+        -- Primary fallback: Active objective banner on screen (WaveRow)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local lumiDungeon = pg and pg:FindFirstChild("LumiDungeon")
+            local waveRow = lumiDungeon and lumiDungeon:FindFirstChild("WaveRow")
+            local banner = waveRow and waveRow:FindFirstChildWhichIsA("TextLabel")
+            if banner and banner.Visible and banner.Text ~= "" then
+                local txt = banner.Text:lower()
+                if txt:find("skull king") or txt:find("defeat the boss") then
+                    dStep = 4
+                    dObj = "defeat the skull king"
+                elseif txt:find("potion witch") or txt:find("mini boss") or txt:find("witch") then
+                    dStep = 3
+                    dObj = "defeat the potion witch"
+                elseif txt:find("pillar") or txt:find("ritual") or txt:find("seal") then
+                    dStep = 2
+                    dObj = "destroy the ritual pillars"
+                elseif txt:find("clear") or txt:find("monster") then
+                    dStep = 1
+                    dObj = "clear all monsters"
                 end
             end
-        end
-    end)
+        end)
+    end
 
-    if not dStep then
-        if dObj:find("clear all monster") or dObj:find("kill monster") then
-            dStep = 1
-        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
-            dStep = 2
+    if not dStep or dStep <= 0 then
+        if dObj:find("skull king") or dObj:find("defeat the boss") or dObj:find("boss") then
+            dStep = 4
         elseif dObj:find("mini boss") or dObj:find("witch") then
             dStep = 3
-        elseif dObj:find("defeat the boss") or dObj:find("skull king") then
-            dStep = 4
+        elseif dObj:find("ritual pillar") or dObj:find("destroy the pillar") or dObj:find("break the seal") then
+            dStep = 2
         else
             dStep = 1
         end
@@ -1587,6 +1592,30 @@ local function advanceDungeonPath()
         maxAllowedWp = 21
     end
 
+    -- Scan monsters for active objectives:
+    local mFolder = workspace:FindFirstChild("Monsters")
+    local hasAlivePillars = false
+    local hasAliveWitch = false
+    local aliveMobsCount = 0
+    local bossFound = false
+    if mFolder then
+        for _, m in ipairs(mFolder:GetChildren()) do
+            if m:IsA("Model") and isMonsterAlive(m) then
+                aliveMobsCount = aliveMobsCount + 1
+                local mName = m.Name:lower()
+                local mId = tostring(m:GetAttribute("MonsterId") or "")
+                if mName:find("pillar") or mName:find("ritual") or mId == "dgn_ritual_pillar" then
+                    hasAlivePillars = true
+                elseif mName:find("witch") or mId:find("witch") or m:GetAttribute("IsMiniBoss") == true then
+                    hasAliveWitch = true
+                end
+                if m:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mId:find("boss") or mId:find("skull") then
+                    bossFound = true
+                end
+            end
+        end
+    end
+
     -- ==================== STEP-BASED BOUNDARY ENFORCEMENT & AUTO-RECOVERY ====================
     if dStep == 1 then
         if closestIdx > 12 then
@@ -1598,7 +1627,7 @@ local function advanceDungeonPath()
         elseif currentDungeonWpIndex > 12 then
             currentDungeonWpIndex = 12
         end
-    elseif dStep == 2 then
+    elseif dStep == 2 and hasAlivePillars then
         if closestIdx > 14 then
             currentDungeonWpIndex = 14
             local plazaWp = DungeonPathWaypoints[14]
@@ -1608,9 +1637,7 @@ local function advanceDungeonPath()
         elseif currentDungeonWpIndex > 14 then
             currentDungeonWpIndex = 14
         end
-    elseif dStep == 3 then
-        -- Bot walked or warped past locked Witch Door into South Corridor or Boss Arena!
-        -- IMMEDIATELY WARP BACK TO WITCH LAIR (WP 21)!
+    elseif dStep == 3 and hasAliveWitch then
         if closestIdx > 21 then
             currentDungeonWpIndex = 21
             local witchWp = DungeonPathWaypoints[21]
@@ -1630,26 +1657,71 @@ local function advanceDungeonPath()
         end
     end
 
-    -- Boss Room Stagnation Recovery:
-    -- If player reached Skull King Boss Arena (WP >= 32) but Skull King has NOT spawned,
-    -- check if Potion Witch was skipped! If no boss is present, warp back to Witch Lair (WP 21)!
-    if closestIdx >= 32 and not currentCombatTarget then
-        local bossFound = false
-        local mFolder = workspace:FindFirstChild("Monsters")
-        if mFolder then
-            for _, m in ipairs(mFolder:GetChildren()) do
-                if m:IsA("Model") and isMonsterAlive(m) then
-                    local mName = m.Name:lower()
-                    local mId = tostring(m:GetAttribute("MonsterId") or "")
-                    if m:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mId:find("boss") or mId:find("skull") then
-                        bossFound = true
-                        break
+    -- ==================== STEP 4: BOSS DOOR AUTO-OPEN & ARENA ADVANCEMENT ====================
+    if dStep >= 4 then
+        local h = workspace:FindFirstChild("Halloween")
+        local bd = h and h:FindFirstChild("BossDoor")
+        local slab = bd and bd:FindFirstChild("Slab")
+        local prompt = bd and bd:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if (slab and slab.CanCollide) or (prompt and prompt.Enabled) then
+            local doorPos = slab and slab.Position or (bd:GetPivot().Position)
+            local dToDoor = (hrp.Position - doorPos).Magnitude
+            if dToDoor <= 45 or currentDungeonWpIndex >= 31 then
+                local standPos = doorPos + Vector3.new(-4.5, 0, 0)
+                hrp.CFrame = CFrame.new(standPos, doorPos)
+                hrp.Velocity = Vector3.zero
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                if prompt and prompt.Enabled then
+                    prompt.RequiresLineOfSight = false
+                    prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 14, 30)
+                    local holdDur = tonumber(prompt.HoldDuration) or 1
+                    if fireproximityprompt then
+                        pcall(function() fireproximityprompt(prompt, holdDur + 0.1) end)
+                        pcall(function() fireproximityprompt(prompt) end)
                     end
+                    pcall(function()
+                        prompt:InputHoldBegin()
+                        task.wait(holdDur + 0.15)
+                        prompt:InputHoldEnd()
+                    end)
                 end
+                task.wait(0.3)
+                return
             end
         end
+    end
 
-        if not bossFound and (dStep < 4 or dObj:find("witch") or dObj:find("mini boss")) then
+    -- Boss Room Stagnation Recovery:
+    if closestIdx >= 32 and not currentCombatTarget then
+        if dStep >= 4 and not bossFound then
+            -- In Step 4 with no boss yet: advance to center of arena to trigger spawn
+            local h = workspace:FindFirstChild("Halloween")
+            local bd = h and h:FindFirstChild("BossDoor")
+            local slab = bd and bd:FindFirstChild("Slab")
+            local prompt = bd and bd:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if slab and slab.CanCollide and prompt and prompt.Enabled then
+                local doorPos = slab.Position
+                local standPos = doorPos + Vector3.new(-4.5, 0, 0)
+                hrp.CFrame = CFrame.new(standPos, doorPos)
+                hrp.Velocity = Vector3.zero
+                if fireproximityprompt then pcall(function() fireproximityprompt(prompt, 1.1) end) end
+                pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(1.15)
+                    prompt:InputHoldEnd()
+                end)
+                task.wait(0.3)
+                return
+            else
+                currentDungeonWpIndex = 36
+                local bossSpot = DungeonPathWaypoints[36]
+                if bossSpot then
+                    hrp.CFrame = CFrame.new(bossSpot.X, bossSpot.Y, bossSpot.Z)
+                    hrp.Velocity = Vector3.zero
+                end
+                return
+            end
+        elseif not bossFound and hasAliveWitch and (dStep < 4 or dObj:find("witch") or dObj:find("mini boss")) then
             currentDungeonWpIndex = 21
             local witchWp = DungeonPathWaypoints[21]
             hrp.CFrame = CFrame.new(witchWp.X, 62.8, witchWp.Z)
@@ -1672,26 +1744,6 @@ local function advanceDungeonPath()
         currentDungeonWpIndex = math.min(closestIdx, maxAllowedWp)
     elseif (currentDungeonWpIndex - closestIdx) >= 2 then
         currentDungeonWpIndex = math.min(closestIdx + 1, maxAllowedWp)
-    end
-
-    -- Gate progression on active objectives:
-    local mFolder = workspace:FindFirstChild("Monsters")
-    local hasAlivePillars = false
-    local hasAliveWitch = false
-    local aliveMobsCount = 0
-    if mFolder then
-        for _, m in ipairs(mFolder:GetChildren()) do
-            if m:IsA("Model") and isMonsterAlive(m) then
-                aliveMobsCount = aliveMobsCount + 1
-                local mName = m.Name:lower()
-                local mId = tostring(m:GetAttribute("MonsterId") or "")
-                if mName:find("pillar") or mName:find("ritual") or mId == "dgn_ritual_pillar" then
-                    hasAlivePillars = true
-                elseif mName:find("witch") or mId:find("witch") then
-                    hasAliveWitch = true
-                end
-            end
-        end
     end
 
     -- If still in Step 1 and player reached locked Plaza gate with no mobs streamed in, sweep back
@@ -4754,9 +4806,14 @@ local function getSmartFarmOffset(target)
     local baseDist = tonumber(Config.FarmDistance) or 5.5
     local baseHeight = tonumber(Config.SafeFarmHeight) or 5.2
     if isBoss then
-        -- World Bosses have huge 25-35 stud hitboxes & lethal ground slams! Keep safe weapon reach!
-        dist = math.clamp(math.max(baseDist, 14.0), 12.0, 25.0)
-        height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(math.max(baseHeight, 6.0), 5.5, 10.0)
+        if isRanged then
+            dist = math.clamp(math.max(baseDist, 14.0), 12.0, 25.0)
+            height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(math.max(baseHeight, 6.0), 5.5, 10.0)
+        else
+            -- Melee classes (Samurai, Swordsman, Thief) MUST be within weapon reach (atkRange ~7 studs)!
+            dist = math.clamp(Config.FarmDistance or 5.0, 3.5, math.min(atkRange - 1.2, 5.5))
+            height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(baseHeight, 1.5, 4.5)
+        end
     else
         dist = math.clamp(baseDist, 3.0, 25.0)
         height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(baseHeight, 0.5, 15.0)
@@ -9095,7 +9152,8 @@ task.spawn(function()
         if Config.AutoDungeon and canScriptMoveOrWarp() then
             if isInsideDungeon() then
                 local state = getDungeonState()
-                if state == "cleared" then
+                local hasExitChest = (cachedExitChestPrompt and cachedExitChestPrompt.Parent and cachedExitChestPrompt.Enabled)
+                if state == "cleared" or hasExitChest then
                     if Config.AutoClaimExitChest or Config.AutoLeaveOnClear or Config.AutoRepeatDungeon then
                         executeClaimExitChest()
                     end
