@@ -7,6 +7,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const config = require('./config');
 const db = require('./database');
 const cloudBackup = require('./cloud_backup');
@@ -182,38 +183,71 @@ function requireAdmin(req, res, next) {
 // UNIVERSAL MULTI-GAME HUB LOADER & SCRIPT SERVING ROUTES
 // ==============================================================================
 
+// Helper: Fetch freshest script directly from GitHub Raw
+function fetchGithubRaw(url) {
+    return new Promise((resolve) => {
+        https.get(url, { headers: { 'User-Agent': 'NodeJS-Server-Proxy', 'Cache-Control': 'no-cache' } }, (res) => {
+            if (res.statusCode !== 200) return resolve(null);
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve(data));
+        }).on('error', () => resolve(null));
+    });
+}
+
 // Universal Loadstring script endpoint (Clients execute this single URL - 100% No-Cache)
-app.get(['/loader.luau', '/loader', '/Universal_Loader.luau', '/load'], (req, res) => {
+app.get(['/loader.luau', '/loader', '/Universal_Loader.luau', '/load'], async (req, res) => {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    // 1. Try to serve freshest version from GitHub raw
+    try {
+        const ghUrl = `https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=${Date.now()}`;
+        const ghCode = await fetchGithubRaw(ghUrl);
+        if (ghCode && ghCode.length > 500) {
+            return res.send(ghCode);
+        }
+    } catch (e) {}
+
+    // 2. Fallback to local file
     const loaderPath = path.join(__dirname, 'Universal_Loader.luau');
     if (fs.existsSync(loaderPath)) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
         return res.send(fs.readFileSync(loaderPath, 'utf8'));
     }
     return res.status(404).send('-- Universal Loader file not found');
 });
 
 // Dynamic Game Script endpoint (Protected path traversal & zero cache)
-app.get('/scripts/:gameName', (req, res) => {
+app.get('/scripts/:gameName', async (req, res) => {
     let name = req.params.gameName.replace(/[^a-zA-Z0-9_\-\.]/g, '');
     if (!name.endsWith('.luau') && !name.endsWith('.lua')) {
         name += '.luau';
     }
 
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    // 1. Try to fetch freshest version directly from GitHub raw (Instant zero-delay sync)
+    try {
+        const ghUrl = `https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/${name}?v=${Date.now()}`;
+        const ghCode = await fetchGithubRaw(ghUrl);
+        if (ghCode && ghCode.length > 500) {
+            return res.send(ghCode);
+        }
+    } catch (e) {}
+
+    // 2. Fallback to local disk
     const scriptPath = path.join(__dirname, 'games', name);
-    // Path traversal protection
     const gamesDir = path.resolve(__dirname, 'games');
     if (!path.resolve(scriptPath).startsWith(gamesDir)) {
         return res.status(403).send('-- Invalid script path');
     }
 
     if (fs.existsSync(scriptPath)) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
         return res.send(fs.readFileSync(scriptPath, 'utf8'));
     }
     return res.status(404).send('-- Game script not found for: ' + name);
