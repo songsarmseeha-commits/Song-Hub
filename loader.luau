@@ -505,12 +505,49 @@ task.spawn(function()
 
     local KeyInput = TabKey:Input({
         Title = "Enter License Key",
-        Desc = "Paste your license key here (e.g. GALAXY-XXXX-XXXX)",
-        Placeholder = "GALAXY-XXXX-XXXX",
+        Desc = "Paste your license key here (e.g. PREMIUM-XXXX-XXXX)",
+        Placeholder = "PREMIUM-XXXX-XXXX",
         Callback = function(txt)
-            inputKey = (txt or ""):gsub("%s+", "")
+            if txt and #txt > 0 then
+                inputKey = txt:gsub("[%s%c'\"]+", ""):upper()
+            end
         end
     })
+
+    -- Background scanner to hook real-time text changes from the TextBox
+    task.spawn(function()
+        for i = 1, 20 do
+            task.wait(0.25)
+            local roots = {
+                (typeof(gethui) == "function" and gethui()) or nil,
+                game:GetService("CoreGui"),
+                LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+            }
+            local found = false
+            for _, root in ipairs(roots) do
+                if root then
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if d:IsA("TextBox") and (d.PlaceholderText:find("XXXX") or d.PlaceholderText:find("Key") or d.Name:lower():find("input")) then
+                            d:GetPropertyChangedSignal("Text"):Connect(function()
+                                if d.Text and #d.Text > 0 then
+                                    inputKey = d.Text:gsub("[%s%c'\"]+", ""):upper()
+                                end
+                            end)
+                            d.FocusLost:Connect(function()
+                                if d.Text and #d.Text > 0 then
+                                    inputKey = d.Text:gsub("[%s%c'\"]+", ""):upper()
+                                end
+                            end)
+                            found = true
+                            break
+                        end
+                    end
+                end
+                if found then break end
+            end
+            if found then break end
+        end
+    end)
 
     local function handleSuccessfulUnlock(validKey, msg, resultData)
         verifiedAuthKey = validKey or ""
@@ -559,30 +596,95 @@ task.spawn(function()
     end
 
     TabKey:Button({
+        Title = "📋 Paste Key & Verify",
+        Desc = "Read key from clipboard, paste and verify automatically (Fast & Easy)",
+        Icon = "clipboard-check",
+        Callback = function()
+            local clip = ""
+            if getclipboard then
+                pcall(function() clip = getclipboard() end)
+            elseif get_clipboard then
+                pcall(function() clip = get_clipboard() end)
+            end
+
+            local cleanClip = (clip or ""):gsub("[%s%c'\"]+", ""):upper()
+            if cleanClip and #cleanClip >= 6 then
+                inputKey = cleanClip
+                WindUI:Notify({ Title = "Key Pasted!", Content = "Verifying key: " .. cleanClip, Duration = 2, Icon = "check-circle" })
+                local ok, result = sendVerifyRequest(cleanClip)
+                if ok then
+                    handleSuccessfulUnlock(cleanClip, result.message, result)
+                else
+                    WindUI:Notify({
+                        Title = "Access Denied ❌",
+                        Content = result.message or "Invalid or expired key!",
+                        Duration = 4,
+                        Icon = "x-circle"
+                    })
+                end
+            else
+                WindUI:Notify({
+                    Title = "Clipboard Empty / No Key",
+                    Content = "Please copy your key to clipboard first!",
+                    Duration = 3,
+                    Icon = "alert-circle"
+                })
+            end
+        end
+    })
+
+    TabKey:Button({
         Title = "🔓 Verify & Unlock Hub",
         Desc = "Authenticate entered key with server and launch script",
         Icon = "check-circle",
         Callback = function()
-            -- Extract key robustly from Callback variable, Input Object, or internal TextBox
+            -- Extract key robustly from multiple sources
             local keyToTest = inputKey
             if not keyToTest or #keyToTest == 0 then
                 if KeyInput and KeyInput.Value and #KeyInput.Value > 0 then
-                    keyToTest = KeyInput.Value:gsub("%s+", "")
+                    keyToTest = KeyInput.Value:gsub("[%s%c'\"]+", ""):upper()
                 end
             end
+
+            -- Check all TextBoxes across GUI roots
             if not keyToTest or #keyToTest == 0 then
-                if KeyInput and KeyInput.ElementFrame then
-                    for _, d in ipairs(KeyInput.ElementFrame:GetDescendants()) do
-                        if d:IsA("TextBox") and #d.Text > 0 then
-                            keyToTest = d.Text:gsub("%s+", "")
-                            break
+                local roots = {
+                    (typeof(gethui) == "function" and gethui()) or nil,
+                    game:GetService("CoreGui"),
+                    LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                }
+                for _, root in ipairs(roots) do
+                    if root then
+                        for _, d in ipairs(root:GetDescendants()) do
+                            if d:IsA("TextBox") and #d.Text > 0 then
+                                local candidate = d.Text:gsub("[%s%c'\"]+", ""):upper()
+                                if #candidate >= 6 and not candidate:find("GALAXY%-XXXX") and not candidate:find("PREMIUM%-XXXX") then
+                                    keyToTest = candidate
+                                    break
+                                end
+                            end
                         end
                     end
+                    if keyToTest and #keyToTest > 0 then break end
+                end
+            end
+
+            -- Fallback: check clipboard if user copied but forgot to paste
+            if not keyToTest or #keyToTest == 0 then
+                local clip = ""
+                if getclipboard then
+                    pcall(function() clip = getclipboard() end)
+                elseif get_clipboard then
+                    pcall(function() clip = get_clipboard() end)
+                end
+                local cleanClip = (clip or ""):gsub("[%s%c'\"]+", ""):upper()
+                if cleanClip and #cleanClip >= 8 and (cleanClip:find("GALAXY%-") or cleanClip:find("PREMIUM%-") or cleanClip:find("%-")) then
+                    keyToTest = cleanClip
                 end
             end
 
             if not keyToTest or #keyToTest == 0 then
-                WindUI:Notify({ Title = "Error", Content = "Please enter a license key!", Duration = 3, Icon = "alert-circle" })
+                WindUI:Notify({ Title = "Error", Content = "Please enter a license key or click 'Paste Key & Verify'!", Duration = 3, Icon = "alert-circle" })
                 return
             end
 
