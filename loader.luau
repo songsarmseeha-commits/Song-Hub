@@ -298,30 +298,20 @@ local function launchGameScript(scriptFileName, gameTitle)
         getgenv()._UniversalLoaderLoading = false
     end
 
-    -- 🛡️ Anti-Hook / Anti-Dump & Security Environment Verification
-    local isEnvSecure = true
-    pcall(function()
-        if islclosure and islclosure(loadstring) then isEnvSecure = false end
-        if iscclosure and not iscclosure(loadstring) then isEnvSecure = false end
-        if islclosure and islclosure(game.HttpGet) then isEnvSecure = false end
-        if getgenv then
-            local g = getgenv()
-            if g.SimpleSpyExecuted or g.Hydroxide or g.TurtleSpy or g.__HTTPSPY then
-                isEnvSecure = false
-            end
-        end
-    end)
-
-    if not isEnvSecure then
-        warn("[Universal Hub] 🛡️ Security Check Failed: Tampered environment, debugger, or HttpSpy detected!")
-        return
-    end
-
     local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
 
-    -- Request One-Time Cryptographic Execution Token from Render Server (Single-Use 25s TTL)
-    local oneTimeToken = nil
+    -- Candidate URLs: 3-layer resilient cloud pipeline (GitHub Raw + Render + Secondary Backup)
+    local candidateUrls = {
+        -- 1. Official GitHub Raw (Fastest ~150ms, 99.99% uptime, worldwide CDN)
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+        -- 2. Secondary GitHub Server Repo
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+        -- 3. Live Render Production Server
+        SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster,
+    }
+
+    -- Optional: If server issues a one-time token, prioritize tokenized endpoint
+    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
     if requestFn then
         pcall(function()
             local tokenRes = requestFn({
@@ -338,16 +328,10 @@ local function launchGameScript(scriptFileName, gameTitle)
             if tokenRes and tokenRes.Body then
                 local tData = HttpService:JSONDecode(tokenRes.Body)
                 if tData and tData.success and tData.token then
-                    oneTimeToken = tData.token
+                    table.insert(candidateUrls, 1, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. tData.token .. "&v=" .. cacheBuster)
                 end
             end
         end)
-    end
-
-    local candidateUrls = {}
-    if oneTimeToken then
-        -- Secure Render Production Server with One-Time Security Token (Primary & Protected)
-        table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
     end
 
     for _, url in ipairs(candidateUrls) do
