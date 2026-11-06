@@ -216,6 +216,16 @@ local function getMatchEndGui()
             end
         end
 
+        local buttons = (rr:FindFirstChild("Content") and rr.Content:FindFirstChild("GameInfo") and rr.Content.GameInfo:FindFirstChild("Buttons"))
+            or rr:FindFirstChild("Buttons", true)
+        local nextBtn = buttons and buttons:FindFirstChild("Next")
+        local returnBtn = buttons and buttons:FindFirstChild("Return")
+        local replayBtn = buttons and buttons:FindFirstChild("Replay")
+
+        if (nextBtn and nextBtn.Visible) or (returnBtn and returnBtn.Visible) or (replayBtn and replayBtn.Visible) then
+            isShown = true
+        end
+
         if isShown then
             local isVictory = false
             pcall(function()
@@ -228,13 +238,23 @@ local function getMatchEndGui()
                     end
                 end
             end)
+            if nextBtn and nextBtn.Visible then
+                isVictory = true
+            end
             return rr, true, isVictory
         end
     end
     return nil, false, false
 end
 
+UI.lastMatchEndActionTick = 0
+
 local function triggerMatchEndAction(preferredAction)
+    if tick() - (UI.lastMatchEndActionTick or 0) < 2.5 then
+        return
+    end
+    UI.lastMatchEndActionTick = tick()
+
     local action = preferredAction or "Next"
     pcall(function()
         local rr, hasEnded, isVictory = getMatchEndGui()
@@ -245,26 +265,68 @@ local function triggerMatchEndAction(preferredAction)
                 if action == "Next" and buttons:FindFirstChild("Next") and buttons.Next.Visible then
                     local btn = buttons.Next
                     if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                    if firesignal then
+                        pcall(function() firesignal(btn.Activated) end)
+                        pcall(function() firesignal(btn.MouseButton1Click) end)
                     end
                     publishRemote("EndGame", "Next")
+                    pcall(function()
+                        if WindUI then
+                            WindUI:Notify({
+                                Title = "Next Stage ⏩",
+                                Content = "🏆 ชนะแล้ว! กด Next Stage ด่านถัดไปทันที",
+                                Duration = 3,
+                                Icon = "fast-forward"
+                            })
+                        end
+                    end)
                     return
                 elseif action == "Replay" and buttons:FindFirstChild("Replay") and buttons.Replay.Visible then
                     local btn = buttons.Replay
                     if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                    if firesignal then
+                        pcall(function() firesignal(btn.Activated) end)
+                        pcall(function() firesignal(btn.MouseButton1Click) end)
                     end
                     publishRemote("EndGame", "Replay")
+                    pcall(function()
+                        if WindUI then
+                            WindUI:Notify({
+                                Title = "Replay Match 🔄",
+                                Content = "🔄 แพ้การต่อสู้! กด Replay เริ่มเล่นด่านเดิมซ้ำ",
+                                Duration = 3,
+                                Icon = "refresh-cw"
+                            })
+                        end
+                    end)
                     return
                 elseif buttons:FindFirstChild("Return") and buttons.Return.Visible then
                     local btn = buttons.Return
                     if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                    if firesignal then
+                        pcall(function() firesignal(btn.Activated) end)
+                        pcall(function() firesignal(btn.MouseButton1Click) end)
                     end
                     publishRemote("EndGame", "Return")
+                    pcall(function()
+                        if WindUI then
+                            WindUI:Notify({
+                                Title = "Return To Lobby 🚪",
+                                Content = "🏁 จบการต่อสู้! กด Return กลับสู่ล็อบบี้",
+                                Duration = 3,
+                                Icon = "log-out"
+                            })
+                        end
+                    end)
                     return
                 end
             end
@@ -2048,6 +2110,100 @@ task.spawn(function()
         end)
     end
 end)
+
+-- ==============================================================================
+-- ⏩ UNIVERSAL AUTO NEXT STAGE & IN-PLACE MATCH END WORKER
+-- ==============================================================================
+-- Automatically handles victory/defeat end screen unconditionally whenever in match
+do
+    local serverEndGameTick = 0
+    local serverEndGameStatus = nil
+
+    pcall(function()
+        if NetworkClient and NetworkClient.Subscribe then
+            NetworkClient:Subscribe("EndGame", function(data)
+                pcall(function()
+                    serverEndGameTick = tick()
+                    if type(data) == "table" and data.Status then
+                        serverEndGameStatus = tostring(data.Status)
+                    else
+                        serverEndGameStatus = "Victory"
+                    end
+                end)
+            end)
+        end
+    end)
+
+    task.spawn(function()
+        while scriptRunning do
+            task.wait(0.3)
+            pcall(function()
+                local gameFolder = workspace:FindFirstChild("Game")
+                local inMatch = (game.PlaceId == 85423571424083)
+                    or (gameFolder and gameFolder:FindFirstChild("Started") and gameFolder.Started.Value == true)
+
+                if inMatch then
+                    local rr, hasEnded, isVictory = getMatchEndGui()
+
+                    if not hasEnded and (tick() - serverEndGameTick < 15) then
+                        hasEnded = true
+                        if serverEndGameStatus and (serverEndGameStatus:upper():find("VICTORY") or serverEndGameStatus:upper():find("WIN")) then
+                            isVictory = true
+                        end
+                    end
+
+                    if hasEnded and (tick() - (UI.lastMatchEndActionTick or 0) > 2.5) then
+                        local chosenAction = "Next"
+                        if isVictory then
+                            if autoNextStage or autoNextTowerFloor or autoLoopNextMatch then
+                                if selectedGameMode == "Tower" or towerAutoJoin then
+                                    towerCurrentFloor = (towerCurrentFloor or 1) + 1
+                                    selectedTowerFloor = towerCurrentFloor
+                                    pcall(function()
+                                        if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
+                                            UI.towerCurrentFloorSlider:SetValue(towerCurrentFloor)
+                                        end
+                                    end)
+                                    chosenAction = "Next"
+                                elseif selectedGameMode == "Story" then
+                                    local buttons = (rr and rr:FindFirstChild("Content") and rr.Content:FindFirstChild("GameInfo") and rr.Content.GameInfo:FindFirstChild("Buttons"))
+                                        or (rr and rr:FindFirstChild("Buttons", true))
+                                    local nextBtn = buttons and buttons:FindFirstChild("Next")
+                                    if nextBtn and nextBtn.Visible then
+                                        if selectedStage < 5 then
+                                            selectedStage = selectedStage + 1
+                                        end
+                                        chosenAction = "Next"
+                                    else
+                                        chosenAction = (smartMatchEndAction == "Return" or selectedStage >= 5) and "Return" or (smartMatchEndAction or "Next")
+                                    end
+                                else
+                                    chosenAction = smartMatchEndAction or "Next"
+                                end
+                            else
+                                chosenAction = smartMatchEndAction or "Next"
+                            end
+                        else
+                            -- Defeat
+                            if towerAutoJoin then
+                                if towerAfterLoss == "Retry Floor" then
+                                    chosenAction = "Replay"
+                                else
+                                    chosenAction = "Return"
+                                end
+                            else
+                                chosenAction = (smartMatchEndAction == "Replay") and "Replay" or "Return"
+                            end
+                        end
+
+                        triggerAutoSave()
+                        triggerMatchEndAction(chosenAction)
+                    end
+                end
+            end)
+        end
+    end)
+end
 
 -- ==============================================================================
 -- TAB 2: SMART PLAY AI 🧠 (AUTONOMOUS TOWER DEFENSE MATCH ENGINE)
