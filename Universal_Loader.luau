@@ -6,8 +6,12 @@
 if getgenv and not getgenv()._SongHubFreshLoaded then
     getgenv()._SongHubFreshLoaded = true
     local buster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-    local freshUrl = "https://song-hub-avp8.onrender.com/load?v=" .. buster
+    local freshUrl = "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. buster
     local ok, freshCode = pcall(game.HttpGet, game, freshUrl)
+    if (not ok) or type(freshCode) ~= "string" or #freshCode < 1000 then
+        freshUrl = "https://song-hub-avp8.onrender.com/load?v=" .. buster
+        ok, freshCode = pcall(game.HttpGet, game, freshUrl)
+    end
     if ok and type(freshCode) == "string" and #freshCode > 1000 then
         local fn = loadstring(freshCode)
         if fn then
@@ -351,36 +355,33 @@ local function launchGameScript(scriptFileName, gameTitle)
         end)
     end
 
-    local candidateUrls = {}
+    local candidateUrls = {
+        -- 1. GitHub Raw (Instant 1-second update directly from GitHub repository!)
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
+    }
     if oneTimeToken then
-        -- Secure Render Production Server with One-Time Security Token (Primary & Protected)
+        -- Secure Render Production Server with One-Time Security Token
         table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
     end
-    -- Resilient Cloud Endpoints (GitHub Raw & Direct Render)
-    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
-    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
     table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster)
 
     for _, url in ipairs(candidateUrls) do
         local dlOk, code = pcall(function()
             return game:HttpGet(url)
         end)
-        if dlOk and type(code) == "string" and #code > 500 and not code:find("403 Forbidden") and not code:find("404: Not Found") then
+        if dlOk and type(code) == "string" and #code > 500 and not code:find("403 Forbidden") then
+            -- Refresh local cache so old offline files are purged
+            pcall(function()
+                if writefile then
+                    pcall(writefile, "UniversalHub/" .. scriptFileName, code)
+                    pcall(writefile, "games/" .. scriptFileName, code)
+                    pcall(writefile, scriptFileName, code)
+                end
+            end)
             local fn, err = loadstring(code)
+            code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
             if fn then
-                -- Automatically sync and overwrite local cache with freshest code
-                pcall(function()
-                    if writefile then
-                        if not isfolder("UniversalHub") then makefolder("UniversalHub") end
-                        writefile("UniversalHub/" .. scriptFileName, code)
-                        if scriptFileName == "anime_galaxies.luau" then
-                            if not isfolder("AnimeGalaxiesHub") then makefolder("AnimeGalaxiesHub") end
-                            writefile("AnimeGalaxiesHub/AnimeGalaxies_Hub.luau", code)
-                            writefile("AnimeGalaxies_Hub.luau", code)
-                        end
-                    end
-                end)
-                code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
                 print("[Universal Hub] ✅ Securely loaded and compiled latest script into RAM.")
                 task.spawn(fn)
                 startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchGameScript)
