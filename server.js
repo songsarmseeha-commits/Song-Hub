@@ -240,7 +240,7 @@ async function handleVerify(req, res) {
     const body = req.body || {};
     const query = req.query || {};
 
-    const key = (body.key || query.key || '').trim();
+    const key = String(body.key || query.key || '').replace(/[\u200B-\u200D\uFEFF\s'"]/g, '').toUpperCase();
     const hwid = (body.hwid || query.hwid || '').trim();
     const userId = body.userId || query.userId || body.robloxUserId || query.robloxUserId;
     const username = (body.username || query.username || '').trim();
@@ -470,7 +470,7 @@ function handleScriptToken(req, res) {
     const query = req.query || {};
     const ip = getClientIp(req);
 
-    const key = (body.key || query.key || '').trim();
+    const key = String(body.key || query.key || '').replace(/[\u200B-\u200D\uFEFF\s'"]/g, '').toUpperCase();
     const hwid = (body.hwid || query.hwid || '').trim();
     const userId = body.userId || query.userId || body.robloxUserId || query.robloxUserId;
     const gameName = (body.gameName || query.gameName || body.game || query.game || '').trim();
