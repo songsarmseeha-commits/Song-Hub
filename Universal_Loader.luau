@@ -73,6 +73,7 @@ end
 
 -- Active Session State & Heartbeat Loop
 local activeSessionToken = nil
+local verifiedAuthKey = ""
 
 local function startHeartbeatLoop(sessionToken, validKey)
     if not sessionToken then return end
@@ -297,39 +298,75 @@ local function launchGameScript(scriptFileName, gameTitle)
         getgenv()._UniversalLoaderLoading = false
     end
 
+    -- 🛡️ Anti-Hook / Anti-Dump & Security Environment Verification
+    local isEnvSecure = true
+    pcall(function()
+        if islclosure and islclosure(loadstring) then isEnvSecure = false end
+        if iscclosure and not iscclosure(loadstring) then isEnvSecure = false end
+        if islclosure and islclosure(game.HttpGet) then isEnvSecure = false end
+        if getgenv then
+            local g = getgenv()
+            if g.SimpleSpyExecuted or g.Hydroxide or g.TurtleSpy or g.__HTTPSPY then
+                isEnvSecure = false
+            end
+        end
+    end)
+
+    if not isEnvSecure then
+        warn("[Universal Hub] 🛡️ Security Check Failed: Tampered environment, debugger, or HttpSpy detected!")
+        return
+    end
+
     local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-    local candidateUrls = {
-        -- 1. Official GitHub Raw (Fastest 200ms, 99.99% uptime, no sleep/cold start)
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 2. Live Render Production Server
-        SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 3. Secondary GitHub Server Repo
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-    }
+    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+
+    -- Request One-Time Cryptographic Execution Token from Render Server (Single-Use 25s TTL)
+    local oneTimeToken = nil
+    if requestFn then
+        pcall(function()
+            local tokenRes = requestFn({
+                Url = SERVER_HOST .. "/api/v1/script-token",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({
+                    key = verifiedAuthKey or "",
+                    hwid = getHardwareId(),
+                    userId = LocalPlayer.UserId,
+                    gameName = scriptFileName
+                })
+            })
+            if tokenRes and tokenRes.Body then
+                local tData = HttpService:JSONDecode(tokenRes.Body)
+                if tData and tData.success and tData.token then
+                    oneTimeToken = tData.token
+                end
+            end
+        end)
+    end
+
+    local candidateUrls = {}
+    if oneTimeToken then
+        -- Priority 1: Live Render Production Server with One-Time Security Token
+        table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
+    end
+    -- Fallback 2 & 3: Cloud Mirror Repositories
+    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
+    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
 
     for _, url in ipairs(candidateUrls) do
         local dlOk, code = pcall(function()
             return game:HttpGet(url)
         end)
-        if dlOk and type(code) == "string" and #code > 500 then
+        if dlOk and type(code) == "string" and #code > 500 and not code:find("403 Forbidden") then
             local fn, err = loadstring(code)
+            code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
             if fn then
-                print("[Universal Hub] ✅ Downloaded and compiled latest script from: " .. url)
-                pcall(function()
-                    if writefile then
-                        if not isfolder("UniversalHub") then makefolder("UniversalHub") end
-                        writefile("UniversalHub/" .. scriptFileName, code)
-                        if scriptFileName == "hunting_together.luau" then
-                            writefile("hunting_together_script.lua", code)
-                            writefile("hunting_together.luau", code)
-                        end
-                    end
-                end)
+                print("[Universal Hub] ✅ Securely loaded and compiled latest script into RAM.")
                 task.spawn(fn)
                 startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchGameScript)
                 return
             else
-                warn("[Universal Hub] ⚠️ Compile error from " .. url .. ": " .. tostring(err))
+                warn("[Universal Hub] ⚠️ Compile error: " .. tostring(err))
             end
         end
     end
@@ -355,6 +392,7 @@ local function launchGameScript(scriptFileName, gameTitle)
             local ok, content = pcall(readfile, path)
             if ok and content and #content > 50 then
                 local fn, err = loadstring(content)
+                content = nil
                 if fn then
                     print("[Universal Hub] Loaded from offline cache: " .. path)
                     task.spawn(fn)
@@ -391,6 +429,7 @@ task.spawn(function()
     -- Step A: Check Direct Whitelist (VIP/Owner bypass)
     local wlOk, wlData = sendVerifyRequest("")
     if wlOk and wlData.whitelisted then
+        verifiedAuthKey = "WHITELIST"
         print(string.format("[Universal Hub] 👑 Direct Whitelist Active: Welcome %s (%s)", LocalPlayer.Name, wlData.role or "VIP"))
         launchGameScript(scriptFileName, gameTitle)
         return
@@ -401,11 +440,13 @@ task.spawn(function()
         local savedKey = ""
         pcall(function() savedKey = readfile(KEY_SAVE_PATH) end)
         if savedKey and #savedKey > 3 then
-            local keyOk, keyData = sendVerifyRequest(savedKey:gsub("%s+", ""))
+            local cleanSaved = savedKey:gsub("%s+", "")
+            local keyOk, keyData = sendVerifyRequest(cleanSaved)
             if keyOk then
+                verifiedAuthKey = cleanSaved
                 print(string.format("[Universal Hub] 🔑 License Key Active: %s (Type: %s)", savedKey, keyData.keyType or "Active"))
                 if keyData and keyData.sessionToken then
-                    startHeartbeatLoop(keyData.sessionToken, savedKey)
+                    startHeartbeatLoop(keyData.sessionToken, cleanSaved)
                 end
                 launchGameScript(scriptFileName, gameTitle)
                 return
@@ -428,6 +469,7 @@ task.spawn(function()
                 if cd and cd.hasKey and cd.key then
                     local autoOk, autoData = sendVerifyRequest(cd.key)
                     if autoOk then
+                        verifiedAuthKey = cd.key
                         pcall(function()
                             if not isfolder("UniversalHub") then makefolder("UniversalHub") end
                             writefile(KEY_SAVE_PATH, cd.key)
@@ -479,6 +521,7 @@ task.spawn(function()
     })
 
     local function handleSuccessfulUnlock(validKey, msg, resultData)
+        verifiedAuthKey = validKey or ""
         if resultData and resultData.sessionToken then
             startHeartbeatLoop(resultData.sessionToken, validKey)
         end
