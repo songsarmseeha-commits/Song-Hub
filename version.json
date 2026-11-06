@@ -1,6 +1,6 @@
 {
   "version": "1.0.9",
-  "updatedAt": 1793993744313,
-  "iso": "2026-11-06T19:35:44.313Z",
+  "updatedAt": 1793994514429,
+  "iso": "2026-11-06T19:48:34.429Z",
   "message": "Emergency Hotfix: Restore 3-layer resilient script download pipeline & remove false-positive Anti-Hook check"
 }
