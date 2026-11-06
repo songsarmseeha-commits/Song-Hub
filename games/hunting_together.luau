@@ -1040,18 +1040,32 @@ local function getDungeonTarget()
     local folder = workspace:FindFirstChild("Monsters")
     local CollectionService = game:GetService("CollectionService")
 
-    -- Collect all potential dungeon mobs from Monsters folder and tagged Monsters
+    -- Collect all potential dungeon mobs from Monsters, Halloween, Dungeon, and Workspace
     local candidateMobs = {}
     local seen = {}
-    if folder then
-        for _, mob in ipairs(folder:GetChildren()) do
-            if mob:IsA("Model") and not seen[mob] then
-                seen[mob] = true
-                table.insert(candidateMobs, mob)
+    local searchRoots = {
+        workspace:FindFirstChild("Monsters"),
+        workspace:FindFirstChild("Halloween"),
+        workspace:FindFirstChild("Dungeon"),
+        workspace
+    }
+    for _, root in ipairs(searchRoots) do
+        if root then
+            for _, mob in ipairs(root:GetChildren()) do
+                if mob:IsA("Model") and not seen[mob] then
+                    seen[mob] = true
+                    table.insert(candidateMobs, mob)
+                end
             end
         end
     end
     for _, mob in ipairs(CollectionService:GetTagged("Monster")) do
+        if mob:IsA("Model") and not seen[mob] then
+            seen[mob] = true
+            table.insert(candidateMobs, mob)
+        end
+    end
+    for _, mob in ipairs(CollectionService:GetTagged("Boss")) do
         if mob:IsA("Model") and not seen[mob] then
             seen[mob] = true
             table.insert(candidateMobs, mob)
@@ -1592,27 +1606,43 @@ local function advanceDungeonPath()
         maxAllowedWp = 21
     end
 
-    -- Scan monsters for active objectives:
-    local mFolder = workspace:FindFirstChild("Monsters")
+    -- Scan monsters for active objectives (Multi-Folder & CollectionService):
     local hasAlivePillars = false
     local hasAliveWitch = false
     local aliveMobsCount = 0
     local bossFound = false
-    if mFolder then
-        for _, m in ipairs(mFolder:GetChildren()) do
-            if m:IsA("Model") and isMonsterAlive(m) then
-                aliveMobsCount = aliveMobsCount + 1
-                local mName = m.Name:lower()
-                local mId = tostring(m:GetAttribute("MonsterId") or "")
-                if mName:find("pillar") or mName:find("ritual") or mId == "dgn_ritual_pillar" then
-                    hasAlivePillars = true
-                elseif mName:find("witch") or mId:find("witch") or m:GetAttribute("IsMiniBoss") == true then
-                    hasAliveWitch = true
-                end
-                if m:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mId:find("boss") or mId:find("skull") then
-                    bossFound = true
+    local scanRoots = {
+        workspace:FindFirstChild("Monsters"),
+        workspace:FindFirstChild("Halloween"),
+        workspace:FindFirstChild("Dungeon"),
+        workspace
+    }
+    for _, root in ipairs(scanRoots) do
+        if root then
+            for _, m in ipairs(root:GetChildren()) do
+                if m:IsA("Model") then
+                    local mName = m.Name:lower()
+                    local mId = tostring(m:GetAttribute("MonsterId") or ""):lower()
+                    local isPillar = (mName:find("pillar") or mName:find("ritual") or mId == "dgn_ritual_pillar")
+                    local isWitch = (mName:find("witch") or mId:find("witch") or m:GetAttribute("IsMiniBoss") == true)
+                    local isBoss = (m:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mId:find("boss") or mId:find("skull"))
+
+                    if isBoss then
+                        bossFound = true
+                    end
+                    if isMonsterAlive(m) then
+                        aliveMobsCount = aliveMobsCount + 1
+                        if isPillar then hasAlivePillars = true end
+                        if isWitch then hasAliveWitch = true end
+                    end
                 end
             end
+        end
+    end
+    if not bossFound then
+        for _, b in ipairs(game:GetService("CollectionService"):GetTagged("Boss")) do
+            bossFound = true
+            break
         end
     end
 
@@ -1691,15 +1721,16 @@ local function advanceDungeonPath()
         end
     end
 
-    -- Boss Room Stagnation Recovery:
+    -- Boss Room Active Engagement & Anti-Stagnation Engine:
     if closestIdx >= 32 and not currentCombatTarget then
-        if dStep >= 4 and not bossFound then
-            -- In Step 4 with no boss yet: advance to center of arena to trigger spawn
+        if dStep >= 4 then
             local h = workspace:FindFirstChild("Halloween")
             local bd = h and h:FindFirstChild("BossDoor")
             local slab = bd and bd:FindFirstChild("Slab")
             local prompt = bd and bd:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if slab and slab.CanCollide and prompt and prompt.Enabled then
+
+            -- If player is outside boss gate (X < -4010), open the door
+            if slab and slab.CanCollide and prompt and prompt.Enabled and hrp.Position.X < -4010 then
                 local doorPos = slab.Position
                 local standPos = doorPos + Vector3.new(-4.5, 0, 0)
                 hrp.CFrame = CFrame.new(standPos, doorPos)
@@ -1712,15 +1743,44 @@ local function advanceDungeonPath()
                 end)
                 task.wait(0.3)
                 return
-            else
-                currentDungeonWpIndex = 36
-                local bossSpot = DungeonPathWaypoints[36]
-                if bossSpot then
-                    hrp.CFrame = CFrame.new(bossSpot.X, bossSpot.Y, bossSpot.Z)
-                    hrp.Velocity = Vector3.zero
-                end
-                return
             end
+
+            -- Inside Boss Arena (X >= -4010): ACTIVE BRAZIER & DUD SKULL ENGAGEMENT
+            -- 1. Auto kick dud skulls to chip boss and break invulnerability
+            if Config.AutoKickSkulls then
+                pcall(checkKickDudSkulls)
+            end
+
+            -- 2. Step onto active/unlit braziers in the arena
+            pcall(function()
+                local b = (h and h:FindFirstChild("Braziers")) or workspace:FindFirstChild("Braziers")
+                if b then
+                    for _, bz in ipairs(b:GetChildren()) do
+                        local pad = bz:FindFirstChild("Pad") or (bz:IsA("BasePart") and bz) or bz:FindFirstChildWhichIsA("BasePart")
+                        if pad then
+                            local bPrompt = bz:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            local bLight = bz:FindFirstChildWhichIsA("PointLight", true) or bz:FindFirstChildWhichIsA("SurfaceLight", true)
+                            local isLit = (bLight and bLight.Enabled == true) or bz:GetAttribute("Lit") == true
+                            if not isLit or (bPrompt and bPrompt.Enabled) then
+                                local padPos = pad.Position + Vector3.new(0, 2.8, 0)
+                                hrp.CFrame = CFrame.new(padPos)
+                                hrp.Velocity = Vector3.zero
+                                if firetouchinterest then
+                                    firetouchinterest(hrp, pad, 0)
+                                    task.wait(0.02)
+                                    firetouchinterest(hrp, pad, 1)
+                                end
+                                if bPrompt and bPrompt.Enabled and fireproximityprompt then
+                                    fireproximityprompt(bPrompt)
+                                end
+                                task.wait(0.12)
+                            end
+                        end
+                    end
+                end
+            end)
+
+            currentDungeonWpIndex = 36
         elseif not bossFound and hasAliveWitch and (dStep < 4 or dObj:find("witch") or dObj:find("mini boss")) then
             currentDungeonWpIndex = 21
             local witchWp = DungeonPathWaypoints[21]
