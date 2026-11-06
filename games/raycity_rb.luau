@@ -159,51 +159,71 @@ task.spawn(function()
 end)
 
 -- ==============================================================================
--- 💬 5. AUTO DIALOGUE SKiPPER & QUEST ACCEPTER
+-- 💬 5. AUTO DIALOGUE SKIPPER & QUEST ACCEPTER
 -- ==============================================================================
 task.spawn(function()
     while true do
-        task.wait(0.2)
-        if Config.AutoFarmQuests or Config.AutoSkipDialogue then
+        task.wait(0.15)
+        if Config.AutoFarmQuests or Config.AutoSkipDialogue or Config.AutoAcceptQuest then
             pcall(function()
                 local qUi = nil
                 pcall(function() qUi = require(ReplicatedStorage.RBRCQuest.QuestUI) end)
                 local qGui = LocalPlayer.PlayerGui:FindFirstChild("RaycityQuestUi")
 
                 if qGui then
-                    -- 1. Advance NPC Dialogue
+                    -- 1. Advance NPC Dialogue (NpcDialog)
                     local npcDialog = qGui:FindFirstChild("NpcDialog", true)
-                    if npcDialog and npcDialog.Visible then
-                        if qUi and qUi._dialogEnter then
-                            qUi._dialogEnter()
-                        end
+                    if npcDialog then
                         local nextBtn = npcDialog:FindFirstChild("Next", true)
                         if nextBtn and nextBtn.Visible then
                             for _, c in ipairs(getconnections(nextBtn.Activated)) do c:Fire() end
+                            for _, c in ipairs(getconnections(nextBtn.MouseButton1Click)) do c:Fire() end
+                        end
+                        if qUi and qUi._dialogEnter then
+                            pcall(function() qUi._dialogEnter() end)
                         end
                     end
 
-                    -- 2. Auto Accept Quest Offer
-                    local offerFrame = qGui:FindFirstChild("Offer", true) or qGui:FindFirstChild("QuestOffer", true)
-                    if offerFrame and offerFrame.Visible then
-                        if qUi and qUi._offerAnswer then
-                            qUi._offerAnswer(true)
+                    -- 2. Auto Accept Quest Offer (MissionOffer)
+                    -- Note: In Raycity RB, MissionOffer container has Visible=false, but its child 'Yes' is Visible=true!
+                    local missionOffer = qGui:FindFirstChild("MissionOffer", true)
+                    if missionOffer then
+                        local yesBtn = missionOffer:FindFirstChild("Yes", true)
+                        if yesBtn and yesBtn.Visible then
+                            for _, c in ipairs(getconnections(yesBtn.Activated)) do c:Fire() end
+                            for _, c in ipairs(getconnections(yesBtn.MouseButton1Click)) do c:Fire() end
+                            if qUi and qUi._offerAnswer then
+                                pcall(function() qUi._offerAnswer(true) end)
+                            end
                         end
-                        local acceptBtn = offerFrame:FindFirstChild("Accept", true) or offerFrame:FindFirstChild("Ok", true)
+                    end
+
+                    -- Fallback for generic offer frames
+                    local otherOffer = qGui:FindFirstChild("Offer", true) or qGui:FindFirstChild("QuestOffer", true)
+                    if otherOffer and otherOffer ~= missionOffer then
+                        local acceptBtn = otherOffer:FindFirstChild("Accept", true) or otherOffer:FindFirstChild("Ok", true) or otherOffer:FindFirstChild("Yes", true)
                         if acceptBtn and acceptBtn.Visible then
                             for _, c in ipairs(getconnections(acceptBtn.Activated)) do c:Fire() end
+                            for _, c in ipairs(getconnections(acceptBtn.MouseButton1Click)) do c:Fire() end
+                            if qUi and qUi._offerAnswer then
+                                pcall(function() qUi._offerAnswer(true) end)
+                            end
                         end
                     end
 
-                    -- 3. Auto Close / Claim Result Dialog
-                    local resultDialog = qGui:FindFirstChild("Result", true) or qGui:FindFirstChild("QuestResult", true)
-                    if resultDialog and resultDialog.Visible then
+                    -- 3. Auto Close / Claim Result Dialog (Result, MissionResult, Drops)
+                    local resultDialog = qGui:FindFirstChild("Result", true) or qGui:FindFirstChild("QuestResult", true) or qGui:FindFirstChild("Drops", true)
+                    if resultDialog then
                         if qUi and qUi.hideResult then
-                            qUi.hideResult()
+                            pcall(function() qUi.hideResult() end)
                         end
-                        local closeBtn = resultDialog:FindFirstChild("Close", true) or resultDialog:FindFirstChild("Confirm", true)
+                        if qUi and qUi.closeDrops then
+                            pcall(function() qUi.closeDrops() end)
+                        end
+                        local closeBtn = resultDialog:FindFirstChild("Close", true) or resultDialog:FindFirstChild("Confirm", true) or resultDialog:FindFirstChild("Ok", true)
                         if closeBtn and closeBtn.Visible then
                             for _, c in ipairs(getconnections(closeBtn.Activated)) do c:Fire() end
+                            for _, c in ipairs(getconnections(closeBtn.MouseButton1Click)) do c:Fire() end
                         end
                     end
                 end
@@ -216,34 +236,42 @@ end)
 -- 🏁 6. ACTIVE QUEST DESTINATION DETECTOR
 -- ==============================================================================
 local function getActiveQuestDestination()
-    -- Priority 1: Check workspace.RBRCQuestMarkers
+    -- Priority 1: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
+    local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
+    if okNav and nav then
+        if nav.getGuideLine then
+            local okGl, gl = pcall(nav.getGuideLine)
+            if okGl and gl and gl.target then
+                return gl.target, nil, gl.points
+            end
+        end
+        if nav.getGuide then
+            local okG, g = pcall(nav.getGuide)
+            if okG and g and g.destRoblox then
+                return g.destRoblox, nil, nil
+            end
+        end
+    end
+
+    -- Priority 2: Check workspace.RBRCQuestMarkers
     local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers")
     if qMarkers then
         for _, m in ipairs(qMarkers:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, m
+                return p.Position, m, nil
             end
         end
     end
 
-    -- Priority 2: Check workspace.RBRCQuestGuide
+    -- Priority 3: Check workspace.RBRCQuestGuide
     local qGuide = workspace:FindFirstChild("RBRCQuestGuide")
     if qGuide then
         for _, m in ipairs(qGuide:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart")
             if p then
-                return p.Position, m
+                return p.Position, m, nil
             end
-        end
-    end
-
-    -- Priority 3: Check Navigation Guide Destination
-    local ok, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
-    if ok and nav and nav.getGuide then
-        local g = nav.getGuide()
-        if g and g.destRoblox then
-            return g.destRoblox, nil
         end
     end
 
@@ -252,7 +280,7 @@ local function getActiveQuestDestination()
     if char then
         for _, d in ipairs(char:GetDescendants()) do
             if d:IsA("Beam") and d.Attachment1 then
-                return d.Attachment1.WorldPosition, d.Attachment1.Parent
+                return d.Attachment1.WorldPosition, d.Attachment1.Parent, nil
             end
         end
     end
@@ -263,12 +291,12 @@ local function getActiveQuestDestination()
         for _, m in ipairs(navFolder:GetChildren()) do
             local p = m:IsA("BasePart") and m or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, m
+                return p.Position, m, nil
             end
         end
     end
 
-    return nil, nil
+    return nil, nil, nil
 end
 
 -- ==============================================================================
@@ -315,14 +343,20 @@ task.spawn(function()
                                 if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
                                     local ad = require(RaycityUi.AutoDrive)
                                     if ad then
-                                        ad.C.maxSpeed = Config.QuestDriveSpeed / 3.6
-                                        ad.C.cap1 = 80
-                                        ad.C.cap2 = 60
-                                        ad.C.cap3 = 50
-                                        ad.C.arriveSlowM = 5
-                                        ad.C.arriveSlowerM = 2
-                                        if not ad.isActive() then
-                                            ad.start(destPos)
+                                        if ad.C then
+                                            ad.C.maxSpeed = Config.QuestDriveSpeed / 3.6
+                                            ad.C.cap1 = 80
+                                            ad.C.cap2 = 60
+                                            ad.C.cap3 = 50
+                                            ad.C.arriveSlowM = 5
+                                            ad.C.arriveSlowerM = 2
+                                        end
+                                        if not (ad.isActive and ad.isActive()) then
+                                            if ad.request then
+                                                ad.request(destPos)
+                                            elseif ad.start then
+                                                ad.start(destPos)
+                                            end
                                         end
                                     end
                                 end
@@ -422,8 +456,14 @@ task.spawn(function()
                                     local interactRemote = ReplicatedStorage:FindFirstChild("RaycityInteract") 
                                         and ReplicatedStorage.RaycityInteract:FindFirstChild("Remotes") 
                                         and ReplicatedStorage.RaycityInteract.Remotes:FindFirstChild("InteractRequest")
-                                    if interactRemote then
+                                    if interactRemote and nearestNpc.Parent then
                                         interactRemote:InvokeServer("Talk", nearestNpc.Parent.Name)
+                                    end
+                                end)
+                                pcall(function()
+                                    local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                                    if qUi and qUi._dialogEnter then
+                                        qUi._dialogEnter()
                                     end
                                 end)
                                 task.wait(0.5)
@@ -760,9 +800,7 @@ TabQuest:Dropdown({
 TabQuest:Slider({
     Title = "⚡ Auto Driving Speed (ความเร็วขับส่งของ km/h)",
     Desc = "ปรับความเร็วที่บอทใช้ขับไปส่งของและรับเควส",
-    Min = 100,
-    Max = 500,
-    Value = Config.QuestDriveSpeed,
+    Value = { Min = 100, Max = 500, Default = Config.QuestDriveSpeed },
     Callback = function(val)
         Config.QuestDriveSpeed = val
     end
@@ -847,9 +885,7 @@ TabSpeed:Toggle({
 TabSpeed:Slider({
     Title = "🏁 Target Speed (km/h)",
     Desc = "Adjust maximum cruising speed threshold",
-    Min = 80,
-    Max = 600,
-    Value = Config.TargetSpeedKmh,
+    Value = { Min = 80, Max = 600, Default = Config.TargetSpeedKmh },
     Callback = function(val)
         Config.TargetSpeedKmh = val
     end
@@ -858,9 +894,7 @@ TabSpeed:Slider({
 TabSpeed:Slider({
     Title = "🚀 Acceleration Multiplier",
     Desc = "Rate of acceleration towards top speed",
-    Min = 1,
-    Max = 10,
-    Value = Config.AccelerationMultiplier,
+    Value = { Min = 1, Max = 10, Default = Config.AccelerationMultiplier },
     Callback = function(val)
         Config.AccelerationMultiplier = val
     end
@@ -881,9 +915,7 @@ TabSpeed:Toggle({
 TabSpeed:Slider({
     Title = "💨 Flight Speed (km/h)",
     Desc = "Movement speed while in flight mode",
-    Min = 50,
-    Max = 500,
-    Value = Config.FlySpeed,
+    Value = { Min = 50, Max = 500, Default = Config.FlySpeed },
     Callback = function(val)
         Config.FlySpeed = val
     end
@@ -933,9 +965,7 @@ TabPickup:Toggle({
 TabPickup:Slider({
     Title = "📡 Vacuum Radius (Studs)",
     Desc = "Detection range for surrounding item pickups",
-    Min = 50,
-    Max = 500,
-    Value = Config.PickupRadius,
+    Value = { Min = 50, Max = 500, Default = Config.PickupRadius },
     Callback = function(val)
         Config.PickupRadius = val
     end
