@@ -830,6 +830,33 @@ task.spawn(function()
         return
     end
 
+    -- 🚀 ALWAYS Fetch the freshest script from Cloud first (Bypass stale executor disk cache)
+    local buster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+    local cloudUrls = {
+        "https://song-hub-avp8.onrender.com/scripts/anime_galaxies.luau?v=" .. buster,
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/anime_galaxies.luau?v=" .. buster,
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/anime_galaxies.luau?v=" .. buster,
+        "https://song-hub-avp8.onrender.com/load?v=" .. buster
+    }
+
+    for _, url in ipairs(cloudUrls) do
+        local ok, code = pcall(game.HttpGet, game, url)
+        if ok and type(code) == "string" and #code > 1000 and not code:find("403 Forbidden") and not code:find("404: Not Found") then
+            local fn = loadstring(code)
+            if fn then
+                pcall(function()
+                    if writefile then
+                        if not isfolder("AnimeGalaxiesHub") then makefolder("AnimeGalaxiesHub") end
+                        writefile("AnimeGalaxiesHub/AnimeGalaxies_Hub.luau", code)
+                        writefile("AnimeGalaxies_Hub.luau", code)
+                    end
+                end)
+                return fn()
+            end
+        end
+    end
+
+    -- Fallback to local file ONLY if offline
     local candidates = {
         "AnimeGalaxiesHub/AnimeGalaxies_Hub.luau",
         "AnimeGalaxies_Hub.luau"
@@ -893,6 +920,28 @@ loadConfigFromFile("Default_Config")
 
 -- Initialize universal teleport queue based on config
 updateTeleportQueueState(autoTeleportQueue)
+
+-- Auto-Purge stale offline cache files that do not contain Tower Climb & refresh AutoExec
+pcall(function()
+    local staleCandidates = {
+        "AnimeGalaxiesHub/AnimeGalaxies_Hub.luau",
+        "AnimeGalaxies_Hub.luau",
+        "AnimeGalaxiesHub/AnimeGalaxies_Hub.lua",
+        "AnimeGalaxies_Hub.lua",
+        "UniversalHub/anime_galaxies.luau"
+    }
+    for _, path in ipairs(staleCandidates) do
+        if isfile and isfile(path) then
+            local ok, content = pcall(readfile, path)
+            if ok and content and not content:find("Tower Climb") then
+                pcall(delfile, path)
+            end
+        end
+    end
+    if autoExecuteMaster and autoExecFile then
+        updateAutoExecFileState(true)
+    end
+end)
 
 -- ==============================================================================
 -- CREATE MODERN ANIMATED WINDOW
