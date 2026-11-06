@@ -1059,9 +1059,9 @@ Tabs.Main:Section({ Title = "🎮 Game Mode Selection (เลือกโหม�
 
 Tabs.Main:Dropdown({
     Title = "Select Game Mode (เลือกโหมด)",
-    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless - โหมด Tower ให้ใช้แท็บ Tower Climb 🏰)",
-    Values = { "Story", "Raids", "Challenges", "Endless" },
-    Value = (selectedGameMode == "Tower") and "Story" or selectedGameMode,
+    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless, Tower)",
+    Values = { "Story", "Raids", "Challenges", "Endless", "Tower" },
+    Value = selectedGameMode or "Story",
     Callback = function(val)
         selectedGameMode = val
         triggerAutoSave()
@@ -1132,6 +1132,36 @@ Tabs.Main:Dropdown({
     Value = selectedEndlessMap,
     Callback = function(val)
         selectedEndlessMap = val
+        triggerAutoSave()
+    end
+})
+
+Tabs.Main:Slider({
+    Title = "Tower Floor (เลือกชั้น Tower)",
+    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการลงเล่น (ระบบจะบวก 1 เมื่อชนะ)",
+    Value = {
+        Min = 1,
+        Max = 100,
+        Default = towerCurrentFloor or selectedTowerFloor or 1,
+    },
+    Callback = function(val)
+        selectedTowerFloor = math.floor(val)
+        towerCurrentFloor = selectedTowerFloor
+        pcall(function()
+            if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
+                UI.towerCurrentFloorSlider:SetValue(towerCurrentFloor)
+            end
+        end)
+        triggerAutoSave()
+    end
+})
+
+Tabs.Main:Toggle({
+    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
+    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะกดปุ่ม Next บนหน้าจอเพื่อไต่ชั้นถัดไปทันทีในห้องเดิม (เช่น ชั้น 1 ➔ 2)",
+    Value = autoNextTowerFloor,
+    Callback = function(state)
+        autoNextTowerFloor = state
         triggerAutoSave()
     end
 })
@@ -1371,7 +1401,7 @@ local function findFreeDoor(mode)
             local count = detailsUI and detailsUI:FindFirstChild("Count")
             local isReady = door and door:GetAttribute("Ready") == true
             local isCountZero = (not count) or (count.Value == 0)
-            if door and door:IsA("BasePart") and (not isReady) and isCountZero then
+            if door and (not isReady) and isCountZero then
                 return door, room
             end
         end
@@ -1418,6 +1448,15 @@ local function getTowerTeamList()
                 table.insert(team, list[i].Id)
             end
         end)
+        if #team == 0 and data:FindFirstChild("Units") then
+            for _, u in ipairs(data.Units:GetChildren()) do
+                for _, idF in ipairs(u:GetChildren()) do
+                    table.insert(team, u.Name .. "/" .. idF.Name)
+                    if #team >= 4 then break end
+                end
+                if #team >= 4 then break end
+            end
+        end
     end
     return team
 end
@@ -1446,20 +1485,34 @@ local function startTowerBattle()
     local action = (isActive or currentStreak > 0) and "Continue" or "Start"
 
     -- 1. Official Network_Client Publish
-    local sent = false
     pcall(function()
-        local net = require(ReplicatedStorage.Master.Modules.Network_Client)
-        if net and net.Publish then
-            net.Publish(net, "Tower", { Action = action, Team = teamList })
-            sent = true
+        if NetworkClient and NetworkClient.Publish then
+            if action == "Continue" then
+                NetworkClient:Publish("Tower", { Action = "Continue" })
+            else
+                NetworkClient:Publish("Tower", { Action = "Start", Team = teamList })
+            end
         end
     end)
 
     -- 2. Direct RemoteService Handler Fallback
-    publishRemote("Tower", {
-        Action = action,
-        Team = teamList
-    })
+    if action == "Continue" then
+        publishRemote("Tower", { Action = "Continue" })
+    else
+        publishRemote("Tower", { Action = "Start", Team = teamList })
+    end
+
+    -- 3. Teleport near Tower Board in Lobby
+    pcall(function()
+        local board = (workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Model") and workspace.Lobby.Model:FindFirstChild("Model") and workspace.Lobby.Model.Model:FindFirstChild("TowerWeeklyBoard"))
+            or workspace:FindFirstChild("Towers", true)
+        if board and Character and Character:FindFirstChild("HumanoidRootPart") then
+            local pos = board:IsA("BasePart") and board.Position or (board:FindFirstChildWhichIsA("BasePart") and board:FindFirstChildWhichIsA("BasePart").Position)
+            if pos then
+                Character:PivotTo(CFrame.new(pos + Vector3.new(0, 3, 5)))
+            end
+        end
+    end)
 
     WindUI:Notify({ Title = "Tower Climb", Content = "🚀 ส่งคำสั่งเริ่มเล่น Tower (" .. action .. ") เรียบร้อย!", Duration = 3, Icon = "castle" })
     return true
@@ -1484,7 +1537,7 @@ local function forfeitTower()
     WindUI:Notify({ Title = "Tower Climb", Content = "🏳️ ยอมแพ้และรีเซ็ตหอคอยกลับไปเริ่มต้นชั้น 1 เรียบร้อย!", Duration = 3, Icon = "rotate-ccw" })
 end
 
--- Robust Room Creator & Enter (Story, Raids, Challenges, Endless)
+-- Robust Room Creator & Enter (Story, Raids, Challenges, Endless, Tower)
 local function enterOrActionRoom(mode, forceSolo)
     mode = mode or selectedGameMode
     if mode == "Tower" then
@@ -1511,56 +1564,46 @@ local function enterOrActionRoom(mode, forceSolo)
     elseif mode == "Endless" then
         key = { Mode = "Endless" }
         options = { FriendsOnly = roomFriendsOnly }
-    elseif mode == "Tower" then
-        local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
-        key = { Mode = "Tower", Floor = targetFloor }
-        options = { FriendsOnly = roomFriendsOnly }
-
-        -- Auto equip specified team for Tower
-        if towerTeam and towerTeam ~= "Equipped Team" then
-            local tNum = tonumber(towerTeam:match("%d+"))
-            if tNum then
-                pcall(function()
-                    publishRemote("Units", { Action = "EquipTeam", Team = tNum })
-                    publishRemote("Units", { Action = "SetTeam", Team = tNum })
-                    publishRemote("Team", { Action = "Equip", Slot = tNum })
-                end)
-            end
-        end
     end
 
-    -- 1. Native Official Controller (Reliable Native Start & Automatic Door Touch)
+    -- 1. Try Native Official Controller ONLY if OnSolo/OnCreate actually exists and is a function
     local offRooms = getOfficialRooms()
+    local nativeCalled = false
     if offRooms then
-        local success = pcall(function()
-            if isSolo and offRooms.OnSolo then
+        pcall(function()
+            if isSolo and type(offRooms.OnSolo) == "function" then
                 offRooms.OnSolo(key, options)
-            elseif offRooms.OnCreate then
+                nativeCalled = true
+            elseif type(offRooms.OnCreate) == "function" then
                 offRooms.OnCreate(key, options)
+                nativeCalled = true
             end
         end)
-        if success then
-            WindUI:Notify({ Title = "Room", Content = "🚀 สร้างห้อง & เริ่มเล่น " .. mode .. " ทันที!", Duration = 3, Icon = "circle-play" })
-            return true
-        end
     end
 
-    -- 2. Fallback: Find free door and teleport directly
+    -- 2. Physical Door Touch & Remote Fallback (100% Reliable in Lobby)
     local door, room = findFreeDoor(mode)
     if door and Character then
-        door.CanCollide = false
-        pcall(function()
-            Character:PivotTo(door.CFrame)
-        end)
-        task.wait(0.2)
-        for _, part in ipairs(Character:GetChildren()) do
-            if part:IsA("BasePart") then
-                pcall(function() firetouchinterest(part, door, 0) end)
-            end
-        end
-        task.wait(0.3)
+        local doorPart = (door:IsA("BasePart") and door)
+            or (door:IsA("Model") and (door.PrimaryPart or door:FindFirstChildWhichIsA("BasePart")))
+            or room:FindFirstChildWhichIsA("BasePart")
 
-        -- Publish Room Config
+        if doorPart then
+            doorPart.CanCollide = false
+            pcall(function()
+                Character:PivotTo(doorPart.CFrame * CFrame.new(0, 0, 1))
+            end)
+            task.wait(0.15)
+            for _, part in ipairs(Character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    pcall(function() firetouchinterest(part, doorPart, 0) end)
+                    pcall(function() firetouchinterest(part, doorPart, 1) end)
+                end
+            end
+            task.wait(0.2)
+        end
+
+        -- Publish Room Configuration Remotes
         if mode == "Story" then
             publishRemote("Room", {
                 Action = "SelectMap",
@@ -1569,11 +1612,22 @@ local function enterOrActionRoom(mode, forceSolo)
                 FriendsOnly = roomFriendsOnly,
                 Nightmare = isNightmare,
             })
+            publishRemote("Room", {
+                Action = "SetWorld",
+                World = worldIdx,
+                Stage = selectedStage,
+                Nightmare = isNightmare,
+            })
         elseif mode == "Raids" then
             publishRemote("Room", {
                 Action = "SelectMap",
                 MapName = selectedRaid,
                 FriendsOnly = roomFriendsOnly,
+                Nightmare = isNightmare,
+            })
+            publishRemote("Room", {
+                Action = "SetRaid",
+                Raid = raidIdx,
                 Nightmare = isNightmare,
             })
         elseif mode == "Challenges" then
@@ -1588,59 +1642,22 @@ local function enterOrActionRoom(mode, forceSolo)
                 MapName = selectedEndlessMap or "Endless Maze",
                 FriendsOnly = roomFriendsOnly,
             })
-        elseif mode == "Tower" then
-            local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
-            publishRemote("Room", {
-                Action = "SelectMap",
-                Mode = "Tower",
-                MapName = "Tower",
-                Floor = targetFloor,
-                FriendsOnly = roomFriendsOnly,
-            })
-            publishRemote("Room", {
-                Action = "SetMode",
-                Mode = "Tower",
-                Floor = targetFloor,
-            })
-            publishRemote("Tower", {
-                Action = "Start",
-                Floor = targetFloor,
-            })
-            publishRemote("Tower", {
-                Action = "Continue",
-            })
         end
 
-        task.wait(0.5)
-        publishRemote("Room", {Action = "Start"})
-        publishRemote("Controls", {Action = "VoteStart"})
-        WindUI:Notify({ Title = "Room", Content = "Created & Sent Start for " .. mode .. "!", Duration = 3, Icon = "door-open" })
+        -- Auto Start Room when inside
+        publishRemote("Room", { Action = "Start" })
+        publishRemote("Controls", { Action = "VoteStart" })
+
+        WindUI:Notify({
+            Title = "Auto Room",
+            Content = "🚪 เข้าห้อง " .. mode .. " และตั้งค่าด่านเรียบร้อย!",
+            Duration = 3,
+            Icon = "circle-play"
+        })
         return true
     end
 
-    -- 3. Dedicated Tower Portal / Remote Fallback for Tower Mode
-    if mode == "Tower" then
-        local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
-        pcall(function()
-            local towerPortal = workspace:FindFirstChild("Tower", true) or workspace:FindFirstChild("InfiniteTower", true) or workspace:FindFirstChild("TowerPortal", true)
-            if towerPortal and Character then
-                local pPart = towerPortal:IsA("BasePart") and towerPortal or towerPortal:FindFirstChildWhichIsA("BasePart") or (towerPortal:IsA("Model") and towerPortal.PrimaryPart)
-                if pPart then
-                    Character:PivotTo(pPart.CFrame)
-                    for _, part in ipairs(Character:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            pcall(function() firetouchinterest(part, pPart, 0) end)
-                        end
-                    end
-                end
-            end
-        end)
-        publishRemote("Room", { Action = "Create", Mode = "Tower", Floor = targetFloor, FriendsOnly = roomFriendsOnly })
-        publishRemote("Tower", { Action = "Start", Floor = targetFloor })
-        publishRemote("Tower", { Action = "Continue" })
-        publishRemote("Room", { Action = "Start" })
-        publishRemote("Controls", { Action = "VoteStart" })
-        WindUI:Notify({ Title = "Tower", Content = "🏰 สร้างห้องและเข้าสู่ Tower Mode (ชั้น " .. tostring(targetFloor) .. ")", Duration = 3, Icon = "castle" })
+    if nativeCalled then
         return true
     end
 
@@ -2185,7 +2202,7 @@ do
                             end
                         else
                             -- Defeat
-                            if towerAutoJoin then
+                            if towerAutoJoin or selectedGameMode == "Tower" then
                                 if towerAfterLoss == "Retry Floor" then
                                     chosenAction = "Replay"
                                 else
