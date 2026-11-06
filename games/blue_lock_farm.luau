@@ -356,22 +356,11 @@ local function updateParagraph(para, title, desc)
         end
     end)
     pcall(function()
-        if para.ParagraphFrame and para.ParagraphFrame.UIElements and para.ParagraphFrame.UIElements.Desc then
-            para.ParagraphFrame.UIElements.Desc.Text = desc
-        end
-    end)
-    pcall(function()
         if para.ElementFrame then
-            local labels = {}
             for _, d in ipairs(para.ElementFrame:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Text ~= "Locked" then
-                    table.insert(labels, d)
+                if d:IsA("TextLabel") and d.Text ~= "Locked" and d.Text ~= title then
+                    d.Text = desc
                 end
-            end
-            if #labels >= 2 then
-                labels[2].Text = desc
-            elseif #labels == 1 and labels[1].Text ~= title then
-                labels[1].Text = desc
             end
         end
     end)
@@ -501,30 +490,36 @@ local function parseSuffixNumber(str)
 end
 
 -- Helper: Get player Cash amount (Multi-Source Robust Resolution)
+local lastKnownCash = 0
 local function getCashAmount()
-    -- 1. Try CurrencyService
-    if CurrencyService and typeof(CurrencyService.GetCurrencyAmount) == "function" then
-        local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Cash")
-        if ok and typeof(val) == "number" and val >= 0 then return val end
-    end
-    pcall(function()
-        local cs = require(ReplicatedStorage.Shared.Services.CurrencyService)
-        if cs and typeof(cs.GetCurrencyAmount) == "function" then
-            local ok, val = pcall(cs.GetCurrencyAmount, LocalPlayer, "Cash")
-            if ok and typeof(val) == "number" and val >= 0 then return val end
-        end
-    end)
-
-    -- 2. Try ClientDataManager
+    -- 1. Try ClientDataManager (Fastest & most direct data source)
     if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
         local ok, d = pcall(ClientDataManager.GetData)
         if ok and d then
             if d.Currency then
                 local c = d.Currency.Cash or d.Currency.cash or d.Currency.Money or d.Currency.Coins
-                if tonumber(c) and tonumber(c) >= 0 then return tonumber(c) end
+                if tonumber(c) and tonumber(c) >= 0 then
+                    lastKnownCash = tonumber(c)
+                    return tonumber(c)
+                end
             end
-            if d.Cash and tonumber(d.Cash) and tonumber(d.Cash) >= 0 then return tonumber(d.Cash) end
-            if d.Money and tonumber(d.Money) and tonumber(d.Money) >= 0 then return tonumber(d.Money) end
+            if d.Cash and tonumber(d.Cash) and tonumber(d.Cash) >= 0 then
+                lastKnownCash = tonumber(d.Cash)
+                return tonumber(d.Cash)
+            end
+            if d.Money and tonumber(d.Money) and tonumber(d.Money) >= 0 then
+                lastKnownCash = tonumber(d.Money)
+                return tonumber(d.Money)
+            end
+        end
+    end
+
+    -- 2. Try CurrencyService
+    if CurrencyService and typeof(CurrencyService.GetCurrencyAmount) == "function" then
+        local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Cash")
+        if ok and typeof(val) == "number" and val >= 0 then
+            lastKnownCash = val
+            return val
         end
     end
 
@@ -535,7 +530,10 @@ local function getCashAmount()
     local amountLabel = cashHolder and cashHolder:FindFirstChild("ImageLabel") and cashHolder.ImageLabel:FindFirstChild("AmountLabel")
     if amountLabel and amountLabel.Text and amountLabel.Text ~= "" then
         local p = parseSuffixNumber(amountLabel.Text)
-        if p and p >= 0 then return p end
+        if p and p >= 0 then
+            lastKnownCash = p
+            return p
+        end
     end
 
     -- 4. Try leaderstats
@@ -544,6 +542,7 @@ local function getCashAmount()
         for _, name in ipairs({ "Cash", "Money", "Coins", "Gold", "Points" }) do
             local val = ls:FindFirstChild(name)
             if val and val:IsA("ValueBase") and tonumber(val.Value) and tonumber(val.Value) >= 0 then
+                lastKnownCash = tonumber(val.Value)
                 return tonumber(val.Value)
             end
         end
@@ -552,7 +551,10 @@ local function getCashAmount()
     -- 5. Try Attributes on LocalPlayer
     for _, attr in ipairs({ "Cash", "Money", "Coins" }) do
         local a = LocalPlayer:GetAttribute(attr)
-        if tonumber(a) and tonumber(a) >= 0 then return tonumber(a) end
+        if tonumber(a) and tonumber(a) >= 0 then
+            lastKnownCash = tonumber(a)
+            return tonumber(a)
+        end
     end
 
     -- 6. Try scanning PlayerGui for any Cash / Amount label
@@ -561,13 +563,14 @@ local function getCashAmount()
             if desc:IsA("TextLabel") and desc.Visible and (desc.Name == "CashLabel" or desc.Name == "AmountLabel" or string.find(desc.Text, "%$")) then
                 local parsed = parseSuffixNumber(desc.Text)
                 if parsed and parsed > 0 then
+                    lastKnownCash = parsed
                     return parsed
                 end
             end
         end
     end
 
-    return 0
+    return lastKnownCash or 0
 end
 
 -- Helper: Get Conveyor Locker Price accurately from BoxService or BillboardGui
@@ -588,30 +591,68 @@ local function getConveyorLockerPrice(boxName, variant, rollPart)
         end
     end
 
-    -- Fallback: inspect BillboardGui on BoxModel
+    -- Fallback 1: inspect BillboardGui on BoxModel (Handles all suffixes: K, M, B, T, Qa, Qi, Sx, Sp, etc.)
     if rollPart then
         local bm = rollPart:FindFirstChild("BoxModel")
         local bgui = bm and bm:FindFirstChild("BoxPriceBillboardGui")
         local frame = bgui and bgui:FindFirstChild("Frame")
         local priceLabel = frame and frame:FindFirstChild("PriceLabel")
-        if priceLabel and priceLabel.Text then
-            local text = priceLabel.Text:gsub("%$", ""):gsub(",", ""):upper()
-            local mult = 1
-            if text:find("K") then
-                mult = 1000
-                text = text:gsub("K", "")
-            elseif text:find("M") then
-                mult = 1000000
-                text = text:gsub("M", "")
-            elseif text:find("B") then
-                mult = 1000000000
-                text = text:gsub("B", "")
-            end
-            local num = tonumber(text)
-            if num then return num * mult end
+        if priceLabel and priceLabel.Text and priceLabel.Text ~= "" then
+            local p = parseSuffixNumber(priceLabel.Text)
+            if p and p > 0 then return p end
         end
     end
+
+    -- Fallback 2: BoxesLibrary lookup
+    if BoxesLibrary and BoxesLibrary[boxName] and BoxesLibrary[boxName].BoxPrice then
+        local bp = BoxesLibrary[boxName].BoxPrice
+        if variant and variant ~= "Normal" then
+            bp = bp * 50
+        end
+        return bp
+    end
+
     return 0
+end
+
+-- Helper: Get Locker Inventory Info (Current Count, Max Capacity, Space Available)
+local function getLockerInventoryInfo()
+    local count = 0
+    local max = 100
+    local hasSpace = true
+    pcall(function()
+        if BoxService then
+            if typeof(BoxService.GetTotalBoxInventoryAmount) == "function" then
+                local c = BoxService.GetTotalBoxInventoryAmount(LocalPlayer)
+                if typeof(c) == "number" then count = c end
+            end
+            if typeof(BoxService.GetMaxBoxInventorySpace) == "function" then
+                local m = BoxService.GetMaxBoxInventorySpace(LocalPlayer)
+                if typeof(m) == "number" then max = m end
+            end
+            if typeof(BoxService.HasBoxInventorySpace) == "function" then
+                hasSpace = BoxService.HasBoxInventorySpace(LocalPlayer)
+            else
+                hasSpace = count < max
+            end
+        else
+            if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
+                local d = ClientDataManager.GetData()
+                if d and d.Inventory and d.Inventory.Boxes then
+                    for _, vars in pairs(d.Inventory.Boxes) do
+                        if type(vars) == "table" then
+                            for _, info in pairs(vars) do
+                                local amt = (type(info) == "table" and (info.Amount or info.Count)) or tonumber(info) or 0
+                                count = count + amt
+                            end
+                        end
+                    end
+                    hasSpace = count < max
+                end
+            end
+        end
+    end)
+    return count, max, hasSpace
 end
 
 -- Helper: Retrieve available player unit options for selection dropdowns
@@ -2127,8 +2168,11 @@ task.spawn(function()
                 price = getConveyorLockerPrice(curBox, curVar, rollPart)
             end
             local cash = getCashAmount()
-            local desc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
-                lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
+            local invCount, invMax, hasInvSpace = getLockerInventoryInfo()
+            local invText = string.format("%d/%d", invCount, invMax)
+            if not hasInvSpace then invText = invText .. " (Full ⚠️)" end
+            local desc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s\n• Locker Inv: %s",
+                lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash), invText)
             updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", desc)
         end
     end)
@@ -2136,7 +2180,7 @@ end)
 
 UIElements.autoRollLocker = TabAutomation:Toggle({
     Title = "Auto Roll Locker (Roll Station)",
-    Desc = "Continuously rolls for new lockers at the conveyor station (pauses if holding target or low cash)",
+    Desc = "Continuously rolls for new lockers at the conveyor station (100% Free, pauses only when holding target locker)",
     Value = false,
     Callback = function(val)
         autoRollLocker = val
@@ -3725,6 +3769,7 @@ end)
 task.spawn(function()
     local lastPurchasedRollId = nil
     local lastNotifiedWaitRollId = nil
+    local lastNotifiedInvFullRollId = nil
 
     while isAlive() do
         if autoRollLocker or autoBuyLocker then
@@ -3767,112 +3812,212 @@ task.spawn(function()
                     local cash = getCashAmount()
                     local targetCost = price + (minCashBuffer or 0)
                     local canAffordTarget = (cash >= targetCost)
+                    local invCount, invMax, hasInvSpace = getLockerInventoryInfo()
 
-                    -- 1. IF IT'S A TARGET BOX WE WANT TO BUY:
-                    if autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId then
-                        if canAffordTarget then
-                            -- Money is sufficient! Purchase immediately
-                            lastPurchasedRollId = rollId
-                            lockerStatusText = string.format("🛒 Purchasing %s (%s) for $%s...", tostring(currentBox), tostring(currentVariant), formatNumber(price))
+                    -- =========================================================================
+                    -- BRANCH 1: TARGET BOX IS ON CONVEYOR (Matches user filters)
+                    -- =========================================================================
+                    if hasLockerOnConveyor and isTargetBox then
+                        if autoBuyLocker and rollId ~= lastPurchasedRollId then
+                            if canAffordTarget and hasInvSpace then
+                                -- Can afford and has inventory space -> BUY IMMEDIATELY!
+                                lastPurchasedRollId = rollId
+                                lockerStatusText = string.format("🛒 Purchasing %s (%s) for $%s...", tostring(currentBox), tostring(currentVariant), formatNumber(price))
 
-                            -- Trigger ProximityPrompt if available on BoxModel
-                            local bm = rollPart:FindFirstChild("BoxModel")
-                            local prompt = bm and bm:FindFirstChild("ProximityPrompt")
-                            if prompt and typeof(fireproximityprompt) == "function" then
-                                pcall(function() fireproximityprompt(prompt) end)
-                            end
-
-                            if Remotes:FindFirstChild("PurchaseConveyorRoll") then
-                                Remotes.PurchaseConveyorRoll:FireServer(currentBox, currentVariant, price)
-                            end
-
-                            task.wait(0.3)
-
-                            -- After purchasing, if autoRollLocker is active, resume rolling immediately once cooldown allows
-                            if autoRollLocker and Remotes:FindFirstChild("NewRequestConveyorRoll") then
-                                local postCooldown = rollPart:GetAttribute("RollCooldownUntil")
-                                local postNow = workspace:GetServerTimeNow()
-                                if not postCooldown or postNow >= (postCooldown - 0.1) then
-                                    Remotes.NewRequestConveyorRoll:FireServer()
+                                -- 1. Trigger ProximityPrompt
+                                local bm = rollPart:FindFirstChild("BoxModel")
+                                local prompt = bm and bm:FindFirstChild("ProximityPrompt")
+                                if prompt then
+                                    if typeof(fireproximityprompt) == "function" then
+                                        pcall(function() fireproximityprompt(prompt) end)
+                                    end
+                                    if typeof(getconnections) == "function" then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(prompt.Triggered)) do
+                                                if typeof(c.Function) == "function" then
+                                                    task.spawn(c.Function)
+                                                end
+                                            end
+                                        end)
+                                    end
                                 end
-                            end
-                        elseif waitForCashLocker then
-                            -- MONEY INSUFFICIENT AND waitForCashLocker IS TRUE:
-                            -- Pause rolling! Hold this locker on conveyor until cash is ready!
-                            lockerStatusText = string.format("⏸️ Waiting for Cash to Buy %s (%s): $%s / $%s",
-                                tostring(currentBox), tostring(currentVariant), formatNumber(cash), formatNumber(targetCost))
 
-                            if lastNotifiedWaitRollId ~= rollId then
-                                lastNotifiedWaitRollId = rollId
-                                WindUI:Notify({
-                                    Title = "Holding Target Locker (Waiting for Cash)",
-                                    Content = string.format("Found %s (%s)! Pausing rolls until cash reaches $%s (Current: $%s)",
-                                        tostring(currentBox), tostring(currentVariant), formatNumber(targetCost), formatNumber(cash)),
-                                    Duration = 4,
-                                    Icon = "pause-circle"
-                                })
-                            end
-                            -- DO NOT ROLL! DO NOT SKIP!
-                        else
-                            -- waitForCashLocker is FALSE: user chose not to wait, so allow rolling next!
-                            lastPurchasedRollId = rollId
-                        end
+                                -- 2. Fire Server Purchase Remote
+                                if Remotes:FindFirstChild("PurchaseConveyorRoll") then
+                                    Remotes.PurchaseConveyorRoll:FireServer(currentBox, currentVariant, price)
+                                end
 
-                    -- 2. LOCKER ON CONVEYOR DOES NOT MATCH FILTERS:
-                    elseif hasLockerOnConveyor and not isTargetBox then
-                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
-                        if not isHoldingTarget then
-                            if autoRollLocker then
-                                local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
-                                if cdRemaining <= 0.1 then
-                                    lockerStatusText = string.format("🔄 Rolling past non-target: %s (%s)", tostring(currentBox), tostring(currentVariant))
-                                    if Remotes:FindFirstChild("NewRequestConveyorRoll") then
-                                        Remotes.NewRequestConveyorRoll:FireServer()
-                                    elseif Remotes:FindFirstChild("RequestConveyorRoll") then
-                                        Remotes.RequestConveyorRoll:FireServer()
+                                task.wait(0.35)
+
+                                -- 3. If autoRollLocker is ON, roll next as soon as cooldown allows
+                                if autoRollLocker then
+                                    local postCooldown = rollPart:GetAttribute("RollCooldownUntil")
+                                    local postNow = workspace:GetServerTimeNow()
+                                    if not postCooldown or postNow >= (postCooldown - 0.1) then
+                                        if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                            Remotes.NewRequestConveyorRoll:FireServer()
+                                        elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                            Remotes.RequestConveyorRoll:FireServer()
+                                        end
+                                    end
+                                end
+
+                            elseif not hasInvSpace then
+                                -- Inventory Full (100/100)!
+                                if waitForCashLocker then
+                                    -- HOLD LOCKER! DO NOT ROLL AWAY! Wait for inventory space to open
+                                    lockerStatusText = string.format("⚠️ Inv Full (%d/%d): Holding %s (%s)! Place/open lockers to buy.",
+                                        invCount, invMax, tostring(currentBox), tostring(currentVariant))
+                                    if lastNotifiedInvFullRollId ~= rollId then
+                                        lastNotifiedInvFullRollId = rollId
+                                        WindUI:Notify({
+                                            Title = "Locker Inventory Full (" .. tostring(invCount) .. "/" .. tostring(invMax) .. ")",
+                                            Content = "Found target " .. tostring(currentBox) .. " (" .. tostring(currentVariant) .. ")! Holding until inventory space clears.",
+                                            Duration = 4,
+                                            Icon = "alert-triangle"
+                                        })
                                     end
                                 else
-                                    lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs) - Skipping %s (%s)", math.max(0.1, cdRemaining), tostring(currentBox), tostring(currentVariant))
+                                    -- User does not want to wait: skip this one and keep rolling!
+                                    lastPurchasedRollId = rollId
+                                    if autoRollLocker then
+                                        local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                                        if cdRemaining <= 0.1 then
+                                            lockerStatusText = string.format("🔄 Skipping %s (Inv Full & Wait is OFF)", tostring(currentBox))
+                                            if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                                Remotes.NewRequestConveyorRoll:FireServer()
+                                            elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                                Remotes.RequestConveyorRoll:FireServer()
+                                            end
+                                        else
+                                            lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs) - Skipping %s", math.max(0.1, cdRemaining), tostring(currentBox))
+                                        end
+                                    end
+                                end
+
+                            elseif not canAffordTarget then
+                                -- Insufficient Cash to afford (Price + Safety Buffer)
+                                if waitForCashLocker then
+                                    -- HOLD TARGET LOCKER! DO NOT ROLL AWAY! Wait until cash reaches targetCost!
+                                    lockerStatusText = string.format("⏸️ Waiting for Cash to Buy %s (%s): $%s / $%s (Buffer: $%s)",
+                                        tostring(currentBox), tostring(currentVariant), formatNumber(cash), formatNumber(targetCost), formatNumber(minCashBuffer or 0))
+
+                                    if lastNotifiedWaitRollId ~= rollId then
+                                        lastNotifiedWaitRollId = rollId
+                                        WindUI:Notify({
+                                            Title = "Holding Target Locker (Waiting for Cash)",
+                                            Content = string.format("Found %s (%s)! Pausing rolls until cash reaches $%s (Current: $%s)",
+                                                tostring(currentBox), tostring(currentVariant), formatNumber(targetCost), formatNumber(cash)),
+                                            Duration = 4,
+                                            Icon = "pause-circle"
+                                        })
+                                    end
+                                else
+                                    -- User chose NOT to wait for cash: skip this roll instance and continue rolling!
+                                    lastPurchasedRollId = rollId
+                                    if autoRollLocker then
+                                        local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                                        if cdRemaining <= 0.1 then
+                                            lockerStatusText = string.format("🔄 Skipping %s (Low Cash & Wait is OFF)", tostring(currentBox))
+                                            if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                                Remotes.NewRequestConveyorRoll:FireServer()
+                                            elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                                Remotes.RequestConveyorRoll:FireServer()
+                                            end
+                                        else
+                                            lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs) - Skipping %s", math.max(0.1, cdRemaining), tostring(currentBox))
+                                        end
+                                    end
+                                end
+                            end
+
+                        else
+                            -- Auto Buy is OFF, but target locker matched!
+                            if autoRollLocker then
+                                if waitForCashLocker then
+                                    -- Pause rolling so user can manually buy!
+                                    lockerStatusText = string.format("🎯 Target Found: %s (%s)! Paused for manual buy.", tostring(currentBox), tostring(currentVariant))
+                                else
+                                    -- Auto Buy is OFF and Wait is OFF: roll next
+                                    local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                                    if cdRemaining <= 0.1 then
+                                        lockerStatusText = string.format("🔄 Rolling past target: %s (Auto Buy is OFF)", tostring(currentBox))
+                                        if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                            Remotes.NewRequestConveyorRoll:FireServer()
+                                        elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                            Remotes.RequestConveyorRoll:FireServer()
+                                        end
+                                    else
+                                        lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs)", math.max(0.1, cdRemaining))
+                                    end
                                 end
                             else
-                                if autoBuyLocker then
-                                    lockerStatusText = string.format("⏭️ Ignored: %s (%s) [Not in Target Filters]. Turn ON Auto Roll to roll for targets!", tostring(currentBox), tostring(currentVariant))
-                                else
-                                    lockerStatusText = string.format("💤 Conveyor: %s (%s)", tostring(currentBox), tostring(currentVariant))
-                                end
+                                lockerStatusText = string.format("🎯 Target Ready: %s (%s) - $%s", tostring(currentBox), tostring(currentVariant), formatNumber(price))
                             end
                         end
 
-                    -- 3. CAN WE ROLL? (No locker on conveyor, or waiting to roll)
-                    -- Note: autoRoll is completely FREE! Never block rolling due to minCashBuffer.
-                    -- Rolling is only blocked if we are actively holding a target box waiting for cash.
-                    elseif autoRollLocker then
-                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
-
-                        if not isHoldingTarget then
+                    -- =========================================================================
+                    -- BRANCH 2: NON-TARGET LOCKER IS ON CONVEYOR (Does NOT match user filters)
+                    -- =========================================================================
+                    elseif hasLockerOnConveyor and not isTargetBox then
+                        -- Non-target locker: NEVER pause for cash! NEVER hold! Roll past immediately!
+                        if autoRollLocker then
                             local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
                             if cdRemaining <= 0.1 then
-                                lockerStatusText = "🔄 Rolling for lockers..."
+                                lockerStatusText = string.format("🔄 Rolling past non-target: %s (%s)", tostring(currentBox), tostring(currentVariant))
                                 if Remotes:FindFirstChild("NewRequestConveyorRoll") then
                                     Remotes.NewRequestConveyorRoll:FireServer()
                                 elseif Remotes:FindFirstChild("RequestConveyorRoll") then
                                     Remotes.RequestConveyorRoll:FireServer()
                                 end
                             else
-                                lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs)", math.max(0.1, cdRemaining))
+                                lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs) - Skipping %s (%s)", math.max(0.1, cdRemaining), tostring(currentBox), tostring(currentVariant))
+                            end
+                        else
+                            if autoBuyLocker then
+                                lockerStatusText = string.format("⏭️ Ignored: %s (%s) [Not in filters]. Turn ON Auto Roll to roll!", tostring(currentBox), tostring(currentVariant))
+                            else
+                                lockerStatusText = string.format("💤 Conveyor: %s (%s)", tostring(currentBox), tostring(currentVariant))
                             end
                         end
-                    else
-                        if not isAlive() then return end
-                        local isHoldingTarget = (autoBuyLocker and isTargetBox and rollId ~= lastPurchasedRollId and not canAffordTarget and waitForCashLocker)
-                        if not isHoldingTarget then
-                            lockerStatusText = "💤 Idle / Ready"
+
+                    -- =========================================================================
+                    -- BRANCH 3: NO LOCKER ON CONVEYOR (Empty conveyor or just rolled)
+                    -- =========================================================================
+                    elseif autoRollLocker then
+                        local cdRemaining = (rollCooldown and (rollCooldown - now)) or 0
+                        if cdRemaining <= 0.1 then
+                            lockerStatusText = "🔄 Rolling for lockers..."
+                            if Remotes:FindFirstChild("NewRequestConveyorRoll") then
+                                Remotes.NewRequestConveyorRoll:FireServer()
+                            elseif Remotes:FindFirstChild("RequestConveyorRoll") then
+                                Remotes.RequestConveyorRoll:FireServer()
+                            end
+                        else
+                            lockerStatusText = string.format("⏳ Roll Cooldown (%.1fs)", math.max(0.1, cdRemaining))
                         end
+
+                    -- =========================================================================
+                    -- BRANCH 4: IDLE
+                    -- =========================================================================
+                    else
+                        lockerStatusText = "💤 Idle / Ready"
                     end
 
+                    -- Update UI Paragraph
                     if LockerStatusParagraph then
-                        local fastDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
-                            lockerStatusText or "Idle 💤", tostring(currentBox or "None"), tostring(currentVariant or "Normal"), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
+                        local invText = string.format("%d/%d", invCount, invMax)
+                        if not hasInvSpace then invText = invText .. " (Full ⚠️)" end
+
+                        local fastDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s\n• Locker Inv: %s",
+                            lockerStatusText or "Idle 💤",
+                            tostring(currentBox or "None"),
+                            tostring(currentVariant or "Normal"),
+                            formatNumber(price),
+                            formatNumber(minCashBuffer or 0),
+                            formatNumber(cash),
+                            invText
+                        )
                         updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", fastDesc)
                     end
                 end
@@ -3911,7 +4056,11 @@ task.spawn(function()
                                     local pAt = dropper:GetAttribute("PlacedAt")
                                     local vName = dropper:GetAttribute("Variant") or "Normal"
                                     if BoxService.IsBoxReady(bName, pAt, vName) then
-                                        Remotes.OpenBoxOnDropper:InvokeServer(dropper)
+                                        task.spawn(function()
+                                            pcall(function()
+                                                Remotes.OpenBoxOnDropper:InvokeServer(dropper)
+                                            end)
+                                        end)
                                     end
                                 end
                             elseif dType == nil and autoPlaceLocker and #invBoxes > 0 and Remotes:FindFirstChild("PlaceBoxOnDropper") then
@@ -4515,8 +4664,11 @@ task.spawn(function()
                     price = getConveyorLockerPrice(curBox, curVar, rollPart)
                 end
                 local cash = getCashAmount()
-                local lockerDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s",
-                    lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash))
+                local invCount, invMax, hasInvSpace = getLockerInventoryInfo()
+                local invText = string.format("%d/%d", invCount, invMax)
+                if not hasInvSpace then invText = invText .. " (Full ⚠️)" end
+                local lockerDesc = string.format("• Status: %s\n• Station Locker: %s (%s)\n• Price: $%s (Min Buffer: $%s)\n• Current Cash: $%s\n• Locker Inv: %s",
+                    lockerStatusText or "Idle 💤", tostring(curBox), tostring(curVar), formatNumber(price), formatNumber(minCashBuffer or 0), formatNumber(cash), invText)
 
                 updateParagraph(LockerStatusParagraph, "Locker Rolling & Purchase Status", lockerDesc)
             end
