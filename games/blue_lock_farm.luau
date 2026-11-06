@@ -983,8 +983,8 @@ local autoRerollGrades = false
 local selectedRerollUnits = { "All Units" }
 local targetGrades = { "S", "SS", "X", "EX", "UR" }
 local rerollCurrencyMode = "Auto (Tokens then Cash)"
-local autoTeleportToGrading = false
-local autoUnequipForReroll = false
+local autoTeleportToGrading = true
+local autoUnequipForReroll = true
 
 -- Ball Skin Automation & Market
 local autoBuyBallSkins = false
@@ -2407,7 +2407,7 @@ UIElements.rerollCurrency = TabAutomation:Dropdown({
 UIElements.autoTeleportToGrading = TabAutomation:Toggle({
     Title = "Auto Teleport to Grading Station",
     Desc = "Teleports to the grading station if you do not have Bluetooth enabled",
-    Value = false,
+    Value = true,
     Callback = function(val)
         autoTeleportToGrading = val
     end
@@ -2416,9 +2416,148 @@ UIElements.autoTeleportToGrading = TabAutomation:Toggle({
 UIElements.autoUnequipForReroll = TabAutomation:Toggle({
     Title = "Auto Unequip to Reroll",
     Desc = "Temporarily removes placed units from conveyor droppers so they can be graded",
-    Value = false,
+    Value = true,
     Callback = function(val)
         autoUnequipForReroll = val
+    end
+})
+
+TabAutomation:Button({
+    Title = "Level Up All Placed Units (1-Click)",
+    Desc = "Upgrades all placed character units on your tycoon conveyors that you can afford",
+    Callback = function()
+        task.spawn(function()
+            local upgradedCount = 0
+            pcall(function()
+                local plot = getMyPlot()
+                local conveyors = plot and plot:FindFirstChild("Systems")
+                    and plot.Systems:FindFirstChild("TycoonConveyor")
+                    and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
+                if not conveyors or not Remotes:FindFirstChild("RequestPlayerUnitLevelUp") then return end
+                local cash = getCashAmount()
+                local pus = PlayerUnitService
+                for _, conv in ipairs(conveyors:GetChildren()) do
+                    local dFolder = conv:FindFirstChild("Droppers")
+                    if dFolder then
+                        for _, dropper in ipairs(dFolder:GetChildren()) do
+                            if dropper:IsA("BasePart") and dropper:GetAttribute("Type") == "PlayerUnit" then
+                                local uName = dropper:GetAttribute("PlayerUnitName")
+                                if uName then
+                                    local curLvl = dropper:GetAttribute("PlayerUnitLevel") or 1
+                                    if curLvl < 50 then
+                                        local uData = {
+                                            PlayerUnitName = uName,
+                                            Level = curLvl,
+                                            Variant = dropper:GetAttribute("PlayerUnitVariant") or "Normal",
+                                            Grade = dropper:GetAttribute("PlayerUnitGrade"),
+                                            Trait = dropper:GetAttribute("PlayerUnitTrait"),
+                                            Equipped = true
+                                        }
+                                        if isUnitSelected(nil, uData, selectedLevelUnits) then
+                                            local cost = nil
+                                            if pus and typeof(pus.GetLevelUpgradeCost) == "function" then
+                                                pcall(function()
+                                                    cost = pus.GetLevelUpgradeCost(LocalPlayer, {
+                                                        PlayerUnitName = uName,
+                                                        PlayerUnitVariant = uData.Variant,
+                                                        PlayerUnitGrade = uData.Grade,
+                                                        PlayerUnitTrait = uData.Trait
+                                                    }, curLvl + 1)
+                                                end)
+                                            end
+                                            if cost == nil or cash >= cost then
+                                                Remotes.RequestPlayerUnitLevelUp:FireServer(dropper)
+                                                upgradedCount = upgradedCount + 1
+                                                if cost then cash = cash - cost end
+                                                task.wait(0.12)
+                                                cash = getCashAmount()
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            WindUI:Notify({
+                Title = "Units Level Up",
+                Content = string.format("Level up triggered for %d units! Current Cash: $%s", upgradedCount, formatNumber(getCashAmount())),
+                Duration = 3.5,
+                Icon = "arrow-up-circle"
+            })
+        end)
+    end
+})
+
+TabAutomation:Button({
+    Title = "Equip Best Units (Fill Empty Conveyors)",
+    Desc = "Places your highest earning backpack units onto all empty conveyor droppers",
+    Callback = function()
+        task.spawn(function()
+            local placedCount = 0
+            pcall(function()
+                if Remotes:FindFirstChild("EquipBestPlayerUnits") then
+                    Remotes.EquipBestPlayerUnits:FireServer()
+                end
+                local plot = getMyPlot()
+                local conveyors = plot and plot:FindFirstChild("Systems")
+                    and plot.Systems:FindFirstChild("TycoonConveyor")
+                    and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
+                if not conveyors or not Remotes:FindFirstChild("PlacePlayerUnitOnDropper") then return end
+
+                local emptyDroppers = {}
+                for _, conv in ipairs(conveyors:GetChildren()) do
+                    local dFolder = conv:FindFirstChild("Droppers")
+                    if dFolder then
+                        for _, dropper in ipairs(dFolder:GetChildren()) do
+                            if dropper:IsA("BasePart") and dropper:GetAttribute("Unlocked") == true and dropper:GetAttribute("Type") == nil then
+                                table.insert(emptyDroppers, dropper)
+                            end
+                        end
+                    end
+                end
+
+                if #emptyDroppers == 0 then return end
+
+                local allUnits = nil
+                if PlayerUnitService and LocalPlayer then
+                    pcall(function() allUnits = PlayerUnitService.GetAllPlayerUnits(LocalPlayer) end)
+                end
+                if not allUnits and ClientDataManager then
+                    pcall(function()
+                        local d = ClientDataManager.GetData()
+                        allUnits = d and d.PlayerUnits
+                    end)
+                end
+                if not allUnits or type(allUnits) ~= "table" then return end
+
+                local backpack = {}
+                for guid, uData in pairs(allUnits) do
+                    if not uData.Equipped then
+                        local cpd = 0
+                        if PlayerUnitService and typeof(PlayerUnitService.GetCashPerDrop) == "function" then
+                            pcall(function() cpd = PlayerUnitService.GetCashPerDrop(LocalPlayer, guid) end)
+                        end
+                        table.insert(backpack, { guid = guid, cpd = cpd or 0, name = uData.PlayerUnitName })
+                    end
+                end
+
+                table.sort(backpack, function(a, b) return a.cpd > b.cpd end)
+
+                for i = 1, math.min(#emptyDroppers, #backpack) do
+                    Remotes.PlacePlayerUnitOnDropper:FireServer(emptyDroppers[i], backpack[i].guid)
+                    placedCount = placedCount + 1
+                    task.wait(0.15)
+                end
+            end)
+            WindUI:Notify({
+                Title = "Units Equipped",
+                Content = string.format("Placed %d backpack units onto your conveyor droppers.", placedCount),
+                Duration = 3,
+                Icon = "user-check"
+            })
+        end)
     end
 })
 
@@ -4272,33 +4411,118 @@ task.spawn(function()
                     end
                 end
 
-                -- Auto Equip Best Units
-                if autoEquipBestUnits and Remotes:FindFirstChild("EquipBestPlayerUnits") then
-                    Remotes.EquipBestPlayerUnits:FireServer()
-                end
-
-                -- Auto Level Up Units (Filterable by Unit Selection)
-                if autoLevelUnits and Remotes:FindFirstChild("RequestPlayerUnitLevelUp") then
-                    local allUnits = nil
-                    if PlayerUnitService and LocalPlayer then
-                        pcall(function() allUnits = PlayerUnitService.GetAllPlayerUnits(LocalPlayer) end)
-                    end
-                    if not allUnits and ClientDataManager then
-                        pcall(function()
-                            local d = ClientDataManager.GetData()
-                            allUnits = d and d.PlayerUnits
-                        end)
-                    end
-                    if allUnits and type(allUnits) == "table" then
-                        for guid, uData in pairs(allUnits) do
-                            if isUnitSelected(guid, uData, selectedLevelUnits) then
-                                Remotes.RequestPlayerUnitLevelUp:FireServer(guid)
+                -- Auto Equip Best Units (Smart Placement on Empty Droppers)
+                if autoEquipBestUnits then
+                    pcall(function()
+                        if Remotes:FindFirstChild("EquipBestPlayerUnits") then
+                            Remotes.EquipBestPlayerUnits:FireServer()
+                        end
+                        local plot = getMyPlot()
+                        local conveyors = plot and plot:FindFirstChild("Systems")
+                            and plot.Systems:FindFirstChild("TycoonConveyor")
+                            and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
+                        if conveyors and Remotes:FindFirstChild("PlacePlayerUnitOnDropper") then
+                            local emptyDroppers = {}
+                            for _, conv in ipairs(conveyors:GetChildren()) do
+                                local dFolder = conv:FindFirstChild("Droppers")
+                                if dFolder then
+                                    for _, dropper in ipairs(dFolder:GetChildren()) do
+                                        if dropper:IsA("BasePart") and dropper:GetAttribute("Unlocked") == true and dropper:GetAttribute("Type") == nil then
+                                            table.insert(emptyDroppers, dropper)
+                                        end
+                                    end
+                                end
+                            end
+                            if #emptyDroppers > 0 then
+                                local allUnits = nil
+                                if PlayerUnitService and LocalPlayer then
+                                    pcall(function() allUnits = PlayerUnitService.GetAllPlayerUnits(LocalPlayer) end)
+                                end
+                                if not allUnits and ClientDataManager then
+                                    pcall(function()
+                                        local d = ClientDataManager.GetData()
+                                        allUnits = d and d.PlayerUnits
+                                    end)
+                                end
+                                if allUnits and type(allUnits) == "table" then
+                                    local backpack = {}
+                                    for guid, uData in pairs(allUnits) do
+                                        if not uData.Equipped then
+                                            local cpd = 0
+                                            if PlayerUnitService and typeof(PlayerUnitService.GetCashPerDrop) == "function" then
+                                                pcall(function() cpd = PlayerUnitService.GetCashPerDrop(LocalPlayer, guid) end)
+                                            end
+                                            table.insert(backpack, { guid = guid, cpd = cpd or 0 })
+                                        end
+                                    end
+                                    table.sort(backpack, function(a, b) return a.cpd > b.cpd end)
+                                    for i = 1, math.min(#emptyDroppers, #backpack) do
+                                        Remotes.PlacePlayerUnitOnDropper:FireServer(emptyDroppers[i], backpack[i].guid)
+                                        task.wait(0.12)
+                                    end
+                                end
                             end
                         end
-                    end
+                    end)
                 end
 
-                -- Auto Reroll Unit Grades (Filterable by Unit Selection, Currency & Target Grades)
+                -- Auto Level Up Units (Correctly targets conveyor dropper parts with cost & max checks)
+                if autoLevelUnits and Remotes:FindFirstChild("RequestPlayerUnitLevelUp") then
+                    pcall(function()
+                        local plot = getMyPlot()
+                        local conveyors = plot and plot:FindFirstChild("Systems")
+                            and plot.Systems:FindFirstChild("TycoonConveyor")
+                            and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
+                        if conveyors then
+                            local cash = getCashAmount()
+                            local pus = PlayerUnitService
+                            for _, conv in ipairs(conveyors:GetChildren()) do
+                                local dFolder = conv:FindFirstChild("Droppers")
+                                if dFolder then
+                                    for _, dropper in ipairs(dFolder:GetChildren()) do
+                                        if dropper:IsA("BasePart") and dropper:GetAttribute("Type") == "PlayerUnit" then
+                                            local uName = dropper:GetAttribute("PlayerUnitName")
+                                            if uName then
+                                                local curLvl = dropper:GetAttribute("PlayerUnitLevel") or 1
+                                                if curLvl < 50 then
+                                                    local uData = {
+                                                        PlayerUnitName = uName,
+                                                        Level = curLvl,
+                                                        Variant = dropper:GetAttribute("PlayerUnitVariant") or "Normal",
+                                                        Grade = dropper:GetAttribute("PlayerUnitGrade"),
+                                                        Trait = dropper:GetAttribute("PlayerUnitTrait"),
+                                                        Equipped = true
+                                                    }
+                                                    if isUnitSelected(nil, uData, selectedLevelUnits) then
+                                                        local cost = nil
+                                                        if pus and typeof(pus.GetLevelUpgradeCost) == "function" then
+                                                            pcall(function()
+                                                                cost = pus.GetLevelUpgradeCost(LocalPlayer, {
+                                                                    PlayerUnitName = uName,
+                                                                    PlayerUnitVariant = uData.Variant,
+                                                                    PlayerUnitGrade = uData.Grade,
+                                                                    PlayerUnitTrait = uData.Trait
+                                                                }, curLvl + 1)
+                                                            end)
+                                                        end
+                                                        if cost == nil or cash >= cost then
+                                                            Remotes.RequestPlayerUnitLevelUp:FireServer(dropper)
+                                                            if cost then cash = cash - cost end
+                                                            task.wait(0.12)
+                                                            cash = getCashAmount()
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                end
+
+                -- Auto Reroll Unit Grades (Supports unequipped & equipped units with auto-unequip and grading station proximity)
                 if autoRerollGrades then
                     local rerollRemote = Remotes:FindFirstChild("NewRerollPlayerUnitGrade") or Remotes:FindFirstChild("RerollPlayerUnitGrade")
                     if rerollRemote and PlayerUnitService and LocalPlayer then
@@ -4348,7 +4572,7 @@ task.spawn(function()
                                         lastGradingWarn = now
                                         WindUI:Notify({
                                             Title = "Grading Range Warning",
-                                            Content = "Cannot reroll: You must be at Grading Station or have Bluetooth! Enable 'Auto Teleport to Grading Station' or use the teleport button.",
+                                            Content = "Cannot reroll: You must be at Grading Station or have Bluetooth! Teleporting to station or enable 'Auto Teleport'.",
                                             Duration = 5,
                                             Icon = "alert-triangle"
                                         })
@@ -4362,26 +4586,29 @@ task.spawn(function()
                                     if isUnitSelected(guid, uData, selectedRerollUnits) then
                                         local curGrade = uData and (uData.Grade or uData.GradeTier) or "None"
                                         if not table.find(targetGrades, curGrade) then
-                                            -- If unit is placed/equipped on conveyor dropper:
+                                            local originalDropper = nil
+                                            -- If unit is placed on a dropper, unequip it first (game requires unequipped for grading)
                                             if uData.Equipped == true then
                                                 if autoUnequipForReroll then
                                                     pcall(function()
                                                         local plot = getMyPlot()
-                                                        local droppers = plot and plot.Systems
+                                                        local conveyors = plot and plot.Systems
                                                             and plot.Systems:FindFirstChild("TycoonConveyor")
                                                             and plot.Systems.TycoonConveyor:FindFirstChild("Conveyors")
-                                                        if droppers and Remotes:FindFirstChild("RemovePlayerUnitFromDropper") then
-                                                            for _, conv in ipairs(droppers:GetChildren()) do
+                                                        if conveyors and Remotes:FindFirstChild("RemovePlayerUnitFromDropper") then
+                                                            for _, conv in ipairs(conveyors:GetChildren()) do
                                                                 local dFolder = conv:FindFirstChild("Droppers")
                                                                 if dFolder then
                                                                     for _, d in ipairs(dFolder:GetChildren()) do
-                                                                        if d:GetAttribute("PlayerUnitName") == uData.PlayerUnitName and d:GetAttribute("PlayerUnitLevel") == uData.Level then
+                                                                        if d:GetAttribute("PlayerUnitName") == uData.PlayerUnitName and d:GetAttribute("PlayerUnitVariant") == uData.Variant then
+                                                                            originalDropper = d
                                                                             Remotes.RemovePlayerUnitFromDropper:FireServer(d)
                                                                             task.wait(0.35)
                                                                             break
                                                                         end
                                                                     end
                                                                 end
+                                                                if originalDropper then break end
                                                             end
                                                         end
                                                     end)
@@ -4391,7 +4618,7 @@ task.spawn(function()
                                                         lastEquippedWarn = now
                                                         WindUI:Notify({
                                                             Title = "Unit Placed on Conveyor",
-                                                            Content = string.format("Unit '%s' is placed on your conveyor! Enable 'Auto Unequip to Reroll' or unequip it first.", uData.PlayerUnitName or "Unit"),
+                                                            Content = string.format("Unit '%s' is placed on your conveyor! Enable 'Auto Unequip to Reroll' to reroll it.", uData.PlayerUnitName or "Unit"),
                                                             Duration = 4,
                                                             Icon = "alert-circle"
                                                         })
@@ -4420,21 +4647,13 @@ task.spawn(function()
                                                 end)
                                             end
 
-                                            local canAffordCash = false
-                                            if CurrencyService and typeof(CurrencyService.CanAfford) == "function" then
-                                                pcall(function() canAffordCash = CurrencyService.CanAfford(LocalPlayer, "Cash", rawCost) end)
-                                            end
+                                            local cash = getCashAmount()
+                                            local canAffordCash = (cash >= rawCost)
 
                                             if rerollCurrencyMode == "Grade Tokens Only" then
-                                                if tokenCount >= 1 then
-                                                    useTokens = true
-                                                    canAfford = true
-                                                end
+                                                if tokenCount >= 1 then useTokens = true canAfford = true end
                                             elseif rerollCurrencyMode == "Cash Only" then
-                                                if canAffordCash then
-                                                    useTokens = false
-                                                    canAfford = true
-                                                end
+                                                if canAffordCash then useTokens = false canAfford = true end
                                             else -- "Auto (Tokens then Cash)"
                                                 if tokenCount >= 1 then
                                                     useTokens = true
@@ -4451,10 +4670,13 @@ task.spawn(function()
                                                     lastAffordWarn = now
                                                     WindUI:Notify({
                                                         Title = "Cannot Afford Grade Reroll",
-                                                        Content = string.format("Insufficient %s to reroll %s (Cost: %s Cash or 1 Token).", rerollCurrencyMode, uData.PlayerUnitName or "Unit", tostring(rawCost)),
+                                                        Content = string.format("Insufficient funds to reroll %s (Cost: $%s or 1 Token).", uData.PlayerUnitName or "Unit", formatNumber(rawCost)),
                                                         Duration = 4,
                                                         Icon = "dollar-sign"
                                                     })
+                                                end
+                                                if originalDropper and Remotes:FindFirstChild("PlacePlayerUnitOnDropper") then
+                                                    Remotes.PlacePlayerUnitOnDropper:FireServer(originalDropper, guid)
                                                 end
                                             else
                                                 -- Perform Reroll with exact 3 arguments: (guid, useTokens, curGrade)
@@ -4473,24 +4695,28 @@ task.spawn(function()
                                                 local checkData = nil
                                                 pcall(function() checkData = PlayerUnitService.GetStoredPlayerUnitData(LocalPlayer, guid) end)
                                                 local updatedGrade = checkData and (checkData.Grade or checkData.GradeTier) or curGrade
-                                                if updatedGrade ~= curGrade then
-                                                    if table.find(targetGrades, updatedGrade) then
-                                                        WindUI:Notify({
-                                                            Title = "🎉 Hit Target Grade!",
-                                                            Content = string.format("%s reached Grade %s!", uData.PlayerUnitName or "Unit", updatedGrade),
-                                                            Duration = 6,
-                                                            Icon = "award"
-                                                        })
-                                                        -- Re-equip best units if autoUnequip was used
-                                                        if autoUnequipForReroll and Remotes:FindFirstChild("EquipBestPlayerUnits") then
-                                                            task.wait(0.3)
-                                                            Remotes.EquipBestPlayerUnits:FireServer()
-                                                        end
-                                                        -- If teleported to station, return back to plot
-                                                        if autoTeleportToGrading and savedPlotPosBeforeGrading and hrp then
-                                                            hrp.CFrame = savedPlotPosBeforeGrading
-                                                            savedPlotPosBeforeGrading = nil
-                                                        end
+
+                                                if updatedGrade ~= curGrade and table.find(targetGrades, updatedGrade) then
+                                                    WindUI:Notify({
+                                                        Title = "🎉 Hit Target Grade!",
+                                                        Content = string.format("%s reached Grade %s!", uData.PlayerUnitName or "Unit", updatedGrade),
+                                                        Duration = 6,
+                                                        Icon = "award"
+                                                    })
+                                                    if originalDropper and Remotes:FindFirstChild("PlacePlayerUnitOnDropper") then
+                                                        task.wait(0.2)
+                                                        Remotes.PlacePlayerUnitOnDropper:FireServer(originalDropper, guid)
+                                                        originalDropper = nil
+                                                    end
+                                                    if autoTeleportToGrading and savedPlotPosBeforeGrading and hrp then
+                                                        hrp.CFrame = savedPlotPosBeforeGrading
+                                                        savedPlotPosBeforeGrading = nil
+                                                    end
+                                                else
+                                                    -- Re-place on dropper if single-step or non-continuous
+                                                    if originalDropper and not autoRerollGrades and Remotes:FindFirstChild("PlacePlayerUnitOnDropper") then
+                                                        Remotes.PlacePlayerUnitOnDropper:FireServer(originalDropper, guid)
+                                                        originalDropper = nil
                                                     end
                                                 end
                                                 break -- Process one reroll per cycle for clean responsiveness
