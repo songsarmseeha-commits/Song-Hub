@@ -13,6 +13,19 @@ const cloudBackup = require('./cloud_backup');
 
 const app = express();
 
+// ==============================================================================
+// 🛡️ ENTERPRISE-GRADE SECURITY HEADERS & DEFENSE-IN-DEPTH
+// ==============================================================================
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+    res.removeHeader('X-Powered-By');
+    next();
+});
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -23,42 +36,117 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ==============================================================================
-// UNIVERSAL MULTI-GAME HUB LOADER & SCRIPT SERVING ROUTES
-// ==============================================================================
-
-// Universal Loadstring script endpoint (Clients execute this single URL)
-app.get('/loader.luau', (req, res) => {
-    const loaderPath = path.join(__dirname, 'Universal_Loader.luau');
-    if (fs.existsSync(loaderPath)) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return res.send(fs.readFileSync(loaderPath, 'utf8'));
-    }
-    return res.status(404).send('-- Universal Loader file not found');
-});
-
-// Dynamic Game Script endpoint (Serves Anime Galaxies, Hunting Together, Blue Lock Farm)
-app.get('/scripts/:gameName', (req, res) => {
-    let name = req.params.gameName.replace(/[^a-zA-Z0-9_\-\.]/g, '');
-    if (!name.endsWith('.luau') && !name.endsWith('.lua')) {
-        name += '.luau';
-    }
-    const scriptPath = path.join(__dirname, 'games', name);
-    if (fs.existsSync(scriptPath)) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return res.send(fs.readFileSync(scriptPath, 'utf8'));
-    }
-    return res.status(404).send('-- Game script not found for: ' + name);
-});
-
-// Simple session token memory store for admin login
-const activeAdminTokens = new Set();
-
-// Helper: Extract real client IP
+// Helper: Extract real client IP (Cloudflare / Reverse Proxy aware)
 function getClientIp(req) {
     return req.headers['cf-connecting-ip'] ||
            req.headers['x-forwarded-for']?.split(',')[0].trim() ||
            req.socket.remoteAddress || '127.0.0.1';
+}
+
+// Timing-Safe String Comparison (Prevents Timing Attacks on Passwords & Tokens)
+function timingSafeCompare(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    if (bufA.length !== bufB.length) {
+        crypto.timingSafeEqual(bufA, bufA);
+        return false;
+    }
+    return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// ==============================================================================
+// 🚦 HIGH-PERFORMANCE SLIDING-WINDOW RATE LIMITING ENGINE (ANTI-DDOS & BRUTE-FORCE)
+// ==============================================================================
+const rateLimitBuckets = new Map();
+
+// Periodic cleanup of expired rate limit buckets every 60s
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of rateLimitBuckets.entries()) {
+        if (now > bucket.resetTime) {
+            rateLimitBuckets.delete(key);
+        }
+    }
+}, 60000);
+
+function createRateLimiter({ windowMs, maxRequests, message = 'Too many requests, please slow down.' }) {
+    return (req, res, next) => {
+        const ip = getClientIp(req);
+        const routeKey = `${req.baseUrl || req.path}:${ip}`;
+        const now = Date.now();
+
+        let bucket = rateLimitBuckets.get(routeKey);
+        if (!bucket || now > bucket.resetTime) {
+            bucket = { count: 1, resetTime: now + windowMs };
+            rateLimitBuckets.set(routeKey, bucket);
+            return next();
+        }
+
+        bucket.count++;
+        if (bucket.count > maxRequests) {
+            const retryAfterSec = Math.max(1, Math.ceil((bucket.resetTime - now) / 1000));
+            res.setHeader('Retry-After', retryAfterSec);
+            return res.status(429).json({
+                success: false,
+                error: message,
+                retryAfterSeconds: retryAfterSec
+            });
+        }
+
+        next();
+    };
+}
+
+// Security rate limiters
+const globalLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 200, message: 'Global rate limit exceeded. Please wait.' });
+const verifyLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 40, message: 'Verification limit exceeded. Please wait.' });
+const scriptTokenLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 20, message: 'Script token request limit exceeded.' });
+const adminLoginLimiter = createRateLimiter({ windowMs: 15 * 60000, maxRequests: 5, message: 'Too many failed admin login attempts. Cooldown: 15 minutes.' });
+const getKeyLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 40, message: 'Too many GetKey requests. Please slow down.' });
+
+// Apply global rate limiter across all incoming traffic
+app.use(globalLimiter);
+
+// ==============================================================================
+// 🔑 ONE-TIME EPHEMERAL SCRIPT EXECUTION TOKENS (ANTI-DUMP & ANTI-LEAK)
+// ==============================================================================
+const activeScriptTokens = new Map();
+
+// Periodic sweep for expired script tokens every 5 seconds
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, data] of activeScriptTokens.entries()) {
+        if (now > data.expiresAt) {
+            activeScriptTokens.delete(token);
+        }
+    }
+}, 5000);
+
+// ==============================================================================
+// 🔐 EXPIRING ADMIN SESSIONS (24-HOUR TTL WITH CRYPTO REVOCATION)
+// ==============================================================================
+const activeAdminSessions = new Map();
+
+function createAdminSession(ip) {
+    const token = crypto.randomBytes(32).toString('hex');
+    activeAdminSessions.set(token, {
+        createdAt: Date.now(),
+        expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 Hours TTL
+        ip
+    });
+    return token;
+}
+
+function isValidAdminSession(token) {
+    if (!token || typeof token !== 'string') return false;
+    const session = activeAdminSessions.get(token);
+    if (!session) return false;
+    if (Date.now() > session.expiresAt) {
+        activeAdminSessions.delete(token);
+        return false;
+    }
+    return true;
 }
 
 // Helper: Generate secure random key format (e.g. GALAXY-ABCD-1234-EF56)
@@ -69,7 +157,7 @@ function generateKey(prefix = 'GALAXY') {
     return `${prefix}-${p1}-${p2}-${p3}`;
 }
 
-// Admin Authentication Middleware
+// Admin Authentication Middleware (Timing-Safe & Expiring Sessions)
 function requireAdmin(req, res, next) {
     const authHeader = req.headers['authorization'];
     const customPass = req.headers['x-admin-password'];
@@ -79,12 +167,95 @@ function requireAdmin(req, res, next) {
         token = authHeader.substring(7);
     }
 
-    if ((token && activeAdminTokens.has(token)) || customPass === config.ADMIN_PASSWORD) {
+    if (token && isValidAdminSession(token)) {
         return next();
     }
 
-    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid Admin Credentials' });
+    if (customPass && timingSafeCompare(customPass, config.ADMIN_PASSWORD)) {
+        return next();
+    }
+
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired Admin Credentials' });
 }
+
+// ==============================================================================
+// UNIVERSAL MULTI-GAME HUB LOADER & SCRIPT SERVING ROUTES
+// ==============================================================================
+
+// Universal Loadstring script endpoint (Clients execute this single URL - 100% No-Cache)
+app.get(['/loader.luau', '/loader', '/Universal_Loader.luau', '/load'], (req, res) => {
+    const loaderPath = path.join(__dirname, 'Universal_Loader.luau');
+    if (fs.existsSync(loaderPath)) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return res.send(fs.readFileSync(loaderPath, 'utf8'));
+    }
+    return res.status(404).send('-- Universal Loader file not found');
+});
+
+// Dynamic Game Script endpoint (Secured with One-Time Handshake Token)
+app.get('/scripts/:gameName', (req, res) => {
+    let name = req.params.gameName.replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    if (!name.endsWith('.luau') && !name.endsWith('.lua')) {
+        name += '.luau';
+    }
+
+    const token = (req.query.token || req.headers['x-script-token'] || (req.headers['authorization'] && req.headers['authorization'].replace('Bearer ', '')) || '').trim();
+    const adminPass = req.headers['x-admin-password'];
+
+    let isAuthorized = false;
+    if (adminPass && timingSafeCompare(adminPass, config.ADMIN_PASSWORD)) {
+        isAuthorized = true;
+    } else if (token && activeScriptTokens.has(token)) {
+        const tokenData = activeScriptTokens.get(token);
+        const now = Date.now();
+        // Check TTL, usage, and game match
+        if (now <= tokenData.expiresAt && !tokenData.used) {
+            const requestedClean = name.replace(/\.luau$|\.lua$/, '');
+            const tokenClean = tokenData.gameName.replace(/\.luau$|\.lua$/, '');
+            if (requestedClean === tokenClean || tokenClean === 'all') {
+                // Immediately consume token so it cannot be used again
+                tokenData.used = true;
+                activeScriptTokens.delete(token);
+                isAuthorized = true;
+            }
+        }
+    }
+
+    if (!isAuthorized) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.status(403).send('-- [Security Alert] 403 Forbidden: Missing, invalid, or expired script token.\n-- Unauthorized download or inspection attempt blocked.');
+    }
+
+    const scriptPath = path.join(__dirname, 'games', name);
+    // Path traversal check
+    const gamesDir = path.resolve(__dirname, 'games');
+    if (!path.resolve(scriptPath).startsWith(gamesDir)) {
+        return res.status(403).send('-- Invalid script path');
+    }
+
+    if (fs.existsSync(scriptPath)) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return res.send(fs.readFileSync(scriptPath, 'utf8'));
+    }
+    return res.status(404).send('-- Game script not found for: ' + name);
+});
+
+// Version check endpoint for in-game auto-update
+app.get('/version', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const vPath = path.join(__dirname, 'version.json');
+    if (fs.existsSync(vPath)) {
+        return res.send(fs.readFileSync(vPath, 'utf8'));
+    }
+    return res.json({ version: '1.0.6', updatedAt: Date.now() });
+});
 
 // ==============================================================================
 // 1. CLIENT VERIFICATION ENDPOINTS (ROBLOX SCRIPT INTEGRATION)
@@ -313,8 +484,92 @@ async function handleVerify(req, res) {
     });
 }
 
-app.post('/api/v1/verify', handleVerify);
-app.get('/api/v1/verify', handleVerify);
+// ==============================================================================
+// 1. CLIENT VERIFICATION & SCRIPT TOKEN ENDPOINTS
+// ==============================================================================
+
+app.post('/api/v1/verify', verifyLimiter, handleVerify);
+app.get('/api/v1/verify', verifyLimiter, handleVerify);
+
+// Secure One-Time Script Execution Token Generator (Handshake Endpoint)
+function handleScriptToken(req, res) {
+    const body = req.body || {};
+    const query = req.query || {};
+    const ip = getClientIp(req);
+
+    const key = (body.key || query.key || '').trim();
+    const hwid = (body.hwid || query.hwid || '').trim();
+    const userId = body.userId || query.userId || body.robloxUserId || query.robloxUserId;
+    const gameName = (body.gameName || query.gameName || body.game || query.game || '').trim();
+
+    if (!gameName) {
+        return res.status(400).json({ success: false, error: 'Missing gameName parameter' });
+    }
+
+    let isAuthorized = false;
+    let authReason = '';
+
+    // A. Direct Whitelist Check (VIP / Owner)
+    if (userId) {
+        const whitelistedUser = db.findWhitelistedUser(userId);
+        if (whitelistedUser) {
+            isAuthorized = true;
+            authReason = `Whitelisted ${whitelistedUser.role}`;
+        }
+    }
+
+    // B. License Key Check
+    if (!isAuthorized && key) {
+        const keyData = db.findKey(key);
+        if (keyData && keyData.is_active === 1) {
+            const now = Math.floor(Date.now() / 1000);
+            if (!keyData.expires_at || now <= keyData.expires_at) {
+                // If HWID is locked, verify HWID match
+                if (keyData.hwid && hwid && keyData.hwid !== hwid) {
+                    const hwidList = db.getKeyHwids(keyData.id);
+                    const matched = hwidList.some(h => h.hwid === hwid);
+                    if (matched) {
+                        isAuthorized = true;
+                        authReason = `Key ${keyData.key_type}`;
+                    }
+                } else {
+                    isAuthorized = true;
+                    authReason = `Key ${keyData.key_type}`;
+                }
+            }
+        }
+    }
+
+    if (!isAuthorized) {
+        return res.status(403).json({
+            success: false,
+            error: 'Unauthorized: Valid license key or whitelisted UserID required to retrieve script execution token.'
+        });
+    }
+
+    // Generate cryptographically secure one-time token (TTL: 25 seconds)
+    const token = crypto.randomBytes(32).toString('hex');
+    const cleanGameName = gameName.replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    const expiresAt = Date.now() + 25000;
+
+    activeScriptTokens.set(token, {
+        gameName: cleanGameName,
+        hwid: hwid || null,
+        userId: userId || null,
+        expiresAt,
+        used: false
+    });
+
+    return res.json({
+        success: true,
+        token,
+        expiresIn: 25,
+        message: `One-time script token generated for ${cleanGameName}`
+    });
+}
+
+app.post('/api/v1/script-token', scriptTokenLimiter, handleScriptToken);
+app.get('/api/v1/script-token', scriptTokenLimiter, handleScriptToken);
 
 // Heartbeat endpoint for active game sessions
 app.post('/api/v1/heartbeat', (req, res) => {
@@ -369,15 +624,25 @@ app.post('/api/v1/session/close', (req, res) => {
 // 2. ADMIN API ENDPOINTS (DASHBOARD OPERATIONS)
 // ==============================================================================
 
-// Admin Login
-app.post('/api/v1/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === config.ADMIN_PASSWORD) {
-        const token = crypto.randomBytes(32).toString('hex');
-        activeAdminTokens.add(token);
-        return res.json({ success: true, token, hubName: config.HUB_NAME });
+// Admin Login (Hardened with Brute-Force Rate Limiting & Timing-Safe Verification)
+app.post('/api/v1/admin/login', adminLoginLimiter, (req, res) => {
+    const { password } = req.body || {};
+    const ip = getClientIp(req);
+    if (password && timingSafeCompare(password, config.ADMIN_PASSWORD)) {
+        const token = createAdminSession(ip);
+        return res.json({ success: true, token, hubName: config.HUB_NAME, expiresIn: 86400 });
     }
     return res.status(401).json({ success: false, error: 'Incorrect Admin Password' });
+});
+
+// Admin Logout
+app.post('/api/v1/admin/logout', requireAdmin, (req, res) => {
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        activeAdminSessions.delete(token);
+    }
+    res.json({ success: true, message: 'Admin logged out' });
 });
 
 // Admin Stats
