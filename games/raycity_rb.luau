@@ -98,8 +98,8 @@ end
 local Config = {
     -- Autonomous Quest Farming
     AutoFarmQuests = false,
-    QuestDriveMode = "Realistic Road Drive", -- "Realistic Road Drive" | "Express Glide" | "Hybrid Cruise"
-    QuestDriveSpeed = 220, -- km/h
+    QuestDriveMode = "Instant Warp", -- "Instant Warp" | "Hyper Sonic Glide" | "Realistic Road Drive" | "Hybrid Cruise"
+    QuestDriveSpeed = 500, -- km/h
     AutoSkipDialogue = true,
     AutoAcceptQuest = true,
     AutoClaimRewards = true,
@@ -163,7 +163,7 @@ end)
 -- ==============================================================================
 task.spawn(function()
     while true do
-        task.wait(0.15)
+        task.wait(0.05)
         if Config.AutoFarmQuests or Config.AutoSkipDialogue or Config.AutoAcceptQuest then
             pcall(function()
                 local qUi = nil
@@ -211,14 +211,13 @@ task.spawn(function()
                         end
                     end
 
-                    -- 3. Auto Close / Claim Result Dialog (Result, MissionResult, Drops)
-                    local resultDialog = qGui:FindFirstChild("Result", true) or qGui:FindFirstChild("QuestResult", true) or qGui:FindFirstChild("Drops", true)
+                    -- 3. Auto Close / Claim Result Dialog (MissionResult, Result, QuestResult, Drops)
+                    local resultDialog = qGui:FindFirstChild("MissionResult", true) or qGui:FindFirstChild("Result", true) or qGui:FindFirstChild("QuestResult", true) or qGui:FindFirstChild("Drops", true)
                     if resultDialog then
-                        if qUi and qUi.hideResult then
-                            pcall(function() qUi.hideResult() end)
-                        end
-                        if qUi and qUi.closeDrops then
-                            pcall(function() qUi.closeDrops() end)
+                        if qUi then
+                            if qUi.hideResult then pcall(function() qUi.hideResult() end) end
+                            if qUi.closeDrops then pcall(function() qUi.closeDrops() end) end
+                            if qUi._dialogEnter then pcall(function() qUi._dialogEnter() end) end
                         end
                         local closeBtn = resultDialog:FindFirstChild("Close", true) or resultDialog:FindFirstChild("Confirm", true) or resultDialog:FindFirstChild("Ok", true)
                         if closeBtn and closeBtn.Visible then
@@ -308,19 +307,19 @@ local stuckCounter = 0
 
 task.spawn(function()
     while true do
-        task.wait(0.2)
+        task.wait(0.08)
         if Config.AutoFarmQuests then
             local root = getCarRoot()
             if root then
-                local destPos, destObj = getActiveQuestDestination()
+                local destPos, destObj, points = getActiveQuestDestination()
 
                 -- Anti-Stuck Detection
                 if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 2 then
                     stuckCounter = stuckCounter + 1
-                    if stuckCounter >= 10 then -- Stuck for 2+ seconds
+                    if stuckCounter >= 8 then -- Stuck for ~1 second
                         -- Execute auto un-stuck hop
                         root.AssemblyLinearVelocity = Vector3.new(0, 45, 0)
-                        task.wait(0.3)
+                        task.wait(0.2)
                         stuckCounter = 0
                     end
                 else
@@ -330,14 +329,36 @@ task.spawn(function()
 
                 if destPos then
                     -- ==========================================================
-                    -- A. QUEST IN PROGRESS: DRIVE AUTONOMOUSLY TO DESTINATION
+                    -- A. QUEST IN PROGRESS: REACH DESTINATION AT LIGHTNING SPEED
                     -- ==========================================================
                     questFarmState = "DRIVING"
                     local dist = (root.Position - destPos).Magnitude
 
-                    if dist > 18 then
-                        if Config.QuestDriveMode == "Realistic Road Drive" then
-                            -- 1. Drive along actual Seoul roads using boosted AutoDrive
+                    if Config.QuestDriveMode == "Instant Warp" then
+                        -- Fast waypoint sweep to register route checkpoint gates
+                        if points and #points > 0 and dist > 40 then
+                            local step = math.max(1, math.floor(#points / 10))
+                            for i = 1, #points, step do
+                                root.CFrame = CFrame.new(points[i] + Vector3.new(0, 1.5, 0))
+                                task.wait(0.01)
+                            end
+                        end
+                        -- Warp directly to the destination marker
+                        root.CFrame = CFrame.new(destPos + Vector3.new(0, 1.5, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        dist = 0
+                    end
+
+                    if dist > 20 then
+                        if Config.QuestDriveMode == "Hyper Sonic Glide" then
+                            -- High-Speed Aerial Glide straight to destination (Bypasses all obstacles)
+                            local dir = (destPos - root.Position).Unit
+                            root.AssemblyLinearVelocity = dir * (Config.QuestDriveSpeed / 3.6)
+                            root.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(dir.X, 0, dir.Z))
+
+                        elseif Config.QuestDriveMode == "Realistic Road Drive" then
+                            -- Drive along actual Seoul roads using boosted AutoDrive
                             pcall(function()
                                 local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
                                 if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
@@ -345,9 +366,9 @@ task.spawn(function()
                                     if ad then
                                         if ad.C then
                                             ad.C.maxSpeed = Config.QuestDriveSpeed / 3.6
-                                            ad.C.cap1 = 80
-                                            ad.C.cap2 = 60
-                                            ad.C.cap3 = 50
+                                            ad.C.cap1 = 90
+                                            ad.C.cap2 = 70
+                                            ad.C.cap3 = 60
                                             ad.C.arriveSlowM = 5
                                             ad.C.arriveSlowerM = 2
                                         end
@@ -367,17 +388,11 @@ task.spawn(function()
                             local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
                             local currentKmh = root.AssemblyLinearVelocity.Magnitude * 3.6
                             if currentKmh < Config.QuestDriveSpeed then
-                                root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(flatDir * (Config.QuestDriveSpeed / 3.6), 0.2)
+                                root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(flatDir * (Config.QuestDriveSpeed / 3.6), 0.25)
                             end
 
-                        elseif Config.QuestDriveMode == "Express Glide" then
-                            -- 2. Smooth 3D Flight straight to destination (Bypasses all obstacles)
-                            local dir = (destPos - root.Position).Unit
-                            root.AssemblyLinearVelocity = dir * (Config.QuestDriveSpeed / 3.6)
-                            root.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(dir.X, 0, dir.Z))
-
                         elseif Config.QuestDriveMode == "Hybrid Cruise" then
-                            -- 3. High-Speed Ground Cruise with obstacle hopping
+                            -- High-Speed Ground Cruise with obstacle hopping
                             local dir = (destPos - root.Position).Unit
                             local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
                             root.AssemblyLinearVelocity = flatDir * (Config.QuestDriveSpeed / 3.6) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
@@ -385,10 +400,11 @@ task.spawn(function()
                         end
                     else
                         -- ==========================================================
-                        -- B. ARRIVED AT OBJECTIVE: COMPLETE & CLAIM
+                        -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
                         -- ==========================================================
                         questFarmState = "DELIVERING"
                         root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
                         root.CFrame = CFrame.new(destPos + Vector3.new(0, 1.5, 0))
 
                         -- Stop native AutoDrive
@@ -398,8 +414,6 @@ task.spawn(function()
                                 require(RaycityUi.AutoDrive).stop()
                             end
                         end)
-
-                        task.wait(0.3)
 
                         -- Submit delivery via server remotes
                         pcall(function()
@@ -414,11 +428,21 @@ task.spawn(function()
                             end
                         end)
 
-                        task.wait(0.6)
+                        -- Auto dismiss / claim rewards screen
+                        pcall(function()
+                            local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                            if qUi then
+                                if qUi.hideResult then qUi.hideResult() end
+                                if qUi.closeDrops then qUi.closeDrops() end
+                                if qUi._dialogEnter then qUi._dialogEnter() end
+                            end
+                        end)
+
+                        task.wait(0.35)
                     end
                 else
                     -- ==========================================================
-                    -- C. NO ACTIVE QUEST: AUTO DRIVE / WARP TO NEAREST NPC
+                    -- C. NO ACTIVE QUEST: AUTO WARP / DRIVE TO NEAREST NPC
                     -- ==========================================================
                     if Config.LoopNextQuest then
                         questFarmState = "SEARCHING"
@@ -439,11 +463,19 @@ task.spawn(function()
                         end
 
                         if nearestNpc then
+                            if Config.QuestDriveMode == "Instant Warp" then
+                                -- Instantly warp right in front of the NPC
+                                root.CFrame = CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 7), nearestNpc.Position)
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
+                                nearestDist = 7
+                            end
+
                             if nearestDist > 14 then
                                 -- Drive smoothly towards quest NPC
                                 local dir = (nearestNpc.Position - root.Position).Unit
                                 local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
-                                if Config.QuestDriveMode == "Express Glide" then
+                                if Config.QuestDriveMode == "Hyper Sonic Glide" then
                                     root.AssemblyLinearVelocity = dir * (Config.QuestDriveSpeed / 3.6)
                                 else
                                     root.AssemblyLinearVelocity = flatDir * (Config.QuestDriveSpeed / 3.6)
@@ -452,6 +484,7 @@ task.spawn(function()
                             else
                                 -- Arrived at NPC: stop and interact to take quest!
                                 root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
                                 pcall(function()
                                     local interactRemote = ReplicatedStorage:FindFirstChild("RaycityInteract") 
                                         and ReplicatedStorage.RaycityInteract:FindFirstChild("Remotes") 
@@ -466,7 +499,7 @@ task.spawn(function()
                                         qUi._dialogEnter()
                                     end
                                 end)
-                                task.wait(0.5)
+                                task.wait(0.25)
                             end
                         end
                     end
@@ -788,9 +821,9 @@ TabQuest:Toggle({
 })
 
 TabQuest:Dropdown({
-    Title = "🛣️ Driving Mode (รูปแบบการขับของบอท)",
-    Desc = "เลือกสไตล์การขับไปส่งของ",
-    Values = { "Realistic Road Drive", "Express Glide", "Hybrid Cruise" },
+    Title = "⚡ Speed & Travel Mode (รูปแบบการเดินทางทำเควส)",
+    Desc = "เลือกรูปแบบการเดินทางไปส่งของ: Instant Warp (วาร์ปทันที 0 วิ - ไวสุดในเกม), Hyper Sonic Glide (เหาะทะยานความเร็วสูง 500-800 km/h), Realistic Road Drive (ขับตามถนน)",
+    Values = { "Instant Warp", "Hyper Sonic Glide", "Realistic Road Drive", "Hybrid Cruise" },
     Value = Config.QuestDriveMode,
     Callback = function(val)
         Config.QuestDriveMode = val
@@ -799,8 +832,8 @@ TabQuest:Dropdown({
 
 TabQuest:Slider({
     Title = "⚡ Auto Driving Speed (ความเร็วขับส่งของ km/h)",
-    Desc = "ปรับความเร็วที่บอทใช้ขับไปส่งของและรับเควส",
-    Value = { Min = 100, Max = 500, Default = Config.QuestDriveSpeed },
+    Desc = "ปรับความเร็วที่บอทใช้เหาะและขับไปส่งของ",
+    Value = { Min = 100, Max = 800, Default = Config.QuestDriveSpeed },
     Callback = function(val)
         Config.QuestDriveSpeed = val
     end
