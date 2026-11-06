@@ -53,11 +53,6 @@ end
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-if not LocalPlayer then
-    pcall(function()
-        LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-    end)
-end
 
 -- ⚙️ CONFIGURATION
 local SERVER_HOST = "https://song-hub-avp8.onrender.com" -- Worldwide Live Cloud Server (Render)
@@ -69,13 +64,11 @@ local KEY_SAVE_PATH = "UniversalHub/saved_key.txt"
 local function getHardwareId()
     if gethwid then return gethwid() end
     if get_hwid then return get_hwid() end
-    local lp = Players.LocalPlayer or LocalPlayer
-    local uId = (lp and lp.UserId) or 0
     if identifyexecutor then
         local exec = identifyexecutor()
-        return exec .. "_" .. tostring(uId)
+        return exec .. "_" .. tostring(LocalPlayer.UserId)
     end
-    return "DEVICE_" .. tostring(uId)
+    return "DEVICE_" .. tostring(LocalPlayer.UserId)
 end
 
 -- Active Session State & Heartbeat Loop
@@ -171,6 +164,11 @@ local function detectGame()
         return "throw_food", "Throw Food For Animals 🍗", "throw_food.luau"
     end
 
+    -- 5. Raycity RB
+    if uId == 10772794231 or pId == 117419079466193 or game:GetService("ReplicatedStorage"):FindFirstChild("RCDrive") or workspace:FindFirstChild("MyCar") then
+        return "raycity_rb", "Raycity RB 🏎️", "raycity_rb.luau"
+    end
+
     -- Fallback: Check MarketplaceService Game Title
     local ok, info = pcall(function()
         return game:GetService("MarketplaceService"):GetProductInfo(pId)
@@ -185,6 +183,8 @@ local function detectGame()
             return "blue_lock_farm", "Blue Lock Farm ⚽", "blue_lock_farm.luau"
         elseif title:find("throw food") then
             return "throw_food", "Throw Food For Animals 🍗", "throw_food.luau"
+        elseif title:find("raycity") then
+            return "raycity_rb", "Raycity RB 🏎️", "raycity_rb.luau"
         end
     end
 
@@ -200,15 +200,11 @@ local function sendVerifyRequest(key)
         return false, { message = "Executor does not support HTTP requests!" }
     end
 
-    local lp = Players.LocalPlayer or LocalPlayer
-    local uId = (lp and lp.UserId) or 0
-    local uName = (lp and lp.Name) or "Player"
-
     local payload = HttpService:JSONEncode({
         key = key or "",
         hwid = getHardwareId(),
-        userId = uId,
-        username = uName,
+        userId = LocalPlayer.UserId,
+        username = LocalPlayer.Name,
         gameId = game.GameId,
         placeId = game.PlaceId,
         jobId = game.JobId or "",
@@ -309,20 +305,30 @@ local function launchGameScript(scriptFileName, gameTitle)
         getgenv()._UniversalLoaderLoading = false
     end
 
+    -- 🛡️ Anti-Hook / Anti-Dump & Security Environment Verification
+    local isEnvSecure = true
+    pcall(function()
+        if islclosure and islclosure(loadstring) then isEnvSecure = false end
+        if iscclosure and not iscclosure(loadstring) then isEnvSecure = false end
+        if islclosure and islclosure(game.HttpGet) then isEnvSecure = false end
+        if getgenv then
+            local g = getgenv()
+            if g.SimpleSpyExecuted or g.Hydroxide or g.TurtleSpy or g.__HTTPSPY then
+                isEnvSecure = false
+            end
+        end
+    end)
+
+    if not isEnvSecure then
+        warn("[Universal Hub] 🛡️ Security Check Failed: Tampered environment, debugger, or HttpSpy detected!")
+        return
+    end
+
     local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-
-    -- Candidate URLs: Resilient Multi-Source Cloud Pipeline (Public GitHub CDN + Render API)
-    local candidateUrls = {
-        -- 1. Official GitHub Raw (Public Repo - Ultra fast ~100ms)
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 2. Live Render Production Server (Direct API)
-        SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 3. Secondary GitHub Server Repo
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-    }
-
-    -- Optional: If server issues a one-time token, prioritize tokenized endpoint
     local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+
+    -- Request One-Time Cryptographic Execution Token from Render Server (Single-Use 25s TTL)
+    local oneTimeToken = nil
     if requestFn then
         pcall(function()
             local tokenRes = requestFn({
@@ -339,10 +345,16 @@ local function launchGameScript(scriptFileName, gameTitle)
             if tokenRes and tokenRes.Body then
                 local tData = HttpService:JSONDecode(tokenRes.Body)
                 if tData and tData.success and tData.token then
-                    table.insert(candidateUrls, 1, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. tData.token .. "&v=" .. cacheBuster)
+                    oneTimeToken = tData.token
                 end
             end
         end)
+    end
+
+    local candidateUrls = {}
+    if oneTimeToken then
+        -- Secure Render Production Server with One-Time Security Token (Primary & Protected)
+        table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
     end
 
     for _, url in ipairs(candidateUrls) do
@@ -377,6 +389,9 @@ local function launchGameScript(scriptFileName, gameTitle)
     elseif scriptFileName == "anime_galaxies.luau" then
         table.insert(localCandidates, "AnimeGalaxiesHub/AnimeGalaxies_Hub.luau")
         table.insert(localCandidates, "AnimeGalaxies_Hub.luau")
+    elseif scriptFileName == "raycity_rb.luau" then
+        table.insert(localCandidates, "RaycityHub/raycity_rb.luau")
+        table.insert(localCandidates, "raycity_rb.luau")
     end
 
     for _, path in ipairs(localCandidates) do
@@ -410,7 +425,7 @@ task.spawn(function()
             local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
             WindUI:Notify({
                 Title = "Universal Hub",
-                Content = "Game not supported! (PlaceId: " .. tostring(game.PlaceId) .. ")\nSupported: Anime Galaxies, Hunting Together, Blue Lock Farm",
+                Content = "Game not supported! (PlaceId: " .. tostring(game.PlaceId) .. ")\nSupported: Anime Galaxies, Hunting Together, Blue Lock Farm, Raycity RB",
                 Duration = 6,
                 Icon = "alert-triangle"
             })
