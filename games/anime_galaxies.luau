@@ -349,6 +349,8 @@ local autoCreateAndStart = false
 local autoLoopNextMatch = true
 local autoStoryFarm = false
 local autoTowerStart = false
+local selectedTowerFloor = 1
+local autoNextTowerFloor = true
 local autoStartMatch = false
 local autoLeaveMatch = false
 
@@ -496,6 +498,8 @@ local function serializeConfig()
         AutoLoopNextMatch = autoLoopNextMatch,
         AutoStoryFarm = autoStoryFarm,
         AutoTower = autoTowerStart,
+        SelectedTowerFloor = selectedTowerFloor,
+        AutoNextTowerFloor = autoNextTowerFloor,
         AutoStartMatch = autoStartMatch,
         AutoLeaveMatch = autoLeaveMatch,
 
@@ -572,6 +576,8 @@ local function applyConfig(data)
     if data.AutoLoopNextMatch ~= nil then autoLoopNextMatch = data.AutoLoopNextMatch end
     if data.AutoStoryFarm ~= nil then autoStoryFarm = data.AutoStoryFarm end
     if data.AutoTower ~= nil then autoTowerStart = data.AutoTower end
+    if data.SelectedTowerFloor ~= nil then selectedTowerFloor = data.SelectedTowerFloor end
+    if data.AutoNextTowerFloor ~= nil then autoNextTowerFloor = data.AutoNextTowerFloor end
     if data.AutoStartMatch ~= nil then autoStartMatch = data.AutoStartMatch end
     if data.AutoLeaveMatch ~= nil then autoLeaveMatch = data.AutoLeaveMatch end
 
@@ -996,6 +1002,27 @@ TabMain:Dropdown({
     end
 })
 
+TabMain:Dropdown({
+    Title = "Tower Floor (เลือกชั้น Tower)",
+    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการลงเล่น",
+    Values = { "1", "5", "10", "15", "20", "25", "30", "35", "40", "45", "50", "60", "70", "80", "90", "100" },
+    Value = tostring(selectedTowerFloor or 1),
+    Callback = function(val)
+        selectedTowerFloor = tonumber(val) or 1
+        triggerAutoSave()
+    end
+})
+
+TabMain:Toggle({
+    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
+    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะปรับบวก 1 ชั้นถัดไปให้อัตโนมัติ (เช่น ชั้น 1 -> ชั้น 2)",
+    Value = autoNextTowerFloor,
+    Callback = function(state)
+        autoNextTowerFloor = state
+        triggerAutoSave()
+    end
+})
+
 TabMain:Section({ Title = "🚀 Room Creation & Auto-Start (ระบบสร้างห้องและเริ่มอัตโนมัติ)" })
 
 TabMain:Toggle({
@@ -1165,6 +1192,25 @@ local RAID_INDEX_MAP = {
 local function getOfficialRooms()
     local found = nil
     pcall(function()
+        local ifc = ReplicatedStorage:FindFirstChild("Master")
+            and ReplicatedStorage.Master:FindFirstChild("Modules")
+            and ReplicatedStorage.Master.Modules:FindFirstChild("Interface_Client")
+        if ifc then
+            for _, name in ipairs({"RoomsUi", "Rooms", "RoomUi", "Room", "Matchmaking", "TowerUi"}) do
+                local rModule = ifc:FindFirstChild(name)
+                if rModule and rModule:IsA("ModuleScript") then
+                    local ok, res = pcall(require, rModule)
+                    if ok and type(res) == "table" and (res.OnSolo or res.OnCreate or res.OnStart) then
+                        found = res
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    if found then return found end
+
+    pcall(function()
         if filtergc then
             local matches = filtergc("table", {OnSolo = true, OnCreate = true, OnStart = true}, false)
             for _, t in ipairs(matches) do
@@ -1192,10 +1238,18 @@ local function findFreeDoor(mode)
     local query = (mode or "Story"):lower()
     if query == "raids" then query = "raid" end
     if query == "challenges" then query = "challenge" end
+    local isTower = (query == "tower" or query:find("tower", 1, true) ~= nil)
 
     for _, room in ipairs(workspace.Rooms:GetChildren()) do
         local rName = room.Name:lower()
-        if rName:find(query, 1, true) then
+        local matches = false
+        if isTower then
+            matches = (rName:find("tower", 1, true) ~= nil) or (rName:find("infinit", 1, true) ~= nil)
+        else
+            matches = (rName:find(query, 1, true) ~= nil)
+        end
+
+        if matches then
             local door = room:FindFirstChild("Door")
             local detailsUI = room:FindFirstChild("DetailsUI", true)
             local count = detailsUI and detailsUI:FindFirstChild("Count")
@@ -1210,7 +1264,14 @@ local function findFreeDoor(mode)
     -- Fallback: Any door matching mode with < 4 players
     for _, room in ipairs(workspace.Rooms:GetChildren()) do
         local rName = room.Name:lower()
-        if rName:find(query, 1, true) then
+        local matches = false
+        if isTower then
+            matches = (rName:find("tower", 1, true) ~= nil) or (rName:find("infinit", 1, true) ~= nil)
+        else
+            matches = (rName:find(query, 1, true) ~= nil)
+        end
+
+        if matches then
             local door = room:FindFirstChild("Door") or room:FindFirstChildWhichIsA("BasePart")
             if door then
                 local isReady = door:GetAttribute("Ready") == true
@@ -1222,6 +1283,21 @@ local function findFreeDoor(mode)
             end
         end
     end
+
+    -- Universal Fallback for Tower if no specific tower room exists: pick any empty room
+    if isTower then
+        for _, room in ipairs(workspace.Rooms:GetChildren()) do
+            local door = room:FindFirstChild("Door") or room:FindFirstChildWhichIsA("BasePart")
+            local detailsUI = room:FindFirstChild("DetailsUI", true)
+            local count = detailsUI and detailsUI:FindFirstChild("Count")
+            local isReady = door and door:GetAttribute("Ready") == true
+            local isCountZero = (not count) or (count.Value == 0)
+            if door and door:IsA("BasePart") and (not isReady) and isCountZero then
+                return door, room
+            end
+        end
+    end
+
     return nil
 end
 
@@ -1229,14 +1305,6 @@ end
 local function enterOrActionRoom(mode, forceSolo)
     mode = mode or selectedGameMode
     local isSolo = if forceSolo ~= nil then forceSolo else not roomFriendsOnly
-
-    if mode == "Tower" then
-        publishRemote("Tower", {Action = "Start"})
-        task.wait(0.5)
-        publishRemote("Tower", {Action = "Continue"})
-        WindUI:Notify({ Title = "Tower", Content = "Entering Tower Mode!", Duration = 3, Icon = "castle" })
-        return true
-    end
 
     local worldIdx = WORLD_INDEX_MAP[selectedWorld] or 1
     local raidIdx = RAID_INDEX_MAP[selectedRaid] or 1
@@ -1256,6 +1324,9 @@ local function enterOrActionRoom(mode, forceSolo)
         options = { FriendsOnly = roomFriendsOnly }
     elseif mode == "Endless" then
         key = { Mode = "Endless" }
+        options = { FriendsOnly = roomFriendsOnly }
+    elseif mode == "Tower" then
+        key = { Mode = "Tower", Floor = selectedTowerFloor or 1 }
         options = { FriendsOnly = roomFriendsOnly }
     end
 
@@ -1318,12 +1389,57 @@ local function enterOrActionRoom(mode, forceSolo)
                 MapName = selectedEndlessMap or "Endless Maze",
                 FriendsOnly = roomFriendsOnly,
             })
+        elseif mode == "Tower" then
+            publishRemote("Room", {
+                Action = "SelectMap",
+                Mode = "Tower",
+                MapName = "Tower",
+                Floor = selectedTowerFloor or 1,
+                FriendsOnly = roomFriendsOnly,
+            })
+            publishRemote("Room", {
+                Action = "SetMode",
+                Mode = "Tower",
+                Floor = selectedTowerFloor or 1,
+            })
+            publishRemote("Tower", {
+                Action = "Start",
+                Floor = selectedTowerFloor or 1,
+            })
+            publishRemote("Tower", {
+                Action = "Continue",
+            })
         end
 
         task.wait(0.5)
         publishRemote("Room", {Action = "Start"})
         publishRemote("Controls", {Action = "VoteStart"})
         WindUI:Notify({ Title = "Room", Content = "Created & Sent Start for " .. mode .. "!", Duration = 3, Icon = "door-open" })
+        return true
+    end
+
+    -- 3. Dedicated Tower Portal / Remote Fallback for Tower Mode
+    if mode == "Tower" then
+        pcall(function()
+            local towerPortal = workspace:FindFirstChild("Tower", true) or workspace:FindFirstChild("InfiniteTower", true) or workspace:FindFirstChild("TowerPortal", true)
+            if towerPortal and Character then
+                local pPart = towerPortal:IsA("BasePart") and towerPortal or towerPortal:FindFirstChildWhichIsA("BasePart") or (towerPortal:IsA("Model") and towerPortal.PrimaryPart)
+                if pPart then
+                    Character:PivotTo(pPart.CFrame)
+                    for _, part in ipairs(Character:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            pcall(function() firetouchinterest(part, pPart, 0) end)
+                        end
+                    end
+                end
+            end
+        end)
+        publishRemote("Room", { Action = "Create", Mode = "Tower", Floor = selectedTowerFloor or 1, FriendsOnly = roomFriendsOnly })
+        publishRemote("Tower", { Action = "Start", Floor = selectedTowerFloor or 1 })
+        publishRemote("Tower", { Action = "Continue" })
+        publishRemote("Room", { Action = "Start" })
+        publishRemote("Controls", { Action = "VoteStart" })
+        WindUI:Notify({ Title = "Tower", Content = "🏰 สร้างห้องและเข้าสู่ Tower Mode (ชั้น " .. tostring(selectedTowerFloor) .. ")", Duration = 3, Icon = "castle" })
         return true
     end
 
@@ -1390,7 +1506,7 @@ task.spawn(function()
                 elseif selectedGameMode == "Endless" then
                     targetDesc = selectedEndlessMap .. " (Endless)"
                 elseif selectedGameMode == "Tower" then
-                    targetDesc = "Tower Floor"
+                    targetDesc = "Floor " .. tostring(selectedTowerFloor or 1)
                 end
 
                 farmStatusPara:SetDesc(string.format(
@@ -1427,18 +1543,24 @@ task.spawn(function()
                     if autoLoopNextMatch then
                         local rr, hasEnded, isVictory = getMatchEndGui()
                         if hasEnded then
-                            if isVictory and autoNextStage and selectedGameMode == "Story" then
-                                if selectedStage < 5 then
-                                    selectedStage = selectedStage + 1
-                                else
-                                    local worlds = { "Hidden Village", "Desert Kingdom", "Dragon City", "Hollow World", "Cursed High School" }
-                                    for idx, w in ipairs(worlds) do
-                                        if w == selectedWorld and idx < #worlds then
-                                            selectedWorld = worlds[idx + 1]
-                                            selectedStage = 1
-                                            break
+                            if isVictory then
+                                if autoNextStage and selectedGameMode == "Story" then
+                                    if selectedStage < 5 then
+                                        selectedStage = selectedStage + 1
+                                    else
+                                        local worlds = { "Hidden Village", "Desert Kingdom", "Dragon City", "Hollow World", "Cursed High School" }
+                                        for idx, w in ipairs(worlds) do
+                                            if w == selectedWorld and idx < #worlds then
+                                                selectedWorld = worlds[idx + 1]
+                                                selectedStage = 1
+                                                break
+                                            end
                                         end
                                     end
+                                elseif autoNextTowerFloor and selectedGameMode == "Tower" then
+                                    selectedTowerFloor = (selectedTowerFloor or 1) + 1
+                                    triggerAutoSave()
+                                    WindUI:Notify({ Title = "Tower", Content = "🏆 ชนะชั้นเดิมแล้ว! ขยับไปชั้น " .. tostring(selectedTowerFloor), Duration = 3, Icon = "trending-up" })
                                 end
                             end
                             -- Return to lobby or next match
