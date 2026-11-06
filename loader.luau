@@ -356,15 +356,31 @@ local function launchGameScript(scriptFileName, gameTitle)
         -- Secure Render Production Server with One-Time Security Token (Primary & Protected)
         table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?token=" .. oneTimeToken .. "&v=" .. cacheBuster)
     end
+    -- Resilient Cloud Endpoints (GitHub Raw & Direct Render)
+    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
+    table.insert(candidateUrls, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster)
+    table.insert(candidateUrls, SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster)
 
     for _, url in ipairs(candidateUrls) do
         local dlOk, code = pcall(function()
             return game:HttpGet(url)
         end)
-        if dlOk and type(code) == "string" and #code > 500 and not code:find("403 Forbidden") then
+        if dlOk and type(code) == "string" and #code > 500 and not code:find("403 Forbidden") and not code:find("404: Not Found") then
             local fn, err = loadstring(code)
-            code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
             if fn then
+                -- Automatically sync and overwrite local cache with freshest code
+                pcall(function()
+                    if writefile then
+                        if not isfolder("UniversalHub") then makefolder("UniversalHub") end
+                        writefile("UniversalHub/" .. scriptFileName, code)
+                        if scriptFileName == "anime_galaxies.luau" then
+                            if not isfolder("AnimeGalaxiesHub") then makefolder("AnimeGalaxiesHub") end
+                            writefile("AnimeGalaxiesHub/AnimeGalaxies_Hub.luau", code)
+                            writefile("AnimeGalaxies_Hub.luau", code)
+                        end
+                    end
+                end)
+                code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
                 print("[Universal Hub] ✅ Securely loaded and compiled latest script into RAM.")
                 task.spawn(fn)
                 startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchGameScript)
