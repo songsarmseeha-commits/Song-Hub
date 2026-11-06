@@ -689,11 +689,11 @@ function renderLuaSnippet() {
 
     const snippet = `-- ==============================================================================
 -- 👑 UNIVERSAL ALL-IN-ONE LOADSTRING (RUN THIS IN ANY EXECUTOR)
--- Supports: Anime Galaxies | Hunting Together | Blue Lock Farm
+-- Supports: Anime Galaxies | Hunting Together | Blue Lock Farm | Throw Food For Animals
 -- Auto-Detects Current Map + Protected by Key System & Direct Whitelist
 -- ==============================================================================
 
--- 🌐 Option 1: Official GitHub Raw (แจกให้คนอื่นรันได้เลย):
+-- 🌐 Option 1: Official GitHub Raw (แจกให้ผู้เล่นรันได้เลย - เสถียรและเร็วที่สุด):
 loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. tostring(os.time())))()
 
 -- ⚡ Option 2: Direct Server Endpoint:
@@ -707,7 +707,8 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits
 -- 4. Automatically detects which game you are currently playing:
 --    • Anime Galaxies (Lobby & Match Acts) -> Loads Anime Galaxies Hub
 --    • Hunting Together (Fields & Dungeons) -> Loads Hunting Together Hub
---    • Blue Lock Farm (Auto Obby, Polisher) -> Loads Blue Lock Farm Hub
+--    • Blue Lock Farm (Striker Farm & Events) -> Loads Blue Lock Farm Hub
+--    • Throw Food For Animals (Auto Farm & Workout) -> Loads Throw Food Hub
 -- ==============================================================================`;
 
     document.getElementById('luaCodeSnippet').textContent = snippet;
