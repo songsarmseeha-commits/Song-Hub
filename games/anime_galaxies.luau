@@ -204,17 +204,32 @@ end
 -- Centralized Match End & Round Life Cycle Helper
 local function getMatchEndGui()
     local sg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ScreenGui")
-    if not sg then return nil, false, false end
-    local rr = sg:FindFirstChild("RoundResult") or sg:FindFirstChild("GameEnd")
-    if rr and rr.Visible then
-        local isVictory = false
-        pcall(function()
-            local title = rr:FindFirstChild("Content") and rr.Content:FindFirstChild("Title")
-            if title and title:IsA("TextLabel") and title.Text == "Victory" then
-                isVictory = true
+    local rr = (sg and (sg:FindFirstChild("RoundResult") or sg:FindFirstChild("GameEnd")))
+        or (LocalPlayer:FindFirstChild("PlayerGui") and (LocalPlayer.PlayerGui:FindFirstChild("RoundResult", true) or LocalPlayer.PlayerGui:FindFirstChild("GameEnd", true)))
+    
+    if rr then
+        -- Check if visible or placed on screen (when active, position is {0, 0} or X.Scale >= -0.5)
+        local isShown = rr.Visible
+        if not isShown and rr:IsA("GuiObject") then
+            if rr.Position.X.Scale >= -0.5 then
+                isShown = true
             end
-        end)
-        return rr, true, isVictory
+        end
+
+        if isShown then
+            local isVictory = false
+            pcall(function()
+                local title = (rr:FindFirstChild("Content") and rr.Content:FindFirstChild("Title"))
+                    or rr:FindFirstChild("Title", true)
+                if title and title:IsA("TextLabel") then
+                    local txt = title.Text:upper()
+                    if txt:find("VICTORY") or txt:find("WIN") or txt:find("CLEAR") then
+                        isVictory = true
+                    end
+                end
+            end)
+            return rr, true, isVictory
+        end
     end
     return nil, false, false
 end
@@ -224,15 +239,31 @@ local function triggerMatchEndAction(preferredAction)
     pcall(function()
         local rr, hasEnded, isVictory = getMatchEndGui()
         if hasEnded and rr then
-            local buttons = rr:FindFirstChild("Content") and rr.Content:FindFirstChild("GameInfo") and rr.Content.GameInfo:FindFirstChild("Buttons")
+            local buttons = (rr:FindFirstChild("Content") and rr.Content:FindFirstChild("GameInfo") and rr.Content.GameInfo:FindFirstChild("Buttons"))
+                or rr:FindFirstChild("Buttons", true)
             if buttons then
                 if action == "Next" and buttons:FindFirstChild("Next") and buttons.Next.Visible then
+                    local btn = buttons.Next
+                    if getconnections then
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                    end
                     publishRemote("EndGame", "Next")
                     return
                 elseif action == "Replay" and buttons:FindFirstChild("Replay") and buttons.Replay.Visible then
+                    local btn = buttons.Replay
+                    if getconnections then
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                    end
                     publishRemote("EndGame", "Replay")
                     return
                 elseif buttons:FindFirstChild("Return") and buttons.Return.Visible then
+                    local btn = buttons.Return
+                    if getconnections then
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                    end
                     publishRemote("EndGame", "Return")
                     return
                 end
@@ -343,7 +374,7 @@ local selectedGameMode = "Story"
 local selectedWorld = "Hidden Village"
 local selectedStage = 1
 local isNightmare = false
-local autoNextStage = false
+local autoNextStage = true
 local selectedRaid = "King of Curses"
 local selectedChallenge = "Rotating"
 local selectedEndlessMap = "Hidden Village"
@@ -1063,12 +1094,23 @@ Tabs.Main:Toggle({
 })
 
 Tabs.Main:Toggle({
-    Title = "⏩ ชนะแล้วขยับไปด่านถัดไปอัตโนมัติ (Auto Next Stage on Win)",
-    Desc = "เมื่อเคลียร์ด่าน Story ชนะ จะปรับไปด่านถัดไปให้อัตโนมัติ (เช่น ด่าน 1 -> ด่าน 2)",
+    Title = "⏩ ชนะแล้วกดไปด่านถัดไปทันที (Auto Next Stage In-Place)",
+    Desc = "เมื่อเคลียร์ด่าน Story หรือ Tower ชนะ บอทจะกดปุ่ม Next เพื่อเล่นด่านถัดไปทันทีในห้องเดิม โดยไม่ต้อง Rejoin กลับล็อบบี้และสร้างห้องใหม่!",
     Value = autoNextStage,
 -- Icon = "fast-forward",
     Callback = function(state)
         autoNextStage = state
+        triggerAutoSave()
+    end
+})
+
+Tabs.Main:Dropdown({
+    Title = "🏆 เมื่อจบเกมชนะ (Action on Victory)",
+    Desc = "เลือกคำสั่งเมื่อจบเกมชนะ: 'Next' (กด Next เข้าด่านถัดไปทันที ไม่ต้องออกห้อง/สร้างใหม่), 'Replay' (เล่นด่านเดิมซ้ำในห้องเดิม), 'Return' (กลับล็อบบี้)",
+    Values = { "Next", "Replay", "Return" },
+    Value = smartMatchEndAction or "Next",
+    Callback = function(val)
+        smartMatchEndAction = val
         triggerAutoSave()
     end
 })
@@ -1849,41 +1891,49 @@ task.spawn(function()
                     -- Check Match Result
                     local rr, hasEnded, isVictory = getMatchEndGui()
                     if hasEnded then
+                        local towerAction = "Next"
                         if isVictory then
                             local reachedStop = towerEnableStopAt and (towerCurrentFloor >= (towerStopAtBattle or 22))
                             if reachedStop then
                                 if towerAtStopBattle == "Forfeit And Restart" then
                                     WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ส่งคำสั่ง Forfeit และเริ่มใหม่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
                                     forfeitTower()
+                                    towerAction = "Return"
                                 elseif towerAtStopBattle == "Return To Lobby" then
                                     WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
                                     towerAutoJoin = false
                                     pcall(function()
                                         if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
                                     end)
+                                    towerAction = "Return"
                                 elseif towerAtStopBattle == "Continue Climbing" then
                                     towerCurrentFloor = towerCurrentFloor + 1
                                     selectedTowerFloor = towerCurrentFloor
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "⚔️ ผ่านชั้นเป้าหมายแล้ว! ไต่ต่อเนื่องไปยัง Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "trending-up" })
+                                    towerAction = "Next"
+                                    WindUI:Notify({ Title = "Tower Climb", Content = "⚔️ ผ่านชั้นเป้าหมายแล้ว! กด Next ไต่ต่อเนื่องไปยัง Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "trending-up" })
                                 end
                             else
                                 towerCurrentFloor = towerCurrentFloor + 1
                                 selectedTowerFloor = towerCurrentFloor
-                                WindUI:Notify({ Title = "Tower Climb", Content = "🏆 ชนะชั้นเดิมแล้ว! เลื่อนไปชั้นถัดไป: Floor " .. tostring(towerCurrentFloor), Duration = 3, Icon = "trending-up" })
+                                towerAction = "Next"
+                                WindUI:Notify({ Title = "Tower Climb", Content = "🏆 ชนะชั้นเดิมแล้ว! กด Next เลื่อนไปชั้น Floor " .. tostring(towerCurrentFloor) .. " ทันที ไม่ต้องสร้างห้องใหม่", Duration = 3, Icon = "trending-up" })
                             end
                         else
                             -- Loss / Defeat
                             if towerAfterLoss == "Start New Run" then
                                 WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! ส่งคำสั่ง Forfeit และเริ่มรันใหม่ที่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
                                 forfeitTower()
+                                towerAction = "Return"
                             elseif towerAfterLoss == "Retry Floor" then
-                                WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! พยายามเล่นชั้นเดิมซ้ำ: Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "refresh-cw" })
+                                WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! กด Replay เล่นชั้นเดิมซ้ำ: Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "refresh-cw" })
+                                towerAction = "Replay"
                             elseif towerAfterLoss == "Return To Lobby" then
                                 WindUI:Notify({ Title = "Tower Climb", Content = "⛔ แพ้การต่อสู้! ปิดระบบและกลับล็อบบี้ตามที่ตั้งค่าไว้", Duration = 4, Icon = "log-out" })
                                 towerAutoJoin = false
                                 pcall(function()
                                     if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
                                 end)
+                                towerAction = "Return"
                             end
                         end
 
@@ -1894,7 +1944,7 @@ task.spawn(function()
                         end)
                         triggerAutoSave()
 
-                        triggerMatchEndAction("Return")
+                        triggerMatchEndAction(towerAction)
                         task.wait(4)
                     end
                 else
@@ -1929,16 +1979,22 @@ task.spawn(function()
                     if autoLoopNextMatch then
                         local rr, hasEnded, isVictory = getMatchEndGui()
                         if hasEnded then
+                            local chosenAction = "Next"
                             if isVictory then
                                 if autoNextStage and selectedGameMode == "Story" then
                                     if selectedStage < 5 then
                                         selectedStage = selectedStage + 1
+                                        chosenAction = "Next" -- Next stage in-place without rejoining!
+                                        WindUI:Notify({ Title = "Next Stage ⏩", Content = "🏆 ชนะ Act เดิมแล้ว! กด Next ลุยด่าน " .. tostring(selectedStage) .. " ทันที ไม่ต้องสร้างห้องใหม่", Duration = 3, Icon = "fast-forward" })
                                     else
+                                        -- Act 5 beaten: Next world requires returning to lobby to create new world room
                                         local worlds = { "Hidden Village", "Desert Kingdom", "Dragon City", "Hollow World", "Cursed High School" }
                                         for idx, w in ipairs(worlds) do
                                             if w == selectedWorld and idx < #worlds then
                                                 selectedWorld = worlds[idx + 1]
                                                 selectedStage = 1
+                                                chosenAction = "Return"
+                                                WindUI:Notify({ Title = "World Cleared! 🌍", Content = "🎉 เคลียร์ Act 5 จบโลกแล้ว! กำลังกลับล็อบบี้เพื่อสร้างห้องโลกใหม่: " .. selectedWorld, Duration = 4, Icon = "globe" })
                                                 break
                                             end
                                         end
@@ -1946,12 +2002,24 @@ task.spawn(function()
                                 elseif autoNextTowerFloor and selectedGameMode == "Tower" then
                                     selectedTowerFloor = (selectedTowerFloor or 1) + 1
                                     towerCurrentFloor = selectedTowerFloor
+                                    chosenAction = "Next" -- Next tower floor in-place!
                                     triggerAutoSave()
-                                    WindUI:Notify({ Title = "Tower", Content = "🏆 ชนะชั้นเดิมแล้ว! ขยับไปชั้น " .. tostring(selectedTowerFloor), Duration = 3, Icon = "trending-up" })
+                                    WindUI:Notify({ Title = "Tower", Content = "🏆 ชนะชั้นเดิมแล้ว! เลื่อนไปชั้น Floor " .. tostring(selectedTowerFloor) .. " ทันที", Duration = 3, Icon = "trending-up" })
+                                else
+                                    chosenAction = smartMatchEndAction or "Next"
+                                end
+                            else
+                                -- Defeat: Retry or Return based on setting
+                                if smartMatchEndAction == "Replay" then
+                                    chosenAction = "Replay"
+                                    WindUI:Notify({ Title = "Match Defeat", Content = "🔄 แพ้การต่อสู้! กด Replay เล่นด่านเดิมซ้ำ", Duration = 3, Icon = "refresh-cw" })
+                                else
+                                    chosenAction = "Return"
                                 end
                             end
-                            -- Return to lobby or next match
-                            triggerMatchEndAction("Return")
+
+                            triggerAutoSave()
+                            triggerMatchEndAction(chosenAction)
                             task.wait(4)
                         end
                     end
