@@ -105,6 +105,7 @@ destroyOldUIs()
 task.wait(0.2)
 
 local WindUI = nil
+local UI = {}
 pcall(function()
     if isfile and readfile and isfile("WindUI_cache.lua") then
         local cached = readfile("WindUI_cache.lua")
@@ -242,22 +243,24 @@ local function triggerMatchEndAction(preferredAction)
 end
 
 -- Load Game Information Modules safely
-local ChampionsInfo = nil
-local LevelRewardsInfo = nil
-local TraitsInfo = nil
-local WorldsInfo = nil
+local GameInfo = {
+    Champions = nil,
+    LevelRewards = nil,
+    Traits = nil,
+    Worlds = nil,
+}
 
 pcall(function()
-    ChampionsInfo = require(ReplicatedStorage.Master.Information.Champions)
+    GameInfo.Champions = require(ReplicatedStorage.Master.Information.Champions)
 end)
 pcall(function()
-    LevelRewardsInfo = require(ReplicatedStorage.Master.Information.LevelRewards)
+    GameInfo.LevelRewards = require(ReplicatedStorage.Master.Information.LevelRewards)
 end)
 pcall(function()
-    TraitsInfo = require(ReplicatedStorage.Master.Information.Traits)
+    GameInfo.Traits = require(ReplicatedStorage.Master.Information.Traits)
 end)
 pcall(function()
-    WorldsInfo = require(ReplicatedStorage.Master.Information.Worlds)
+    GameInfo.Worlds = require(ReplicatedStorage.Master.Information.Worlds)
 end)
 
 -- Helper: Get list of player's owned units
@@ -428,9 +431,11 @@ local selectedBaseTheme = "Dark"
 local selectedTransparency = 0
 
 -- Live FX object references for instant reactivity
-local currentStroke = nil
-local currentParticleCanvas = nil
-local currentNeonBar = nil
+local FXHandles = {
+    Stroke = nil,
+    ParticleCanvas = nil,
+    NeonBar = nil,
+}
 
 local function updateDropdown(dropdown, newValues, selectedValue)
     if not dropdown then return end
@@ -934,30 +939,32 @@ getgenv()._AG_STARTING = nil
 -- ==============================================================================
 -- TABS CONFIGURATION
 -- ==============================================================================
-local TabMain      = Window:Tab({ Title = "Auto Farm & Story", Icon = "swords" })
-local TabTower     = Window:Tab({ Title = "Tower Climb", Icon = "castle" })
-local TabSmart     = Window:Tab({ Title = "Smart Play AI", Icon = "cpu" })
-local TabMacro     = Window:Tab({ Title = "TD Macro Config", Icon = "gamepad-2" })
-local TabRewards   = Window:Tab({ Title = "Auto Rewards", Icon = "gift" })
-local TabSummon    = Window:Tab({ Title = "Auto Summon", Icon = "sparkles" })
-local TabUnits     = Window:Tab({ Title = "Auto Units & Stats", Icon = "layers" })
-local TabTeleports = Window:Tab({ Title = "Teleports", Icon = "map-pin" })
-local TabPlayer    = Window:Tab({ Title = "Player & Misc", Icon = "user" })
-local TabFX        = Window:Tab({ Title = "FX & Themes", Icon = "palette" })
-local TabConfig    = Window:Tab({ Title = "Config & AutoExec", Icon = "settings" })
+local Tabs = {
+    Main      = Window:Tab({ Title = "Auto Farm & Story", Icon = "swords" }),
+    Tower     = Window:Tab({ Title = "Tower Climb", Icon = "castle" }),
+    Smart     = Window:Tab({ Title = "Smart Play AI", Icon = "cpu" }),
+    Macro     = Window:Tab({ Title = "TD Macro Config", Icon = "gamepad-2" }),
+    Rewards   = Window:Tab({ Title = "Auto Rewards", Icon = "gift" }),
+    Summon    = Window:Tab({ Title = "Auto Summon", Icon = "sparkles" }),
+    Units     = Window:Tab({ Title = "Auto Units & Stats", Icon = "layers" }),
+    Teleports = Window:Tab({ Title = "Teleports", Icon = "map-pin" }),
+    Player    = Window:Tab({ Title = "Player & Misc", Icon = "user" }),
+    FX        = Window:Tab({ Title = "FX & Themes", Icon = "palette" }),
+    Config    = Window:Tab({ Title = "Config & AutoExec", Icon = "settings" }),
+}
 
 -- ==============================================================================
 -- TAB 1: AUTO FARM & STORY (MATCH / ROOM / TOWER)
 -- ==============================================================================
-local farmStatusPara = TabMain:Paragraph({
+UI.farmStatusPara = Tabs.Main:Paragraph({
     Title = "Player & Match Status (สถานะห้องและโหมด)",
     Desc = "โหมด: Story | เป้าหมาย: Hidden Village (Act 1)\nสถานะ: ⚪ อยู่ในล็อบบี้ (In Lobby)\nระบบสร้างห้องและเริ่มอัตโนมัติ: ⚪ ปิดใช้งาน",
     Image = "swords"
 })
 
-TabMain:Section({ Title = "🎮 Game Mode Selection (เลือกโหมดที่ต้องการเล่น)" })
+Tabs.Main:Section({ Title = "🎮 Game Mode Selection (เลือกโหมดที่ต้องการเล่น)" })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Select Game Mode (เลือกโหมด)",
     Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless - โหมด Tower ให้ใช้แท็บ Tower Climb 🏰)",
     Values = { "Story", "Raids", "Challenges", "Endless" },
@@ -968,9 +975,9 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Section({ Title = "🗺️ Mode Settings (ตั้งค่าด่านและแผนที่ของแต่ละโหมด)" })
+Tabs.Main:Section({ Title = "🗺️ Mode Settings (ตั้งค่าด่านและแผนที่ของแต่ละโหมด)" })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Story World / Map (เลือกโลก Story)",
     Desc = "เลือกโลกที่ต้องการจะให้บอทลงด่านโหมดเนื้อเรื่อง",
     Values = { "Hidden Village", "Desert Kingdom", "Dragon City", "Hollow World", "Cursed High School" },
@@ -981,7 +988,7 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Story Stage (เลือกด่าน 1 - 5)",
     Desc = "เลือกหมายเลขด่านของโหมด Story",
     Values = { "1", "2", "3", "4", "5" },
@@ -992,7 +999,7 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "Nightmare Mode (โหมดฝันร้าย)",
     Desc = "เปิดโหมดความยาก Nightmare สำหรับ Story และ Raids",
     Value = isNightmare,
@@ -1003,7 +1010,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Select Raid (เลือกด่าน Raids)",
     Desc = "เลือกด่านบอสเรดที่ต้องการให้บอทลงฟาร์ม",
     Values = { "King of Curses", "Caged Island", "Raid 1", "Raid 2" },
@@ -1014,7 +1021,7 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Select Challenge (เลือกด่าน Challenges)",
     Desc = "เลือกด่านความท้าทายเพื่อฟาร์มวัตถุดิบวิวัฒนาการ",
     Values = { "Rotating", "Daily", "Weekly", "Challenge 1", "Challenge 2" },
@@ -1025,7 +1032,7 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Dropdown({
+Tabs.Main:Dropdown({
     Title = "Endless Map (เลือกแผนที่ Endless)",
     Desc = "เลือกแผนที่สำหรับเล่นโหมด Endless",
     Values = { "Hidden Village", "Desert Kingdom", "Dragon City", "Hollow World", "Cursed High School" },
@@ -1036,9 +1043,9 @@ TabMain:Dropdown({
     end
 })
 
-TabMain:Section({ Title = "🚀 Room Creation & Auto-Start (ระบบสร้างห้องและเริ่มอัตโนมัติ)" })
+Tabs.Main:Section({ Title = "🚀 Room Creation & Auto-Start (ระบบสร้างห้องและเริ่มอัตโนมัติ)" })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "🔁 เปิดระบบสร้างห้องและเริ่มเกมอัตโนมัติ (Auto Create & Start)",
     Desc = "บอทจะหาห้องว่าง วาปเข้าห้อง ตั้งค่าแมพตามโหมด และกดเริ่มเกมให้อัตโนมัติแบบลูปต่อเนื่อง",
     Value = autoCreateAndStart,
@@ -1055,7 +1062,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "⏩ ชนะแล้วขยับไปด่านถัดไปอัตโนมัติ (Auto Next Stage on Win)",
     Desc = "เมื่อเคลียร์ด่าน Story ชนะ จะปรับไปด่านถัดไปให้อัตโนมัติ (เช่น ด่าน 1 -> ด่าน 2)",
     Value = autoNextStage,
@@ -1066,7 +1073,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "🔒 ห้องเฉพาะเพื่อน / ส่วนตัว (Friends Only Room)",
     Desc = "สร้างห้องแบบส่วนตัว เพื่อไม่ให้คนนอกเข้ามารบกวน",
     Value = roomFriendsOnly,
@@ -1077,7 +1084,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "🔁 วนลูปเล่นรอบใหม่ต่อเนื่อง (Auto Loop Next Match)",
     Desc = "เมื่อจบเกม จะกดรับของรางวัลและกลับห้องเริ่มรอบใหม่ให้อัตโนมัติ",
     Value = autoLoopNextMatch,
@@ -1088,10 +1095,10 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Section({ Title = "⚔️ Match Combat Engine (ระบบการเล่นในแมตช์)" })
+Tabs.Main:Section({ Title = "⚔️ Match Combat Engine (ระบบการเล่นในแมตช์)" })
 
-local mainCombatEngineDropdown = nil
-mainCombatEngineDropdown = TabMain:Dropdown({
+UI.mainCombatEngineDropdown = nil
+UI.mainCombatEngineDropdown = Tabs.Main:Dropdown({
     Title = "🎮 เลือกระบบเล่นในแมตช์ (Match Combat Engine)",
     Desc = "เลือกว่าเมื่อเข้าด่าน (Story, Raids, Challenges, Endless) จะให้บอทเล่นด้วยระบบใด",
     Values = { "▶️ เล่นตาม TD Macro (Macro Playback)", "🧠 คำนวณอัตโนมัติ (Smart Play AI)" },
@@ -1116,8 +1123,8 @@ mainCombatEngineDropdown = TabMain:Dropdown({
     end
 })
 
-local mainMacroFileDropdown = nil
-mainMacroFileDropdown = TabMain:Dropdown({
+UI.mainMacroFileDropdown = nil
+UI.mainMacroFileDropdown = Tabs.Main:Dropdown({
     Title = "📂 เลือกไฟล์ TD Macro ที่ต้องการเล่น (Active Macro)",
     Desc = "เลือกไฟล์ Macro ที่บันทึกไว้สำหรับรันในแมตช์ (เช่น 1, Default_Tower_Farm)",
     Values = getSavedMacroList(selectedFileToLoad),
@@ -1129,8 +1136,8 @@ mainMacroFileDropdown = TabMain:Dropdown({
     end
 })
 
-local mainMacroPlayToggle = nil
-mainMacroPlayToggle = TabMain:Toggle({
+UI.mainMacroPlayToggle = nil
+UI.mainMacroPlayToggle = Tabs.Main:Toggle({
     Title = "▶️ เปิดเล่น Macro (Enable Macro Playback)",
     Desc = "เปิดระบบทำงานอัตโนมัติตามสเต็ปที่อัดไว้",
     Value = macroPlaybackEnabled,
@@ -1149,8 +1156,8 @@ mainMacroPlayToggle = TabMain:Toggle({
     end
 })
 
-local mainMacroLoopToggle = nil
-mainMacroLoopToggle = TabMain:Toggle({
+UI.mainMacroLoopToggle = nil
+UI.mainMacroLoopToggle = Tabs.Main:Toggle({
     Title = "🔁 วนลูปเล่นซ้ำทุกรอบ (Loop on Next Match)",
     Desc = "วนลูป Macro ซ้ำให้อัตโนมัติเมื่อเริ่มเกมรอบใหม่",
     Value = macroLoopEnabled,
@@ -1160,7 +1167,7 @@ mainMacroLoopToggle = TabMain:Toggle({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "⚡ เร่งสปีดเกม 2x (Auto 2x Speed)",
     Desc = "เร่งความเร็วเกมเป็น 2 เท่าตลอดแมตช์",
     Value = macroLockSpeed2x,
@@ -1170,7 +1177,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Toggle({
+Tabs.Main:Toggle({
     Title = "⏩ ข้ามเวฟอัตโนมัติ (Auto Skip Wave)",
     Desc = "กดยืนยันข้ามเวฟอัตโนมัติเมื่อเลือดฐานปลอดภัย",
     Value = macroAutoSkipWave,
@@ -1180,7 +1187,7 @@ TabMain:Toggle({
     end
 })
 
-TabMain:Section({ Title = "⚡ Manual Room Actions (สั่งการห้องทันที 1 คลิก)" })
+Tabs.Main:Section({ Title = "⚡ Manual Room Actions (สั่งการห้องทันที 1 คลิก)" })
 
 -- World and Raid Index Mappings
 local WORLD_INDEX_MAP = {
@@ -1365,8 +1372,8 @@ local function forfeitTower()
     towerCurrentFloor = 1
     selectedTowerFloor = 1
     pcall(function()
-        if towerCurrentFloorSlider and towerCurrentFloorSlider.SetValue then
-            towerCurrentFloorSlider:SetValue(1)
+        if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
+            UI.towerCurrentFloorSlider:SetValue(1)
         end
     end)
     triggerAutoSave()
@@ -1536,7 +1543,7 @@ local function enterOrActionRoom(mode, forceSolo)
     return false
 end
 
-TabMain:Button({
+Tabs.Main:Button({
     Title = "🚪 เข้า/สร้างห้องโหมดที่เลือกทันที (Instant Enter/Create Room)",
     Desc = "ค้นหาประตูห้องของโหมดที่เลือก วาปเข้าห้องและตั้งค่าด่านทันที",
     Icon = "door-open",
@@ -1545,7 +1552,7 @@ TabMain:Button({
     end
 })
 
-TabMain:Button({
+Tabs.Main:Button({
     Title = "🚀 สร้างห้อง & เริ่มเกมคนเดียวทันที (Instant Solo Start)",
     Desc = "สร้างห้องและสั่งกดเริ่มเล่นคนเดียวทันที 1 คลิก (Solo Start)",
     Icon = "circle-play",
@@ -1554,7 +1561,7 @@ TabMain:Button({
     end
 })
 
-TabMain:Button({
+Tabs.Main:Button({
     Title = "❌ ออกจากห้องปัจจุบัน (Instant Leave Room)",
     Desc = "ออกจากห้องเตรียมตัวทันที 1 ครั้ง",
     Icon = "circle-x",
@@ -1571,20 +1578,19 @@ TabMain:Button({
 -- ==============================================================================
 -- TAB TOWER: TOWER CLIMB SYSTEM 🏰 (BANANA / BLACK HUB CLONE)
 -- ==============================================================================
-local towerJoinStatusPara = TabTower:Paragraph({
+UI.towerJoinStatusPara = Tabs.Tower:Paragraph({
     Title = "Status (สถานะระบบออโต้เข้าทาวเวอร์)",
     Desc = "Status: [IDLE] | โหมด: ไม่ได้ทำงาน",
     Image = "castle"
 })
 
-TabTower:Section({ Title = "🏰 TOWER AUTO JOIN" })
+Tabs.Tower:Section({ Title = "🏰 TOWER AUTO JOIN" })
 
-local towerAutoJoinToggle
-local towerTeamDropdown
-local towerAfterLossDropdown
-local towerJoinPrioritySlider
-
-towerAutoJoinToggle = TabTower:Toggle({
+-- [grouped into UI.towerAutoJoinToggle]
+-- [grouped into UI.towerTeamDropdown]
+-- [grouped into UI.towerAfterLossDropdown]
+-- [grouped into UI.towerJoinPrioritySlider]
+UI.towerAutoJoinToggle = Tabs.Tower:Toggle({
     Title = "Enable Auto Join",
     Desc = "สร้างห้องและเข้าไต่หอคอย (Tower) อัตโนมัติตามชั้นที่กำหนดแบบ 100% AFK",
     Value = towerAutoJoin,
@@ -1597,7 +1603,7 @@ towerAutoJoinToggle = TabTower:Toggle({
     end
 })
 
-towerTeamDropdown = TabTower:Dropdown({
+UI.towerTeamDropdown = Tabs.Tower:Dropdown({
     Title = "Tower Team",
     Desc = "เลือกทีมยูนิตที่ต้องการสวมใส่ก่อนเข้าหอคอย",
     Values = { "Equipped Team", "Team 1", "Team 2", "Team 3", "Team 4" },
@@ -1608,7 +1614,7 @@ towerTeamDropdown = TabTower:Dropdown({
     end
 })
 
-towerAfterLossDropdown = TabTower:Dropdown({
+UI.towerAfterLossDropdown = Tabs.Tower:Dropdown({
     Title = "After A Loss",
     Desc = "เลือกการกระทำเมื่อพ่ายแพ้ในชั้นนั้นๆ (Start New Run, Retry Floor, Return To Lobby)",
     Values = { "Start New Run", "Retry Floor", "Return To Lobby" },
@@ -1619,7 +1625,7 @@ towerAfterLossDropdown = TabTower:Dropdown({
     end
 })
 
-towerJoinPrioritySlider = TabTower:Slider({
+UI.towerJoinPrioritySlider = Tabs.Tower:Slider({
     Title = "Join Priority",
     Desc = "กำหนดความสำคัญในการเข้าห้องและเริ่มแมตช์ (1 - 10)",
     Value = {
@@ -1633,7 +1639,7 @@ towerJoinPrioritySlider = TabTower:Slider({
     end
 })
 
-TabTower:Button({
+Tabs.Tower:Button({
     Title = "Restore Defaults",
     Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER AUTO JOIN กลับเป็นค่าเริ่มต้น",
     Icon = "rotate-ccw",
@@ -1644,10 +1650,10 @@ TabTower:Button({
         towerJoinPriority = 1
 
         pcall(function()
-            if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
-            if towerTeamDropdown and towerTeamDropdown.SetValue then towerTeamDropdown:SetValue("Equipped Team") end
-            if towerAfterLossDropdown and towerAfterLossDropdown.SetValue then towerAfterLossDropdown:SetValue("Start New Run") end
-            if towerJoinPrioritySlider and towerJoinPrioritySlider.SetValue then towerJoinPrioritySlider:SetValue(1) end
+            if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
+            if UI.towerTeamDropdown and UI.towerTeamDropdown.SetValue then UI.towerTeamDropdown:SetValue("Equipped Team") end
+            if UI.towerAfterLossDropdown and UI.towerAfterLossDropdown.SetValue then UI.towerAfterLossDropdown:SetValue("Start New Run") end
+            if UI.towerJoinPrioritySlider and UI.towerJoinPrioritySlider.SetValue then UI.towerJoinPrioritySlider:SetValue(1) end
         end)
 
         triggerAutoSave()
@@ -1655,16 +1661,16 @@ TabTower:Button({
     end
 })
 
-local towerClimbStatusPara = TabTower:Paragraph({
+UI.towerClimbStatusPara = Tabs.Tower:Paragraph({
     Title = "Status (สถานะการไต่หอคอย)",
     Desc = "Status: [IDLE] | ชั้นปัจจุบัน: Floor 1 | เป้าหมายหยุด: Floor 22",
     Image = "swords"
 })
 
-TabTower:Section({ Title = "⚔️ TOWER CLIMB" })
+Tabs.Tower:Section({ Title = "⚔️ TOWER CLIMB" })
 
-local towerCurrentFloorSlider
-towerCurrentFloorSlider = TabTower:Slider({
+-- [grouped into UI.towerCurrentFloorSlider]
+UI.towerCurrentFloorSlider = Tabs.Tower:Slider({
     Title = "Current Floor (ชั้นที่ต้องการเล่น/เริ่ม)",
     Desc = "กำหนดชั้น Tower ที่ต้องการเริ่มเล่น (ระบบจะบวกเพิ่มทีละ 1 ชั้นเมื่อชนะ)",
     Value = {
@@ -1679,11 +1685,10 @@ towerCurrentFloorSlider = TabTower:Slider({
     end
 })
 
-local towerEnableStopAtToggle
-local towerStopAtBattleSlider
-local towerAtStopBattleDropdown
-
-towerEnableStopAtToggle = TabTower:Toggle({
+-- [grouped into UI.towerEnableStopAtToggle]
+-- [grouped into UI.towerStopAtBattleSlider]
+-- [grouped into UI.towerAtStopBattleDropdown]
+UI.towerEnableStopAtToggle = Tabs.Tower:Toggle({
     Title = "Enable Leave At Battle",
     Desc = "เมื่อไต่ถึงชั้นที่กำหนด ให้ทำตามเงื่อนไขที่เลือก (Forfeit And Restart, Return To Lobby, Continue Climbing)",
     Value = towerEnableStopAt,
@@ -1693,7 +1698,7 @@ towerEnableStopAtToggle = TabTower:Toggle({
     end
 })
 
-towerStopAtBattleSlider = TabTower:Slider({
+UI.towerStopAtBattleSlider = Tabs.Tower:Slider({
     Title = "Stop At Battle",
     Desc = "เลือกชั้นที่ต้องการให้ระบบหยุดหรือรีเซ็ตกลับมาชั้น 1 (ค่าเริ่มต้น: 22)",
     Value = {
@@ -1707,7 +1712,7 @@ towerStopAtBattleSlider = TabTower:Slider({
     end
 })
 
-towerAtStopBattleDropdown = TabTower:Dropdown({
+UI.towerAtStopBattleDropdown = Tabs.Tower:Dropdown({
     Title = "At Stop Battle",
     Desc = "เลือกการกระทำเมื่อเคลียร์ถึงชั้น Stop At Battle (Forfeit And Restart, Return To Lobby, Continue Climbing)",
     Values = { "Forfeit And Restart", "Return To Lobby", "Continue Climbing" },
@@ -1718,7 +1723,7 @@ towerAtStopBattleDropdown = TabTower:Dropdown({
     end
 })
 
-TabTower:Button({
+Tabs.Tower:Button({
     Title = "Restore Defaults",
     Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER CLIMB กลับเป็นค่าเริ่มต้น (22 / Forfeit And Restart)",
     Icon = "rotate-ccw",
@@ -1728,9 +1733,9 @@ TabTower:Button({
         towerAtStopBattle = "Forfeit And Restart"
 
         pcall(function()
-            if towerEnableStopAtToggle and towerEnableStopAtToggle.SetValue then towerEnableStopAtToggle:SetValue(false) end
-            if towerStopAtBattleSlider and towerStopAtBattleSlider.SetValue then towerStopAtBattleSlider:SetValue(22) end
-            if towerAtStopBattleDropdown and towerAtStopBattleDropdown.SetValue then towerAtStopBattleDropdown:SetValue("Forfeit And Restart") end
+            if UI.towerEnableStopAtToggle and UI.towerEnableStopAtToggle.SetValue then UI.towerEnableStopAtToggle:SetValue(false) end
+            if UI.towerStopAtBattleSlider and UI.towerStopAtBattleSlider.SetValue then UI.towerStopAtBattleSlider:SetValue(22) end
+            if UI.towerAtStopBattleDropdown and UI.towerAtStopBattleDropdown.SetValue then UI.towerAtStopBattleDropdown:SetValue("Forfeit And Restart") end
         end)
 
         triggerAutoSave()
@@ -1738,9 +1743,9 @@ TabTower:Button({
     end
 })
 
-TabTower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง)" })
+Tabs.Tower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง)" })
 
-TabTower:Button({
+Tabs.Tower:Button({
     Title = "🚀 เริ่มเล่น / สร้างห้อง Tower ทันที (Instant Start Tower)",
     Desc = "ส่งคำสั่งเข้าเล่น Tower ทันที 1 คลิก (Start/Continue)",
     Icon = "circle-play",
@@ -1749,7 +1754,7 @@ TabTower:Button({
     end
 })
 
-TabTower:Button({
+Tabs.Tower:Button({
     Title = "🏳️ ยอมแพ้และรีเซ็ตหอคอย (Forfeit Tower & Reset)",
     Desc = "ส่งคำสั่งยอมแพ้ เพื่อเริ่มรันใหม่ตั้งแต่ชั้น 1 (Forfeit)",
     Icon = "rotate-ccw",
@@ -1777,7 +1782,7 @@ task.spawn(function()
             end
 
             -- Update Status Paragraph (TabMain)
-            if farmStatusPara and farmStatusPara.SetDesc then
+            if UI.farmStatusPara and UI.farmStatusPara.SetDesc then
                 local targetDesc = selectedWorld .. " (Act " .. tostring(selectedStage) .. ")"
                 if selectedGameMode == "Raids" then
                     targetDesc = selectedRaid
@@ -1789,7 +1794,7 @@ task.spawn(function()
                     targetDesc = "Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1)
                 end
 
-                farmStatusPara:SetDesc(string.format(
+                UI.farmStatusPara:SetDesc(string.format(
                     "โหมดปัจจุบัน: %s\nเป้าหมาย: %s [Nightmare: %s]\nตำแหน่ง: %s\nระบบสร้างห้องและเริ่มอัตโนมัติ: %s",
                     selectedGameMode,
                     targetDesc,
@@ -1800,7 +1805,7 @@ task.spawn(function()
             end
 
             -- Update Status Paragraphs (TabTower)
-            if towerJoinStatusPara and towerJoinStatusPara.SetDesc then
+            if UI.towerJoinStatusPara and UI.towerJoinStatusPara.SetDesc then
                 local joinStatusText = "[IDLE]"
                 if towerAutoJoin then
                     if inMatch then
@@ -1811,7 +1816,7 @@ task.spawn(function()
                         joinStatusText = "[JOINING]"
                     end
                 end
-                towerJoinStatusPara:SetDesc(string.format(
+                UI.towerJoinStatusPara:SetDesc(string.format(
                     "Status: %s\nAuto Join: %s | Team: %s\nPriority: %d | After Loss: %s",
                     joinStatusText,
                     towerAutoJoin and "🟢 ON" or "⚪ OFF",
@@ -1821,10 +1826,10 @@ task.spawn(function()
                 ))
             end
 
-            if towerClimbStatusPara and towerClimbStatusPara.SetDesc then
+            if UI.towerClimbStatusPara and UI.towerClimbStatusPara.SetDesc then
                 local climbStatusText = towerAutoJoin and (inMatch and "[BATTLING]" or "[READY]") or "[IDLE]"
                 local stopRuleText = towerEnableStopAt and (string.format("หยุด/กระทำที่ Floor %d (%s)", towerStopAtBattle or 22, towerAtStopBattle or "Forfeit And Restart")) or "ไต่ต่อเนื่องไม่จำกัดชั้น"
-                towerClimbStatusPara:SetDesc(string.format(
+                UI.towerClimbStatusPara:SetDesc(string.format(
                     "Status: %s\nชั้นปัจจุบัน (Current Floor): Floor %d\nเงื่อนไขการหยุด: %s",
                     climbStatusText,
                     towerCurrentFloor or 1,
@@ -1854,7 +1859,7 @@ task.spawn(function()
                                     WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
                                     towerAutoJoin = false
                                     pcall(function()
-                                        if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
+                                        if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
                                     end)
                                 elseif towerAtStopBattle == "Continue Climbing" then
                                     towerCurrentFloor = towerCurrentFloor + 1
@@ -1877,14 +1882,14 @@ task.spawn(function()
                                 WindUI:Notify({ Title = "Tower Climb", Content = "⛔ แพ้การต่อสู้! ปิดระบบและกลับล็อบบี้ตามที่ตั้งค่าไว้", Duration = 4, Icon = "log-out" })
                                 towerAutoJoin = false
                                 pcall(function()
-                                    if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
+                                    if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
                                 end)
                             end
                         end
 
                         pcall(function()
-                            if towerCurrentFloorSlider and towerCurrentFloorSlider.SetValue then
-                                towerCurrentFloorSlider:SetValue(towerCurrentFloor)
+                            if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
+                                UI.towerCurrentFloorSlider:SetValue(towerCurrentFloor)
                             end
                         end)
                         triggerAutoSave()
@@ -1979,15 +1984,15 @@ end)
 -- ==============================================================================
 -- TAB 2: SMART PLAY AI 🧠 (AUTONOMOUS TOWER DEFENSE MATCH ENGINE)
 -- ==============================================================================
-local smartStatusPara = TabSmart:Paragraph({
+UI.smartStatusPara = Tabs.Smart:Paragraph({
     Title = "Smart Play Status (สถานะระบบอัจฉริยะ)",
     Desc = "Status: ⚪ Idle | Mode: In Lobby / Waiting for match\nWave: --/-- | Base HP: --\nCash: ¥-- | Placed Towers: 0",
     Image = "cpu"
 })
 
-TabSmart:Section({ Title = "Smart Play Controls (เปิดใช้งานโหมดอัจฉริยะ)" })
+Tabs.Smart:Section({ Title = "Smart Play Controls (เปิดใช้งานโหมดอัจฉริยะ)" })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Enable Smart Play AI (โหมดเล่นอัตโนมัติอัจฉริยะ)",
     Desc = "บอทจะคำนวณจุดวางยูนิตที่ดีที่สุด อัปเกรดยูนิต กดสกิล และเปลี่ยนด่านให้อัตโนมัติ โดยไม่ต้องอัด Macro เอง!",
     Value = smartPlayEnabled,
@@ -2004,7 +2009,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Dropdown({
+Tabs.Smart:Dropdown({
     Title = "AI Play Strategy (กลยุทธ์การเล่น)",
     Desc = "เลือกรูปแบบและเป้าหมายของ AI ในการจัดสรรเงินและยูนิต",
     Values = { "Balanced", "Aggressive", "Greedy Economy", "Boss Killer" },
@@ -2016,9 +2021,9 @@ TabSmart:Dropdown({
     end
 })
 
-TabSmart:Section({ Title = "Tactics & Placement (การวางและอัปเกรด)" })
+Tabs.Smart:Section({ Title = "Tactics & Placement (การวางและอัปเกรด)" })
 
-TabSmart:Dropdown({
+Tabs.Smart:Dropdown({
     Title = "Placement Bias (ตำแหน่งจัดวางยูนิต)",
     Desc = "ตำแหน่งทางยุทธศาสตร์ที่ต้องการให้บอทเล็งวางยูนิต",
     Values = { "Best", "Front", "Back" },
@@ -2029,7 +2034,7 @@ TabSmart:Dropdown({
     end
 })
 
-TabSmart:Dropdown({
+Tabs.Smart:Dropdown({
     Title = "Upgrade Priority (ลำดับการอัปเกรด)",
     Desc = "เลือกรูปแบบที่ต้องการให้อัปเกรดยูนิตในสนาม",
     Values = { "Focus Carry", "Spread Evenly", "Cheapest First", "Any" },
@@ -2040,7 +2045,7 @@ TabSmart:Dropdown({
     end
 })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Save Cash For Placements (สำรองเงินค่าวาง)",
     Desc = "กันเงินสำรองไว้สำหรับวางยูนิตจำเป็น ไม่ผลาญเงินไปกับอัปเกรดจนหมด",
     Value = smartSaveForPlacements,
@@ -2051,7 +2056,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Sell Farms On Final Wave (ขายฟาร์มเวฟสุดท้าย)",
     Desc = "ขายตัวฟาร์มเงินคืนทุนในเวฟสุดท้าย เพื่อนำเงินทั้งหมดมาอัปเกรดตัวดาเมจสู้บอส",
     Value = smartSellFarmsFinalWave,
@@ -2062,9 +2067,9 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Section({ Title = "Combat & Match Flow (การต่อสู้และจบเกม)" })
+Tabs.Smart:Section({ Title = "Combat & Match Flow (การต่อสู้และจบเกม)" })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Auto Cast Tower Abilities (กดสกิลยูนิตอัตโนมัติ)",
     Desc = "ตรวจจับยูนิตที่มีท่าไม้ตาย (เช่น Fireball, Roar, Pound Cannon) และกดใช้งานให้อัตโนมัติทันทีที่พร้อม",
     Value = smartAutoAbilities,
@@ -2075,7 +2080,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Smart Target Switching (ปรับโหมดเล็งอัตโนมัติ)",
     Desc = "ปรับตัวดาเมจเดี่ยว/บอสไปเล็ง Strongest และตัวตีหมู่ไปเล็ง First ให้อัตโนมัติ",
     Value = smartAutoTargeting,
@@ -2086,7 +2091,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Lock 2x Game Speed (เร่งสปีด 2x ตลอดเวลา)",
     Desc = "บังคับเปิดความเร็วเกม 2x ตลอดแมตช์เพื่อความรวดเร็วในการฟาร์ม",
     Value = smartLockSpeed2x,
@@ -2097,7 +2102,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Toggle({
+Tabs.Smart:Toggle({
     Title = "Smart Wave Skip (ข้ามเวฟอัตโนมัติ)",
     Desc = "ส่งคำสั่งข้ามเวฟอัตโนมัติเมื่อเลือดป้อม (Base HP) ปลอดภัย",
     Value = smartAutoSkipWave,
@@ -2108,7 +2113,7 @@ TabSmart:Toggle({
     end
 })
 
-TabSmart:Dropdown({
+Tabs.Smart:Dropdown({
     Title = "Match Completion Action (เมื่อจบแมตช์)",
     Desc = "การกระทำอัตโนมัติเมื่อชนะการต่อสู้ในแมตช์",
     Values = { "Next", "Replay", "Return" },
@@ -2127,7 +2132,7 @@ task.spawn(function()
         local inMatch = gameFolder and gameFolder:FindFirstChild("Started") and gameFolder.Started.Value
         
         -- Live tracker update
-        if smartStatusPara and smartStatusPara.SetDesc then
+        if UI.smartStatusPara and UI.smartStatusPara.SetDesc then
             if inMatch then
                 local wave = gameFolder:FindFirstChild("CurrentWave") and gameFolder.CurrentWave.Value or 0
                 local totalWaves = gameFolder:FindFirstChild("TotalWaves") and gameFolder.TotalWaves.Value or 0
@@ -2144,7 +2149,7 @@ task.spawn(function()
                     end
                 end
                 
-                smartStatusPara:SetDesc(string.format(
+                UI.smartStatusPara:SetDesc(string.format(
                     "Status: %s | Strategy: %s\nMap: %s (Act %d) | Wave: %d/%d\nBase HP: %d | Cash: ¥%d | Placed Towers: %d",
                     smartPlayEnabled and "🟢 Running" or "⚪ Paused",
                     smartStrategy,
@@ -2152,7 +2157,7 @@ task.spawn(function()
                     hp, money, myTowers
                 ))
             else
-                smartStatusPara:SetDesc(string.format(
+                UI.smartStatusPara:SetDesc(string.format(
                     "Status: %s\nMode: In Lobby / Waiting for match to start...",
                     smartPlayEnabled and "🟡 Armed (Waiting for match)" or "⚪ Idle"
                 ))
@@ -2256,39 +2261,7 @@ end)
 -- ==============================================================================
 -- TAB 3: TOWER DEFENSE MACRO CONFIG (SAVE / LOAD / RECORD / PLAY)
 -- ==============================================================================
-local MACRO_FOLDER = "AnimeGalaxiesHub/Macros"
-pcall(function()
-    if not isfolder("AnimeGalaxiesHub") then makefolder("AnimeGalaxiesHub") end
-    if not isfolder(MACRO_FOLDER) then makefolder(MACRO_FOLDER) end
-end)
-
-local function getSavedMacroList(ensureName)
-    local names = {}
-    local seen = {}
-    pcall(function()
-        if not isfolder("AnimeGalaxiesHub") then makefolder("AnimeGalaxiesHub") end
-        if not isfolder(MACRO_FOLDER) then makefolder(MACRO_FOLDER) end
-        if isfolder(MACRO_FOLDER) then
-            for _, f in ipairs(listfiles(MACRO_FOLDER)) do
-                local clean = f:match("([^\\/]+)%.[jJ][sS][oO][nN]$")
-                if clean and not seen[clean] then
-                    seen[clean] = true
-                    table.insert(names, clean)
-                end
-            end
-        end
-    end)
-    if ensureName and #ensureName > 0 and not seen[ensureName] then
-        seen[ensureName] = true
-        table.insert(names, ensureName)
-    end
-    if #names == 0 and not seen["Default_Tower_Farm"] then
-        table.insert(names, "Default_Tower_Farm")
-        seen["Default_Tower_Farm"] = true
-    end
-    table.sort(names)
-    return names
-end
+-- Macro system uses global MACRO_FOLDER & getSavedMacroList defined above
 
 local function getEquippedUnitInfo(slotNumber)
     local info = {
@@ -2328,9 +2301,9 @@ local activeConfig = {
     Steps = {}
 }
 
-local macroStatusPara = nil
-local macroStepsSummaryPara = nil
-local savedConfigsDropdown = nil
+UI.macroStatusPara = nil
+UI.macroStepsSummaryPara = nil
+UI.savedConfigsDropdown = nil
 
 -- Helper to get champion placement price and upgrade table
 local function getChampionInfo(unitName)
@@ -2475,17 +2448,17 @@ local function formatStepsDesc(steps)
 end
 
 local function updateMacroStatus()
-    if macroStepsSummaryPara and macroStepsSummaryPara.SetDesc then
-        macroStepsSummaryPara:SetDesc(formatStepsDesc(activeConfig.Steps))
+    if UI.macroStepsSummaryPara and UI.macroStepsSummaryPara.SetDesc then
+        UI.macroStepsSummaryPara:SetDesc(formatStepsDesc(activeConfig.Steps))
     end
-    if macroStatusPara and macroStatusPara.SetDesc then
+    if UI.macroStatusPara and UI.macroStatusPara.SetDesc then
         local statusText = "⚪ พักอยู่ (Idle)"
         if isRecordingMacro then
             statusText = string.format("🔴 กำลังอัด Macro... (อัดแล้ว %d สเต็ป)", #activeConfig.Steps)
         elseif macroPlaybackEnabled then
             statusText = string.format("🟢 กำลังเล่น Macro... (สเต็ป %d / %d)", currentMacroStep, #activeConfig.Steps)
         end
-        macroStatusPara:SetDesc(string.format("คอนฟิก: %s\nจำนวนสเต็ป: %d สเต็ป\nสถานะ: %s\nคำแนะนำ: กด '🔴 เริ่มอัด' แล้วไปวางตัวในเกมได้เลย!",
+        UI.macroStatusPara:SetDesc(string.format("คอนฟิก: %s\nจำนวนสเต็ป: %d สเต็ป\nสถานะ: %s\nคำแนะนำ: กด '🔴 เริ่มอัด' แล้วไปวางตัวในเกมได้เลย!",
             activeConfig.Name,
             #activeConfig.Steps,
             statusText
@@ -2533,8 +2506,8 @@ end
 -- ==============================================================================
 local recordedPlacements = {}   -- list of placed towers: { index, unit, realId, pos, rotY, id, tier }
 local recordedTowersById = {}   -- map of UUID -> recordedPlacements item
-local towerAddedConn = nil
-local towerChangedConns = {}
+-- [Duplicate tower connections removed]
+
 
 local function recordPlaceStep(unitName, realId, pos, rotY, towerId)
     if not isRecordingMacro then return end
@@ -2856,9 +2829,9 @@ local function stopMacroRecording()
         writefile(path, json)
 
         selectedFileToLoad = saveName
-        if savedConfigsDropdown then
+        if UI.savedConfigsDropdown then
             local updatedList = getSavedMacroList(saveName)
-            updateDropdown(savedConfigsDropdown, updatedList, saveName)
+            updateDropdown(UI.savedConfigsDropdown, updatedList, saveName)
         end
     end)
 
@@ -2924,15 +2897,15 @@ local function quickRecordCurrentSpot()
     end)
 end
 
-macroStatusPara = TabMacro:Paragraph({
+UI.macroStatusPara = Tabs.Macro:Paragraph({
     Title = "🎮 TD Macro Controller (ระบบจัดการ Macro)",
     Desc = "สถานะ: ⚪ พักอยู่ (Idle)\nคอนฟิก: My_Tower_Macro | สเต็ป: 0 สเต็ป\nคำแนะนำ: กด '🔴 อัด Macro' แล้ววางตัว/อัปเกรดได้เลย!",
     Image = "gamepad-2"
 })
 
-TabMacro:Section({ Title = "🔴 ระบบอัด Macro สด (Live Recorder)" })
+Tabs.Macro:Section({ Title = "🔴 ระบบอัด Macro สด (Live Recorder)" })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "🔴 อัด Macro สด (Start Record)",
     Desc = "วางและอัปเกรดยูนิตในเกม ระบบจะจับอัตโนมัติ",
     Icon = "circle-dot",
@@ -2941,7 +2914,7 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "⏹️ หยุดอัด Macro (Stop Record)",
     Desc = "หยุดอัด และบันทึกคอนฟิกลงเครื่องอัตโนมัติทันที",
     Icon = "square",
@@ -2950,7 +2923,7 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "📍 บันทึกจุดที่ยืนปัจจุบัน 1 คลิก (Quick Record Spot)",
     Desc = "เดินไปจุดที่ต้องการ แล้วกดเพื่อบันทึกพิกัดวางยูนิตทันที",
     Icon = "map-pin",
@@ -2959,7 +2932,7 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "🧹 ล้างสเต็ปที่อัดทั้งหมด (Clear Steps)",
     Desc = "ล้างรายการสเต็ปที่กำลังอัดเพื่อเริ่มใหม่",
     Icon = "trash-2",
@@ -2972,9 +2945,9 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Section({ Title = "▶️ เล่น Macro อัตโนมัติ (Playback Controls)" })
+Tabs.Macro:Section({ Title = "▶️ เล่น Macro อัตโนมัติ (Playback Controls)" })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "▶️ เปิดเล่น Macro (Enable Macro Playback)",
     Desc = "เปิดระบบทำงานอัตโนมัติตามสเต็ปที่อัดไว้",
     Value = macroPlaybackEnabled,
@@ -2994,7 +2967,7 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "🔁 วนลูปเล่นซ้ำทุกรอบ (Loop on Next Match)",
     Desc = "วนลูป Macro ซ้ำให้อัตโนมัติเมื่อเริ่มเกมรอบใหม่",
     Value = macroLoopEnabled,
@@ -3005,7 +2978,7 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "⚡ เร่งสปีดเกม 2x (Auto 2x Speed)",
     Desc = "เร่งความเร็วเกมเป็น 2 เท่าตลอดแมตช์",
     Value = macroLockSpeed2x,
@@ -3016,7 +2989,7 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "⏭️ ข้ามเวฟอัตโนมัติ (Auto Skip Wave)",
     Desc = "ข้ามเวฟอัตโนมัติเมื่อเลือดป้อมอยู่ในระดับปลอดภัย",
     Value = macroAutoSkipWave,
@@ -3027,7 +3000,7 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "⏩ กดเริ่มแมตช์อัตโนมัติ (Auto Start Match)",
     Desc = "กดเริ่มแมตช์และกดเล่นต่อรอบให้อัตโนมัติ",
     Value = macroAutoStart,
@@ -3038,7 +3011,7 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Toggle({
+Tabs.Macro:Toggle({
     Title = "🛠️ อัปเกรดยูนิตต่อเนื่อง (Auto Upgrade Units)",
     Desc = "ส่งคำสั่งอัปเกรดยูนิตที่วางไว้ต่อเนื่อง",
     Value = macroAutoUpgrade,
@@ -3049,9 +3022,9 @@ TabMacro:Toggle({
     end
 })
 
-TabMacro:Section({ Title = "📁 จัดการไฟล์ Macro (Save / Load)" })
+Tabs.Macro:Section({ Title = "📁 จัดการไฟล์ Macro (Save / Load)" })
 
-TabMacro:Input({
+Tabs.Macro:Input({
     Title = "Macro Config Name",
     Desc = "พิมพ์ชื่อคอนฟิกสำหรับบันทึก (Save/Load)",
     Value = macroNameInput,
@@ -3066,7 +3039,7 @@ TabMacro:Input({
     end
 })
 
-savedConfigsDropdown = TabMacro:Dropdown({
+UI.savedConfigsDropdown = Tabs.Macro:Dropdown({
     Title = "Select Saved Config",
     Desc = "เลือกไฟล์ Macro (ระบบโหลดอัตโนมัติทันทีที่เลือก)",
     Values = getSavedMacroList(),
@@ -3079,7 +3052,7 @@ savedConfigsDropdown = TabMacro:Dropdown({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "💾 Save / Overwrite Macro Config",
     Desc = "บันทึกสเต็ปและค่าคอนฟิกลงไฟล์ JSON ทันที",
     Icon = "save",
@@ -3103,8 +3076,8 @@ TabMacro:Button({
 
             selectedFileToLoad = saveName
             local updatedList = getSavedMacroList(saveName)
-            if savedConfigsDropdown then
-                updateDropdown(savedConfigsDropdown, updatedList, saveName)
+            if UI.savedConfigsDropdown then
+                updateDropdown(UI.savedConfigsDropdown, updatedList, saveName)
             end
 
             updateMacroStatus()
@@ -3113,7 +3086,7 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "📂 Load Selected Macro Config",
     Desc = "โหลดคอนฟิกจากไฟล์ที่เลือกมาใช้งาน",
     Icon = "folder-open",
@@ -3122,7 +3095,7 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "🗑️ Delete Selected Config",
     Desc = "ลบไฟล์คอนฟิกที่เลือกออกจากเครื่อง",
     Icon = "trash-2",
@@ -3134,8 +3107,8 @@ TabMacro:Button({
                 local updatedList = getSavedMacroList()
                 local nextSelected = updatedList[1] or "Default_Tower_Farm"
                 selectedFileToLoad = nextSelected
-                if savedConfigsDropdown then
-                    updateDropdown(savedConfigsDropdown, updatedList, nextSelected)
+                if UI.savedConfigsDropdown then
+                    updateDropdown(UI.savedConfigsDropdown, updatedList, nextSelected)
                 end
                 loadMacroConfig(nextSelected)
                 WindUI:Notify({ Title = "Macro Deleted", Content = "Deleted " .. selectedFileToLoad, Duration = 3, Icon = "trash-2" })
@@ -3144,22 +3117,22 @@ TabMacro:Button({
     end
 })
 
-TabMacro:Button({
+Tabs.Macro:Button({
     Title = "🔄 Refresh Config List",
     Desc = "รีเฟรชรายชื่อคอนฟิกในโฟลเดอร์",
     Icon = "refresh-cw",
     Callback = function()
-        if savedConfigsDropdown then
+        if UI.savedConfigsDropdown then
             local updatedList = getSavedMacroList(selectedFileToLoad)
-            updateDropdown(savedConfigsDropdown, updatedList, selectedFileToLoad)
+            updateDropdown(UI.savedConfigsDropdown, updatedList, selectedFileToLoad)
             WindUI:Notify({ Title = "Macro", Content = "Refreshed macro list!", Duration = 2, Icon = "circle-check" })
         end
     end
 })
 
-TabMacro:Section({ Title = "📋 รายการสเต็ปที่บันทึกไว้ (Recorded Steps)" })
+Tabs.Macro:Section({ Title = "📋 รายการสเต็ปที่บันทึกไว้ (Recorded Steps)" })
 
-macroStepsSummaryPara = TabMacro:Paragraph({
+UI.macroStepsSummaryPara = Tabs.Macro:Paragraph({
     Title = "Recorded Steps Summary (รายการสเต็ป)",
     Desc = formatStepsDesc(activeConfig.Steps),
     Image = "file-text"
@@ -3212,8 +3185,8 @@ local function executeMacroStep(step)
             local inMatch = (game.PlaceId == 85423571424083) or (gameFolder and gameFolder:FindFirstChild("Started") and gameFolder.Started.Value)
             if not inMatch then return false end
 
-            if macroStatusPara and macroStatusPara.SetDesc then
-                macroStatusPara:SetDesc(string.format("🟡 กำลังรอเงินสำหรับสเต็ป #%d (%s)\nเงินที่มี: ¥%s / ต้องการ: ¥%s\nสถานะ: กำลังรอรอบเงินจากเวฟ...",
+            if UI.macroStatusPara and UI.macroStatusPara.SetDesc then
+                UI.macroStatusPara:SetDesc(string.format("🟡 กำลังรอเงินสำหรับสเต็ป #%d (%s)\nเงินที่มี: ¥%s / ต้องการ: ¥%s\nสถานะ: กำลังรอรอบเงินจากเวฟ...",
                     step.Step or twIdx, step.Unit or "Tower", formatNumber(getMoney()), formatNumber(requiredCost)))
             end
             task.wait(0.5)
@@ -3438,8 +3411,8 @@ task.spawn(function()
                         lastEndGameSent = tick()
                         triggerMatchEndAction(smartMatchEndAction or "Next")
                     end
-                    if macroStatusPara and macroStatusPara.SetDesc then
-                        macroStatusPara:SetDesc(string.format(
+                    if UI.macroStatusPara and UI.macroStatusPara.SetDesc then
+                        UI.macroStatusPara:SetDesc(string.format(
                             "คอนฟิก: %s\nจำนวน: %d สเต็ป\nสถานะ: 🏁 จบรอบแล้ว! กำลังวนซ้ำรอบถัดไป...",
                             activeConfig.Name,
                             #activeConfig.Steps
@@ -3558,9 +3531,9 @@ end)
 -- ==============================================================================
 -- TAB 4: AUTO REWARDS & CODES
 -- ==============================================================================
-TabRewards:Section({ Title = "Automatic Reward Claims" })
+Tabs.Rewards:Section({ Title = "Automatic Reward Claims" })
 
-TabRewards:Toggle({
+Tabs.Rewards:Toggle({
     Title = "Auto Claim Daily Rewards",
     Desc = "รับของขวัญประจำวันอัตโนมัติเมื่อครบเวลา",
     Value = autoDaily,
@@ -3571,7 +3544,7 @@ TabRewards:Toggle({
     end
 })
 
-TabRewards:Toggle({
+Tabs.Rewards:Toggle({
     Title = "Auto Claim Season Pass",
     Desc = "รับรางวัลเลเวล Battle Pass / Season Pass อัตโนมัติ",
     Value = autoSeasonPass,
@@ -3582,7 +3555,7 @@ TabRewards:Toggle({
     end
 })
 
-TabRewards:Toggle({
+Tabs.Rewards:Toggle({
     Title = "Auto Claim Index Unit Rewards",
     Desc = "รับของรางวัลจากการสะสมตัวละครในสมุด Index อัตโนมัติ",
     Value = autoIndex,
@@ -3593,7 +3566,7 @@ TabRewards:Toggle({
     end
 })
 
-TabRewards:Toggle({
+Tabs.Rewards:Toggle({
     Title = "Auto Claim All Quests",
     Desc = "รับรางวัลเควสที่ทำสำเร็จทั้งหมด (Daily, Weekly, Infinite, Event)",
     Value = autoQuests,
@@ -3604,7 +3577,7 @@ TabRewards:Toggle({
     end
 })
 
-TabRewards:Toggle({
+Tabs.Rewards:Toggle({
     Title = "Auto Claim Level Milestones",
     Desc = "รับรางวัลทุกครั้งที่เลเวลอัปตาม Milestones (Gems, Stat Tokens, Trait Crystals)",
     Value = autoLevelMilestones,
@@ -3615,7 +3588,7 @@ TabRewards:Toggle({
     end
 })
 
-TabRewards:Section({ Title = "One-Click Quick Claims & Codes" })
+Tabs.Rewards:Section({ Title = "One-Click Quick Claims & Codes" })
 
 local knownCodes = {
     "1KLIKES",
@@ -3633,7 +3606,7 @@ local knownCodes = {
     "INVITED"
 }
 
-TabRewards:Button({
+Tabs.Rewards:Button({
     Title = "Claim All Pending Rewards Now",
     Desc = "กดปุ่มเดียวเพื่อส่งคำสั่งรับรางวัลทุกหมวดหมู่ทันที 1 ครั้ง",
     Icon = "gift",
@@ -3647,8 +3620,8 @@ TabRewards:Button({
             publishRemote("Rewards", {Type = "Quest", Category = "Infinite", Index = i})
             publishRemote("Rewards", {Type = "Quest", Category = "Event", Index = i})
         end
-        if LevelRewardsInfo and LocalPlayer:FindFirstChild("Data") then
-            local claimable = LevelRewardsInfo.claimable(LocalPlayer.Data)
+        if GameInfo.LevelRewards and LocalPlayer:FindFirstChild("Data") then
+            local claimable = GameInfo.LevelRewards.claimable(LocalPlayer.Data)
             for _, lvl in ipairs(claimable) do
                 publishRemote("LevelRewards", {Level = lvl})
             end
@@ -3657,7 +3630,7 @@ TabRewards:Button({
     end
 })
 
-TabRewards:Button({
+Tabs.Rewards:Button({
     Title = "Redeem All Active Codes",
     Desc = "กดปุ่มเดียวเติมโค้ดรับเพชรและไอเทมทั้งหมดฟรี!",
     Icon = "key",
@@ -3695,9 +3668,9 @@ task.spawn(function()
                 publishRemote("Rewards", {Type = "Quest", Category = "Event", Index = i})
             end
         end
-        if autoLevelMilestones and LevelRewardsInfo and LocalPlayer:FindFirstChild("Data") then
+        if autoLevelMilestones and GameInfo.LevelRewards and LocalPlayer:FindFirstChild("Data") then
             pcall(function()
-                local claimable = LevelRewardsInfo.claimable(LocalPlayer.Data)
+                local claimable = GameInfo.LevelRewards.claimable(LocalPlayer.Data)
                 for _, lvl in ipairs(claimable) do
                     publishRemote("LevelRewards", {Level = lvl})
                 end
@@ -3710,9 +3683,9 @@ end)
 -- ==============================================================================
 -- TAB 5: AUTO SUMMON & GACHA
 -- ==============================================================================
-TabSummon:Section({ Title = "Auto Summon Controls" })
+Tabs.Summon:Section({ Title = "Auto Summon Controls" })
 
-TabSummon:Dropdown({
+Tabs.Summon:Dropdown({
     Title = "Select Banner",
     Desc = "เลือกตู้ตัวละครที่ต้องการสุ่ม",
     Values = { "Standard", "Special" },
@@ -3723,7 +3696,7 @@ TabSummon:Dropdown({
     end
 })
 
-TabSummon:Dropdown({
+Tabs.Summon:Dropdown({
     Title = "Pull Amount",
     Desc = "เลือกจำนวนครั้งต่อการสุ่ม",
     Values = { "1", "10" },
@@ -3734,7 +3707,7 @@ TabSummon:Dropdown({
     end
 })
 
-TabSummon:Toggle({
+Tabs.Summon:Toggle({
     Title = "Auto Summon (Spam Pull)",
     Desc = "สุ่มตัวละครต่อเนื่องอัตโนมัติเมื่อเพชรพอ",
     Value = autoSummon,
@@ -3745,7 +3718,7 @@ TabSummon:Toggle({
     end
 })
 
-TabSummon:Toggle({
+Tabs.Summon:Toggle({
     Title = "Auto Open Event Capsules",
     Desc = "เปิดแคปซูลอีเวนต์อัตโนมัติเมื่อได้รับในกระเป๋า",
     Value = autoCapsules,
@@ -3756,7 +3729,7 @@ TabSummon:Toggle({
     end
 })
 
-TabSummon:Button({
+Tabs.Summon:Button({
     Title = "Summon Once (ทันที)",
     Desc = "กดสุ่มตามตู้และจำนวนที่เลือก 1 ครั้ง",
     Icon = "sparkles",
@@ -3766,9 +3739,9 @@ TabSummon:Button({
     end
 })
 
-TabSummon:Section({ Title = "Built-in Autosell Settings" })
+Tabs.Summon:Section({ Title = "Built-in Autosell Settings" })
 
-TabSummon:Toggle({
+Tabs.Summon:Toggle({
     Title = "Autosell: Rare Units",
     Desc = "เปิดระบบขายตัวละครระดับ Rare อัตโนมัติเวลาสุ่มได้",
     Value = false,
@@ -3778,7 +3751,7 @@ TabSummon:Toggle({
     end
 })
 
-TabSummon:Toggle({
+Tabs.Summon:Toggle({
     Title = "Autosell: Epic Units",
     Desc = "เปิดระบบขายตัวละครระดับ Epic อัตโนมัติเวลาสุ่มได้",
     Value = false,
@@ -3788,7 +3761,7 @@ TabSummon:Toggle({
     end
 })
 
-TabSummon:Toggle({
+Tabs.Summon:Toggle({
     Title = "Autosell: Legendary Units",
     Desc = "เปิดระบบขายตัวละครระดับ Legendary อัตโนมัติเวลาสุ่มได้",
     Value = false,
@@ -3813,9 +3786,9 @@ end)
 -- ==============================================================================
 -- TAB 6: AUTO UNITS & STATS (MANAGEMENT, ROLLS, FEEDING)
 -- ==============================================================================
-TabUnits:Section({ Title = "Unit Protection & Cleanup" })
+Tabs.Units:Section({ Title = "Unit Protection & Cleanup" })
 
-TabUnits:Toggle({
+Tabs.Units:Toggle({
     Title = "Auto Lock Mythic & Secret",
     Desc = "ตรวจจับและล็อคตัวละครระดับ Mythic และ Secret ทุกตัวอัตโนมัติ เพื่อป้องกันการเผลอขาย",
     Value = autoLockHighRarity,
@@ -3826,7 +3799,7 @@ TabUnits:Toggle({
     end
 })
 
-TabUnits:Button({
+Tabs.Units:Button({
     Title = "Auto Sell All Duplicates (ขายตัวซ้ำ)",
     Desc = "สแกนหาตัวละครระดับ Rare/Epic ที่ซ้ำ ไม่ได้ใส่ และไม่ได้ล็อค แล้วส่งคำสั่งขายทั้งหมดทันที",
     Icon = "trash-2",
@@ -3857,9 +3830,9 @@ TabUnits:Button({
     end
 })
 
-TabUnits:Section({ Title = "Auto Feeding (Level Up)" })
+Tabs.Units:Section({ Title = "Auto Feeding (Level Up)" })
 
-TabUnits:Button({
+Tabs.Units:Button({
     Title = "Feed All Food to Equipped Units",
     Desc = "ป้อนอาหารที่มีทั้งหมด (Ramen, Meat, Super Bean ฯลฯ) ให้ตัวละครที่ใส่อยู่ทันที",
     Icon = "coffee",
@@ -3883,9 +3856,9 @@ TabUnits:Button({
     end
 })
 
-TabUnits:Section({ Title = "Auto Trait & Stat Reroll" })
+Tabs.Units:Section({ Title = "Auto Trait & Stat Reroll" })
 
-local ownedDropdown = TabUnits:Dropdown({
+UI.ownedDropdown = Tabs.Units:Dropdown({
     Title = "Select Unit for Rolls",
     Desc = "เลือกตัวละครในกระเป๋าที่ต้องการสุ่ม Trait หรือ Stats",
     Values = getOwnedUnitsList(),
@@ -3900,20 +3873,20 @@ local ownedDropdown = TabUnits:Dropdown({
     end
 })
 
-TabUnits:Button({
+Tabs.Units:Button({
     Title = "Refresh Owned Units Dropdown",
     Desc = "อัปเดตรายชื่อตัวละครในเมนูเลือกตัว",
     Icon = "refresh-cw",
     Callback = function()
-        if ownedDropdown then
+        if UI.ownedDropdown then
             local updatedUnits = getOwnedUnitsList()
-            updateDropdown(ownedDropdown, updatedUnits, updatedUnits[1])
+            updateDropdown(UI.ownedDropdown, updatedUnits, updatedUnits[1])
             WindUI:Notify({ Title = "Units", Content = "Refreshed units list!", Duration = 2, Icon = "check" })
         end
     end
 })
 
-TabUnits:Toggle({
+Tabs.Units:Toggle({
     Title = "Auto Trait Roll Loop",
     Desc = "สุ่ม Trait ให้ตัวละครที่เลือกอย่างต่อเนื่อง (ใช้ Trait Crystals)",
     Value = autoTraitRoll,
@@ -3924,7 +3897,7 @@ TabUnits:Toggle({
     end
 })
 
-TabUnits:Toggle({
+Tabs.Units:Toggle({
     Title = "Auto Stat Roll Loop",
     Desc = "สุ่ม Stats (Damage, Cooldown, Range) ให้ตัวละครที่เลือกต่อเนื่อง (ใช้ Stat Tokens)",
     Value = autoStatRoll,
@@ -3939,11 +3912,11 @@ TabUnits:Toggle({
 task.spawn(function()
     while scriptRunning do
         task.wait(2)
-        if autoLockHighRarity and ChampionsInfo and LocalPlayer:FindFirstChild("Data") then
+        if autoLockHighRarity and GameInfo.Champions and LocalPlayer:FindFirstChild("Data") then
             pcall(function()
                 local units = LocalPlayer.Data.Units
                 for _, u in ipairs(units:GetChildren()) do
-                    local champ = ChampionsInfo(u.Name)
+                    local champ = GameInfo.Champions(u.Name)
                     local rarity = champ and champ.Rarity
                     if rarity == "Mythic" or rarity == "Secret" then
                         for _, idF in ipairs(u:GetChildren()) do
@@ -3972,7 +3945,7 @@ end)
 -- ==============================================================================
 -- TAB 7: TELEPORTS
 -- ==============================================================================
-TabTeleports:Section({ Title = "Lobby Teleports" })
+Tabs.Teleports:Section({ Title = "Lobby Teleports" })
 
 local function safeTeleport(targetPos)
     if RootPart then
@@ -3980,7 +3953,7 @@ local function safeTeleport(targetPos)
     end
 end
 
-TabTeleports:Button({
+Tabs.Teleports:Button({
     Title = "Teleport: Codes Area (บ่อน้ำโค้ด)",
     Desc = "วาปไปยังจุดเติมโค้ดรับรางวัล",
     Icon = "key",
@@ -3990,7 +3963,7 @@ TabTeleports:Button({
     end
 })
 
-TabTeleports:Button({
+Tabs.Teleports:Button({
     Title = "Teleport: Summon Area (แท่นสุ่ม)",
     Desc = "วาปไปยังแท่นสุ่มตัวละคร Gacha",
     Icon = "sparkles",
@@ -4000,7 +3973,7 @@ TabTeleports:Button({
     end
 })
 
-TabTeleports:Button({
+Tabs.Teleports:Button({
     Title = "Teleport: Evolve Area (จุดวิวัฒนาการ)",
     Desc = "วาปไปยังจุดอัปเกรด/วิวัฒนาการตัวละคร",
     Icon = "zap",
@@ -4010,7 +3983,7 @@ TabTeleports:Button({
     end
 })
 
-TabTeleports:Button({
+Tabs.Teleports:Button({
     Title = "Teleport: Battle / Play Area (ลงแมพ)",
     Desc = "วาปไปยังจุดเลือกด่านและลงต่อสู้",
     Icon = "swords",
@@ -4020,7 +3993,7 @@ TabTeleports:Button({
     end
 })
 
-TabTeleports:Button({
+Tabs.Teleports:Button({
     Title = "Teleport to AFK Chamber",
     Desc = "วาปเข้าห้อง AFK เพื่อรับเพชรและของรางวัลตลอดเวลา",
     Icon = "coffee",
@@ -4034,9 +4007,9 @@ TabTeleports:Button({
 -- ==============================================================================
 -- TAB 8: PLAYER & MISC
 -- ==============================================================================
-TabPlayer:Section({ Title = "Character & Movement" })
+Tabs.Player:Section({ Title = "Character & Movement" })
 
-TabPlayer:Slider({
+Tabs.Player:Slider({
     Title = "WalkSpeed",
     Desc = "ปรับความเร็วในการเดินของตัวละคร",
     Value = { Min = 16, Max = 150, Default = customSpeed },
@@ -4050,7 +4023,7 @@ TabPlayer:Slider({
     end
 })
 
-TabPlayer:Toggle({
+Tabs.Player:Toggle({
     Title = "Enable WalkSpeed",
     Desc = "เปิด/ปิด การใช้งานความเร็วที่กำหนด",
     Value = speedEnabled,
@@ -4064,7 +4037,7 @@ TabPlayer:Toggle({
     end
 })
 
-TabPlayer:Slider({
+Tabs.Player:Slider({
     Title = "JumpPower",
     Desc = "ปรับแรงกระโดดของตัวละคร",
     Value = { Min = 50, Max = 200, Default = customJump },
@@ -4078,7 +4051,7 @@ TabPlayer:Slider({
     end
 })
 
-TabPlayer:Toggle({
+Tabs.Player:Toggle({
     Title = "Enable JumpPower",
     Desc = "เปิด/ปิด การใช้งานแรงกระโดดที่กำหนด",
     Value = jumpEnabled,
@@ -4092,7 +4065,7 @@ TabPlayer:Toggle({
     end
 })
 
-TabPlayer:Toggle({
+Tabs.Player:Toggle({
     Title = "Infinite Jump",
     Desc = "กระโดดกลางอากาศได้ต่อเนื่องไม่จำกัด",
     Value = infJump,
@@ -4109,7 +4082,7 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
-TabPlayer:Toggle({
+Tabs.Player:Toggle({
     Title = "Noclip",
     Desc = "เดินทะลุกำแพงและสิ่งกีดขวางทุกชนิด",
     Value = noclip,
@@ -4136,9 +4109,9 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-TabPlayer:Section({ Title = "Utility & Protection" })
+Tabs.Player:Section({ Title = "Utility & Protection" })
 
-TabPlayer:Toggle({
+Tabs.Player:Toggle({
     Title = "Anti-AFK (กันหลุด 20 นาที)",
     Desc = "ป้องกัน Roblox เตะออกจากเกมเวลาเปิดฟาร์มทิ้งไว้",
     Value = antiAfkEnabled,
@@ -4156,7 +4129,7 @@ LocalPlayer.Idled:Connect(function()
     end
 end)
 
-TabPlayer:Button({
+Tabs.Player:Button({
     Title = "Rejoin Server",
     Desc = "เชื่อมต่อกลับเข้าเซิร์ฟเวอร์เดิมใหม่อีกครั้ง",
     Icon = "refresh-cw",
@@ -4169,51 +4142,51 @@ TabPlayer:Button({
 -- ==============================================================================
 -- TAB 9: DYNAMIC FX & UI CUSTOMIZATION
 -- ==============================================================================
-TabFX:Section({ Title = "Live Animated Effects" })
+Tabs.FX:Section({ Title = "Live Animated Effects" })
 
-TabFX:Toggle({
+Tabs.FX:Toggle({
     Title = "Rotating Chroma Glow Border",
     Desc = "ขอบแสงนีออนไล่เฉดสีหมุนวนรอบหน้าต่างอย่างต่อเนื่อง",
     Value = fxChromaEnabled,
 -- Icon = "sparkles",
     Callback = function(state)
         fxChromaEnabled = state
-        if currentStroke and currentStroke.Parent then
-            currentStroke.Enabled = state
+        if FXHandles.Stroke and FXHandles.Stroke.Parent then
+            FXHandles.Stroke.Enabled = state
         end
         triggerAutoSave()
     end
 })
 
-TabFX:Toggle({
+Tabs.FX:Toggle({
     Title = "Cosmic Floating Particles",
     Desc = "ละอองดาวคอสมิกลอยพริ้วไหวในพื้นหลังเมนู",
     Value = fxParticlesEnabled,
 -- Icon = "sparkles",
     Callback = function(state)
         fxParticlesEnabled = state
-        if currentParticleCanvas and currentParticleCanvas.Parent then
-            currentParticleCanvas.Visible = state
+        if FXHandles.ParticleCanvas and FXHandles.ParticleCanvas.Parent then
+            FXHandles.ParticleCanvas.Visible = state
         end
         triggerAutoSave()
     end
 })
 
-TabFX:Toggle({
+Tabs.FX:Toggle({
     Title = "Laser Pulse Underline",
     Desc = "เส้นแสงเลเซอร์ใต้ Title Bar ส่องสว่างแบบไดนามิก",
     Value = fxLaserBarEnabled,
 -- Icon = "zap",
     Callback = function(state)
         fxLaserBarEnabled = state
-        if currentNeonBar and currentNeonBar.Parent then
-            currentNeonBar.Visible = state
+        if FXHandles.NeonBar and FXHandles.NeonBar.Parent then
+            FXHandles.NeonBar.Visible = state
         end
         triggerAutoSave()
     end
 })
 
-TabFX:Slider({
+Tabs.FX:Slider({
     Title = "FX Animation Speed",
     Desc = "ปรับความเร็วของการหมุนและการเคลื่อนไหวของแอนิเมชัน",
     Value = { Min = 0.5, Max = 3, Default = fxSpeed },
@@ -4224,9 +4197,9 @@ TabFX:Slider({
     end
 })
 
-TabFX:Section({ Title = "Themes & Transparency" })
+Tabs.FX:Section({ Title = "Themes & Transparency" })
 
-TabFX:Dropdown({
+Tabs.FX:Dropdown({
     Title = "Select Base Theme",
     Desc = "เปลี่ยนธีมสีของหน้าต่างเมนูได้ทันที (Dark, Rose, Plant, Amber, Red, Indigo, Sky, Violet, Light)",
     Values = { "Dark", "Rose", "Plant", "Amber", "Red", "Indigo", "Sky", "Violet", "Light" },
@@ -4245,7 +4218,7 @@ TabFX:Dropdown({
     end
 })
 
-TabFX:Slider({
+Tabs.FX:Slider({
     Title = "UI Transparency",
     Desc = "ปรับระดับความโปร่งใสของหน้าต่าง",
     Value = { Min = 0, Max = 1, Default = selectedTransparency or 0 },
@@ -4278,21 +4251,21 @@ local function getStatusText()
     )
 end
 
-local configStatusPara = TabConfig:Paragraph({
+UI.configStatusPara = Tabs.Config:Paragraph({
     Title = "Configuration & Persistence Status",
     Desc = getStatusText(),
     Image = "settings"
 })
 
 local function updateConfigStatusText()
-    if configStatusPara and configStatusPara.SetDesc then
-        configStatusPara:SetDesc(getStatusText())
+    if UI.configStatusPara and UI.configStatusPara.SetDesc then
+        UI.configStatusPara:SetDesc(getStatusText())
     end
 end
 
-TabConfig:Section({ Title = "Profile Management (Save / Load)" })
+Tabs.Config:Section({ Title = "Profile Management (Save / Load)" })
 
-TabConfig:Input({
+Tabs.Config:Input({
     Title = "Config Profile Name",
     Desc = "พิมพ์ชื่อโปรไฟล์การตั้งค่าที่ต้องการเซฟ",
     Value = currentConfigName,
@@ -4304,8 +4277,8 @@ TabConfig:Input({
     end
 })
 
-local savedConfigsDrop = nil
-savedConfigsDrop = TabConfig:Dropdown({
+UI.savedConfigsDrop = nil
+UI.savedConfigsDrop = Tabs.Config:Dropdown({
     Title = "Select Saved Profile",
     Desc = "เลือกไฟล์คอนฟิก (โหลดอัตโนมัติทันทีที่เลือก)",
     Values = getSavedConfigsList(),
@@ -4322,7 +4295,7 @@ savedConfigsDrop = TabConfig:Dropdown({
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "💾 Save Current Configuration",
     Desc = "บันทึกการตั้งค่าทั้งหมด (ทุกแท็บ ทุกสวิตช์) ลงไฟล์ทันที",
     Icon = "save",
@@ -4331,24 +4304,24 @@ TabConfig:Button({
         saveName = saveName:gsub("[%\\/%:%*%?%\"%<%>%|]", "_")
         currentConfigName = saveName
         saveConfigToFile(saveName)
-        if savedConfigsDrop then
+        if UI.savedConfigsDrop then
             local updatedList = getSavedConfigsList(saveName)
-            updateDropdown(savedConfigsDrop, updatedList, saveName)
+            updateDropdown(UI.savedConfigsDrop, updatedList, saveName)
         end
         updateConfigStatusText()
         WindUI:Notify({ Title = "Config Saved", Content = "Saved settings to: " .. saveName .. ".json", Duration = 3.5, Icon = "save" })
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "📂 Load Selected Configuration",
     Desc = "โหลดการตั้งค่าจากไฟล์ที่เลือกมาใช้งานทันที",
     Icon = "folder-open",
     Callback = function()
         local ok = loadConfigFromFile(currentConfigName)
         if ok then
-            if savedConfigsDrop then
-                updateDropdown(savedConfigsDrop, getSavedConfigsList(currentConfigName), currentConfigName)
+            if UI.savedConfigsDrop then
+                updateDropdown(UI.savedConfigsDrop, getSavedConfigsList(currentConfigName), currentConfigName)
             end
             updateConfigStatusText()
             WindUI:Notify({ Title = "Config Loaded", Content = "Successfully loaded " .. currentConfigName .. "!", Duration = 3.5, Icon = "folder-check" })
@@ -4358,7 +4331,7 @@ TabConfig:Button({
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "🗑️ Delete Selected Profile",
     Desc = "ลบไฟล์คอนฟิกที่เลือกออกจากเครื่อง",
     Icon = "trash-2",
@@ -4372,9 +4345,9 @@ TabConfig:Button({
             if isfile(path) then
                 delfile(path)
                 currentConfigName = "Default_Config"
-                if savedConfigsDrop then
+                if UI.savedConfigsDrop then
                     local updatedList = getSavedConfigsList("Default_Config")
-                    updateDropdown(savedConfigsDrop, updatedList, "Default_Config")
+                    updateDropdown(UI.savedConfigsDrop, updatedList, "Default_Config")
                 end
                 updateConfigStatusText()
                 WindUI:Notify({ Title = "Config Deleted", Content = "Deleted profile!", Duration = 3, Icon = "trash-2" })
@@ -4383,20 +4356,20 @@ TabConfig:Button({
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "🔄 Refresh Profiles List",
     Desc = "รีเฟรชรายชื่อโปรไฟล์ในเครื่อง",
     Icon = "refresh-cw",
     Callback = function()
-        if savedConfigsDrop then
+        if UI.savedConfigsDrop then
             local updatedList = getSavedConfigsList(currentConfigName)
-            updateDropdown(savedConfigsDrop, updatedList, currentConfigName)
+            updateDropdown(UI.savedConfigsDrop, updatedList, currentConfigName)
             WindUI:Notify({ Title = "Config", Content = "Refreshed profiles list!", Duration = 2, Icon = "circle-check" })
         end
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "🔄 Reset All Settings to Defaults",
     Desc = "คืนค่าการตั้งค่าทั้งหมดกลับเป็นค่าเริ่มต้น",
     Icon = "refresh-cw",
@@ -4455,16 +4428,16 @@ TabConfig:Button({
 
         currentConfigName = "Default_Config"
         saveConfigToFile("Default_Config")
-        if savedConfigsDrop then
+        if UI.savedConfigsDrop then
             local updatedList = getSavedConfigsList("Default_Config")
-            updateDropdown(savedConfigsDrop, updatedList, "Default_Config")
+            updateDropdown(UI.savedConfigsDrop, updatedList, "Default_Config")
         end
         updateConfigStatusText()
         WindUI:Notify({ Title = "Config", Content = "Reset all settings to default!", Duration = 3, Icon = "refresh-cw" })
     end
 })
 
-TabConfig:Toggle({
+Tabs.Config:Toggle({
     Title = "Auto-Save Settings On Change",
     Desc = "เมื่อเปิดใช้งาน ทุกครั้งที่มีการเปิด/ปิดสวิตช์ ปรับสไลเดอร์ หรือเลือกเมนู จะเซฟลงไฟล์ทันทีอัตโนมัติ",
     Value = autoSaveConfig,
@@ -4476,16 +4449,16 @@ TabConfig:Toggle({
     end
 })
 
-TabConfig:Section({ Title = "Universal Auto-Execute Engine (Cross-Executor)" })
+Tabs.Config:Section({ Title = "Universal Auto-Execute Engine (Cross-Executor)" })
 
-TabConfig:Paragraph({
+Tabs.Config:Paragraph({
     Title = "About Universal Auto-Execute",
     Desc = "⚡ ระบบ Auto-Execute สากล (เหมือน Hub ชั้นนำทั่วไป):\n• สามารถ เปิด/ปิด ได้ตลอดเวลาผ่านสวิตช์ด้านล่าง\n• ไม่ผูกติดกับ Real อย่างเดียว: ใช้งานได้กับทุกโปรแกรม (Wave, Solara, Delta, Codex, Arceus X, Fluxus ฯลฯ)\n• เมื่อวาปข้ามแมพ/ลงด่าน: ใช้ระบบ queue_on_teleport รันสคริปต์ต่อเนื่องอัตโนมัติในทุกโปรแกรม\n• เมื่อเข้าเกมใหม่: มีระบบ AutoExec File และโค้ดคัดลอกสำหรับใส่โฟลเดอร์ autoexec ของทุกค่าย",
     Image = "sparkles"
 })
 
-local universalAutoExecToggle = nil
-universalAutoExecToggle = TabConfig:Toggle({
+UI.universalAutoExecToggle = nil
+UI.universalAutoExecToggle = Tabs.Config:Toggle({
     Title = "⚡ เปิดใช้งาน Universal Auto-Execute (One-Click Auto-Run)",
     Desc = "เปิดปุ๊บระบบจะติดตั้ง AutoExec และ Teleport Queue ให้อัตโนมัติทุก Executor ทันที 1 คลิก",
     Value = autoExecuteMaster and autoExecFile and autoTeleportQueue,
@@ -4505,7 +4478,7 @@ universalAutoExecToggle = TabConfig:Toggle({
     end
 })
 
-local universalLoaderSnippet = [=[-- Anime Galaxies Hub Universal AutoExec Loader
+UI.universalLoaderSnippet = [=[-- Anime Galaxies Hub Universal AutoExec Loader
 -- Paste this file into your executor's "autoexec" folder (Works on Real, Wave, Solara, Delta, Codex, Arceus X, etc.)
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
@@ -4542,14 +4515,14 @@ task.spawn(function()
     end
 end)]=]
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "📋 Copy Universal AutoExec Loader",
     Desc = "คัดลอกโค้ด Loader สากลสำหรับนำไปใส่ในโฟลเดอร์ autoexec ของโปรแกรมรันสคริปต์ทุกตัว",
     Icon = "clipboard",
     Callback = function()
         local ok = false
         if copyToClipboard then
-            local pcallOk = pcall(copyToClipboard, universalLoaderSnippet)
+            local pcallOk = pcall(copyToClipboard, UI.universalLoaderSnippet)
             ok = pcallOk
         end
         if ok then
@@ -4570,7 +4543,7 @@ TabConfig:Button({
     end
 })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "⚡ Force Clean Old Ghost UIs (ล้าง UI ค้าง)",
     Desc = "กดเพื่อบังคับล้าง UI ที่ค้างอยู่ในหน่วยความจำทันที 1 ครั้ง",
     Icon = "trash-2",
@@ -4580,9 +4553,9 @@ TabConfig:Button({
     end
 })
 
-TabConfig:Section({ Title = "🌐 Song Hub Community & Support" })
+Tabs.Config:Section({ Title = "🌐 Song Hub Community & Support" })
 
-TabConfig:Button({
+Tabs.Config:Button({
     Title = "💬 Join Discord Community",
     Desc = "Copy Discord invite link to your clipboard (https://discord.gg/cecytf4MHE)",
     Icon = "message-circle",
@@ -4660,7 +4633,7 @@ task.spawn(function()
     stroke.Color = Color3.fromRGB(255, 255, 255)
     stroke.Enabled = fxChromaEnabled
     stroke.Parent = main
-    currentStroke = stroke
+    FXHandles.Stroke = stroke
 
     local gradient = Instance.new("UIGradient")
     gradient.Name = "RainbowGradient"
@@ -4690,7 +4663,7 @@ task.spawn(function()
         neonBar.ZIndex = 10
         neonBar.Visible = fxLaserBarEnabled
         neonBar.Parent = topbar
-        currentNeonBar = neonBar
+        FXHandles.NeonBar = neonBar
 
         barGradient = Instance.new("UIGradient")
         barGradient.Color = ColorSequence.new({
@@ -4739,7 +4712,7 @@ task.spawn(function()
     particleCanvas.ZIndex = 1
     particleCanvas.Visible = fxParticlesEnabled
     particleCanvas.Parent = main
-    currentParticleCanvas = particleCanvas
+    FXHandles.ParticleCanvas = particleCanvas
 
     local particles = {}
     local math_random = math.random
@@ -4876,7 +4849,7 @@ end)
 
 -- Select first tab automatically
 pcall(function()
-    TabMain:Select()
+    Tabs.Main:Select()
 end)
 
 -- Auto-load active macro config on boot
