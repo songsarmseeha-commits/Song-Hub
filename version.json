@@ -1,6 +1,6 @@
 {
-  "version": "1.0.8",
-  "updatedAt": 1793933064444,
-  "iso": "2026-11-06T02:44:24.444Z",
-  "message": "Fix: Blue Lock $1Sp Cash/Price parsing & Free roll, Dual Tab Missions Claim, Units Reroll, and Hunting Together Skull King Boss Room active engagement"
+  "version": "1.0.9",
+  "updatedAt": 1793935318711,
+  "iso": "2026-11-06T03:21:58.711Z",
+  "message": "Revert: Restored Hunting Together to 100% original stable & smooth combat loop"
 }
