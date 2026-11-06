@@ -471,6 +471,7 @@ local autoStoryFarm = false
 local autoTowerStart = false
 local selectedTowerFloor = 1
 local autoNextTowerFloor = true
+local autoForfeitTowerIfBlocked = true
 
 -- Dedicated Tower Climb System (Banana/Black Hub Clone)
 local towerAutoJoin = false
@@ -633,6 +634,7 @@ local function serializeConfig()
         AutoTower = autoTowerStart,
         SelectedTowerFloor = selectedTowerFloor,
         AutoNextTowerFloor = autoNextTowerFloor,
+        AutoForfeitTowerIfBlocked = autoForfeitTowerIfBlocked,
 
         -- Tower Climb System
         TowerAutoJoin = towerAutoJoin,
@@ -722,6 +724,7 @@ local function applyConfig(data)
     if data.AutoTower ~= nil then autoTowerStart = data.AutoTower end
     if data.SelectedTowerFloor ~= nil then selectedTowerFloor = data.SelectedTowerFloor end
     if data.AutoNextTowerFloor ~= nil then autoNextTowerFloor = data.AutoNextTowerFloor end
+    if data.AutoForfeitTowerIfBlocked ~= nil then autoForfeitTowerIfBlocked = data.AutoForfeitTowerIfBlocked end
 
     -- Tower Climb System
     if data.TowerAutoJoin ~= nil then towerAutoJoin = data.TowerAutoJoin end
@@ -1251,6 +1254,16 @@ Tabs.Main:Toggle({
     end
 })
 
+Tabs.Main:Toggle({
+    Title = "⚡ ออโต้ Forfeit Tower หากติดค้างเมื่อสร้างห้อง (Auto Forfeit Tower If Blocking)",
+    Desc = "หากระบบเกมแจ้งเตือน 'Finish or forfeit your current Battle Tower run first' ขวางการสร้างห้อง Story/Raids บอทจะกดยอมแพ้หอคอยที่ค้างอยู่ให้อัตโนมัติ เพื่อให้สร้างห้องได้ทันที",
+    Value = autoForfeitTowerIfBlocked,
+    Callback = function(state)
+        autoForfeitTowerIfBlocked = state
+        triggerAutoSave()
+    end
+})
+
 Tabs.Main:Section({ Title = "⚔️ Match Combat Engine (ระบบการเล่นในแมตช์)" })
 
 UI.mainCombatEngineDropdown = nil
@@ -1474,8 +1487,50 @@ local function getTowerTeamList()
     return team
 end
 
+local function clickUseCheckpointGui()
+    local clicked = false
+    pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
+        for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                local txt = desc.Text:gsub("%s+", " "):lower()
+                if txt:find("use checkpoint") or txt:find("checkpoint") then
+                    local targetBtn = desc:IsA("TextButton") and desc 
+                        or desc:FindFirstAncestorWhichIsA("TextButton") 
+                        or desc:FindFirstAncestorWhichIsA("ImageButton") 
+                        or (desc.Parent and (desc.Parent:IsA("TextButton") or desc.Parent:IsA("ImageButton")) and desc.Parent)
+                    
+                    if targetBtn and (targetBtn:IsA("TextButton") or targetBtn:IsA("ImageButton")) then
+                        if getconnections then
+                            for _, c in ipairs(getconnections(targetBtn.Activated)) do pcall(function() c:Fire() end) end
+                            for _, c in ipairs(getconnections(targetBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                        end
+                        if firesignal then
+                            pcall(function() firesignal(targetBtn.Activated) end)
+                            pcall(function() firesignal(targetBtn.MouseButton1Click) end)
+                        end
+                        pcall(function()
+                            local vim = game:GetService("VirtualInputManager")
+                            local pos = targetBtn.AbsolutePosition
+                            local sz = targetBtn.AbsoluteSize
+                            vim:SendMouseButtonEvent(pos.X + sz.X/2, pos.Y + sz.Y/2, 0, true, game, 1)
+                            task.wait(0.05)
+                            vim:SendMouseButtonEvent(pos.X + sz.X/2, pos.Y + sz.Y/2, 0, false, game, 1)
+                        end)
+                        clicked = true
+                    end
+                end
+            end
+        end
+    end)
+    return clicked
+end
+
 local function startTowerBattle()
-    -- Auto equip specified team for Tower
+    -- 1. Click on-screen "Use Checkpoint" button if open
+    clickUseCheckpointGui()
+
+    -- 2. Auto equip specified team for Tower
     if towerTeam and towerTeam ~= "Equipped Team" then
         local tNum = tonumber(towerTeam:match("%d+"))
         if tNum then
@@ -1491,29 +1546,45 @@ local function startTowerBattle()
     local data = LocalPlayer:FindFirstChild("Data")
     local towerFolder = data and data:FindFirstChild("Tower")
     local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
-    local isActive = activeVal and activeVal.Value == true
+    local isActive = (activeVal and activeVal.Value == true)
     local streakVal = towerFolder and towerFolder:FindFirstChild("Streak")
-    local currentStreak = streakVal and streakVal.Value or 0
+    local currentStreak = (streakVal and streakVal.Value) or 0
+    local checkpointVal = towerFolder and towerFolder:FindFirstChild("Checkpoint")
+    local currentCheckpoint = (checkpointVal and checkpointVal.Value) or 0
 
-    local action = (isActive or currentStreak > 0) and "Continue" or "Start"
+    local isResume = (isActive or currentStreak > 0 or currentCheckpoint > 0)
+    local action = isResume and "Continue" or "Start"
+    local targetFloor = (currentCheckpoint > 0 and currentCheckpoint) or towerCurrentFloor or selectedTowerFloor or 1
 
-    -- 1. Official Network_Client Publish
-    local sent = false
+    -- 3. Official Network_Client Publish
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
-            net.Publish(net, "Tower", { Action = action, Team = teamList })
-            sent = true
+            net.Publish(net, "Tower", { Action = action, Floor = targetFloor, Team = teamList })
         end
     end)
 
-    -- 2. Direct RemoteService Handler Fallback
+    -- 4. Direct RemoteService Handler Fallback
     publishRemote("Tower", {
         Action = action,
+        Floor = targetFloor,
         Team = teamList
     })
 
-    WindUI:Notify({ Title = "Tower Climb", Content = "🚀 ส่งคำสั่งเริ่มเล่น Tower (" .. action .. ") เรียบร้อย!", Duration = 3, Icon = "castle" })
+    -- 5. If it's a checkpoint / resume, also call OnContinue from Screens.Tower if available
+    if isResume then
+        pcall(function()
+            local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
+            if towerScreen and towerScreen.OnContinue then
+                towerScreen.OnContinue()
+            end
+        end)
+    end
+
+    local notifMsg = (action == "Continue" and currentCheckpoint > 0)
+        and ("🟢 ใช้ Checkpoint (ชั้น " .. tostring(currentCheckpoint) .. ") ลุยหอคอยต่อทันที!")
+        or ("🚀 ส่งคำสั่งเริ่มเล่น Tower (" .. action .. ") เรียบร้อย!")
+    WindUI:Notify({ Title = "Tower Climb", Content = notifMsg, Duration = 3.5, Icon = "castle" })
     return true
 end
 
@@ -1542,33 +1613,21 @@ local function enterOrActionRoom(mode, forceSolo)
     local isSolo = if forceSolo ~= nil then forceSolo else not roomFriendsOnly
 
     if mode == "Tower" then
-        local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
-        -- Auto equip specified team for Tower
-        if towerTeam and towerTeam ~= "Equipped Team" then
-            local tNum = tonumber(towerTeam:match("%d+"))
-            if tNum then
-                pcall(function()
-                    publishRemote("Units", { Action = "EquipTeam", Team = tNum })
-                    publishRemote("Units", { Action = "SetTeam", Team = tNum })
-                    publishRemote("Team", { Action = "Equip", Slot = tNum })
-                end)
-            end
-        end
+        return startTowerBattle()
+    end
 
-        local teamList = getTowerTeamList()
-        pcall(function()
-            local net = require(ReplicatedStorage.Master.Modules.Network_Client)
-            if net and net.Publish then
-                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
-                task.wait(0.3)
-                net.Publish(net, "Tower", { Action = "Continue" })
-            end
-        end)
-        publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
-        task.wait(0.4)
-        publishRemote("Tower", { Action = "Continue" })
-        WindUI:Notify({ Title = "Tower", Content = "Entering Tower Mode! (ชั้น " .. tostring(targetFloor) .. ")", Duration = 3, Icon = "castle" })
-        return true
+    -- If creating room for Story/Raids/Challenges/Endless, check if blocked by unfinished Tower run:
+    local data = LocalPlayer:FindFirstChild("Data")
+    local towerFolder = data and data:FindFirstChild("Tower")
+    local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
+    local checkpointVal = towerFolder and towerFolder:FindFirstChild("Checkpoint")
+    local hasActiveTower = (activeVal and activeVal.Value == true)
+    local hasCheckpoint = (checkpointVal and checkpointVal.Value > 0)
+
+    if (hasActiveTower or hasCheckpoint) and autoForfeitTowerIfBlocked then
+        -- Automatically forfeit blocking Tower run so room creation succeeds!
+        forfeitTower()
+        task.wait(0.6)
     end
 
     local worldIdx = WORLD_INDEX_MAP[selectedWorld] or 1
@@ -1681,6 +1740,24 @@ Tabs.Main:Button({
     Icon = "circle-play",
     Callback = function()
         enterOrActionRoom(selectedGameMode, true)
+    end
+})
+
+Tabs.Main:Button({
+    Title = "🟢 กดใช้ Checkpoint ทันที (Use Checkpoint & Enter Tower)",
+    Desc = "กดปุ่ม Use Checkpoint บนหน้าจอ และส่งคำสั่งลุยชั้น Checkpoint ต่อทันที 1 คลิก",
+    Icon = "play",
+    Callback = function()
+        startTowerBattle()
+    end
+})
+
+Tabs.Main:Button({
+    Title = "🏳️ ยอมแพ้หอคอยที่ค้างอยู่ (Forfeit Blocking Tower Run)",
+    Desc = "ส่งคำสั่งยอมแพ้หอคอย เพื่อปลดล็อคการสร้างห้องโหมด Story/Raids ที่ติดแจ้งเตือน",
+    Icon = "rotate-ccw",
+    Callback = function()
+        forfeitTower()
     end
 })
 
@@ -1872,6 +1949,15 @@ Tabs.Tower:Button({
     Title = "🚀 เริ่มเล่น / สร้างห้อง Tower ทันที (Instant Start Tower)",
     Desc = "ส่งคำสั่งเข้าเล่น Tower ทันที 1 คลิก (Start/Continue)",
     Icon = "circle-play",
+    Callback = function()
+        startTowerBattle()
+    end
+})
+
+Tabs.Tower:Button({
+    Title = "🟢 กดใช้ Checkpoint ทันที (Use Checkpoint & Enter)",
+    Desc = "กดปุ่ม Use Checkpoint บนหน้าจอ และส่งคำสั่งลุยชั้น Checkpoint ต่อทันที",
+    Icon = "play",
     Callback = function()
         startTowerBattle()
     end
