@@ -351,6 +351,17 @@ local autoStoryFarm = false
 local autoTowerStart = false
 local selectedTowerFloor = 1
 local autoNextTowerFloor = true
+
+-- Dedicated Tower Climb System (Banana/Black Hub Clone)
+local towerAutoJoin = false
+local towerCurrentFloor = 1
+local towerTeam = "Equipped Team"
+local towerAfterLoss = "Start New Run" -- "Start New Run", "Retry Floor", "Return To Lobby"
+local towerJoinPriority = 1
+local towerEnableStopAt = false
+local towerStopAtBattle = 22
+local towerAtStopBattle = "Forfeit And Restart" -- "Forfeit And Restart", "Return To Lobby", "Continue Climbing"
+
 local autoStartMatch = false
 local autoLeaveMatch = false
 
@@ -500,6 +511,17 @@ local function serializeConfig()
         AutoTower = autoTowerStart,
         SelectedTowerFloor = selectedTowerFloor,
         AutoNextTowerFloor = autoNextTowerFloor,
+
+        -- Tower Climb System
+        TowerAutoJoin = towerAutoJoin,
+        TowerCurrentFloor = towerCurrentFloor,
+        TowerTeam = towerTeam,
+        TowerAfterLoss = towerAfterLoss,
+        TowerJoinPriority = towerJoinPriority,
+        TowerEnableStopAt = towerEnableStopAt,
+        TowerStopAtBattle = towerStopAtBattle,
+        TowerAtStopBattle = towerAtStopBattle,
+
         AutoStartMatch = autoStartMatch,
         AutoLeaveMatch = autoLeaveMatch,
 
@@ -578,6 +600,17 @@ local function applyConfig(data)
     if data.AutoTower ~= nil then autoTowerStart = data.AutoTower end
     if data.SelectedTowerFloor ~= nil then selectedTowerFloor = data.SelectedTowerFloor end
     if data.AutoNextTowerFloor ~= nil then autoNextTowerFloor = data.AutoNextTowerFloor end
+
+    -- Tower Climb System
+    if data.TowerAutoJoin ~= nil then towerAutoJoin = data.TowerAutoJoin end
+    if data.TowerCurrentFloor ~= nil then towerCurrentFloor = data.TowerCurrentFloor end
+    if data.TowerTeam ~= nil then towerTeam = data.TowerTeam end
+    if data.TowerAfterLoss ~= nil then towerAfterLoss = data.TowerAfterLoss end
+    if data.TowerJoinPriority ~= nil then towerJoinPriority = data.TowerJoinPriority end
+    if data.TowerEnableStopAt ~= nil then towerEnableStopAt = data.TowerEnableStopAt end
+    if data.TowerStopAtBattle ~= nil then towerStopAtBattle = data.TowerStopAtBattle end
+    if data.TowerAtStopBattle ~= nil then towerAtStopBattle = data.TowerAtStopBattle end
+
     if data.AutoStartMatch ~= nil then autoStartMatch = data.AutoStartMatch end
     if data.AutoLeaveMatch ~= nil then autoLeaveMatch = data.AutoLeaveMatch end
 
@@ -902,6 +935,7 @@ getgenv()._AG_STARTING = nil
 -- TABS CONFIGURATION
 -- ==============================================================================
 local TabMain      = Window:Tab({ Title = "Auto Farm & Story", Icon = "swords" })
+local TabTower     = Window:Tab({ Title = "Tower Climb", Icon = "castle" })
 local TabSmart     = Window:Tab({ Title = "Smart Play AI", Icon = "cpu" })
 local TabMacro     = Window:Tab({ Title = "TD Macro Config", Icon = "gamepad-2" })
 local TabRewards   = Window:Tab({ Title = "Auto Rewards", Icon = "gift" })
@@ -1326,8 +1360,21 @@ local function enterOrActionRoom(mode, forceSolo)
         key = { Mode = "Endless" }
         options = { FriendsOnly = roomFriendsOnly }
     elseif mode == "Tower" then
-        key = { Mode = "Tower", Floor = selectedTowerFloor or 1 }
+        local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
+        key = { Mode = "Tower", Floor = targetFloor }
         options = { FriendsOnly = roomFriendsOnly }
+
+        -- Auto equip specified team for Tower
+        if towerTeam and towerTeam ~= "Equipped Team" then
+            local tNum = tonumber(towerTeam:match("%d+"))
+            if tNum then
+                pcall(function()
+                    publishRemote("Units", { Action = "EquipTeam", Team = tNum })
+                    publishRemote("Units", { Action = "SetTeam", Team = tNum })
+                    publishRemote("Team", { Action = "Equip", Slot = tNum })
+                end)
+            end
+        end
     end
 
     -- 1. Native Official Controller (Reliable Native Start & Automatic Door Touch)
@@ -1390,21 +1437,22 @@ local function enterOrActionRoom(mode, forceSolo)
                 FriendsOnly = roomFriendsOnly,
             })
         elseif mode == "Tower" then
+            local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
             publishRemote("Room", {
                 Action = "SelectMap",
                 Mode = "Tower",
                 MapName = "Tower",
-                Floor = selectedTowerFloor or 1,
+                Floor = targetFloor,
                 FriendsOnly = roomFriendsOnly,
             })
             publishRemote("Room", {
                 Action = "SetMode",
                 Mode = "Tower",
-                Floor = selectedTowerFloor or 1,
+                Floor = targetFloor,
             })
             publishRemote("Tower", {
                 Action = "Start",
-                Floor = selectedTowerFloor or 1,
+                Floor = targetFloor,
             })
             publishRemote("Tower", {
                 Action = "Continue",
@@ -1420,6 +1468,7 @@ local function enterOrActionRoom(mode, forceSolo)
 
     -- 3. Dedicated Tower Portal / Remote Fallback for Tower Mode
     if mode == "Tower" then
+        local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
         pcall(function()
             local towerPortal = workspace:FindFirstChild("Tower", true) or workspace:FindFirstChild("InfiniteTower", true) or workspace:FindFirstChild("TowerPortal", true)
             if towerPortal and Character then
@@ -1434,12 +1483,12 @@ local function enterOrActionRoom(mode, forceSolo)
                 end
             end
         end)
-        publishRemote("Room", { Action = "Create", Mode = "Tower", Floor = selectedTowerFloor or 1, FriendsOnly = roomFriendsOnly })
-        publishRemote("Tower", { Action = "Start", Floor = selectedTowerFloor or 1 })
+        publishRemote("Room", { Action = "Create", Mode = "Tower", Floor = targetFloor, FriendsOnly = roomFriendsOnly })
+        publishRemote("Tower", { Action = "Start", Floor = targetFloor })
         publishRemote("Tower", { Action = "Continue" })
         publishRemote("Room", { Action = "Start" })
         publishRemote("Controls", { Action = "VoteStart" })
-        WindUI:Notify({ Title = "Tower", Content = "🏰 สร้างห้องและเข้าสู่ Tower Mode (ชั้น " .. tostring(selectedTowerFloor) .. ")", Duration = 3, Icon = "castle" })
+        WindUI:Notify({ Title = "Tower", Content = "🏰 สร้างห้องและเข้าสู่ Tower Mode (ชั้น " .. tostring(targetFloor) .. ")", Duration = 3, Icon = "castle" })
         return true
     end
 
@@ -1478,7 +1527,177 @@ TabMain:Button({
     end
 })
 
--- Background loop for Auto Farm & Room Automation
+-- ==============================================================================
+-- TAB TOWER: TOWER CLIMB SYSTEM 🏰 (BANANA / BLACK HUB CLONE)
+-- ==============================================================================
+local towerJoinStatusPara = TabTower:Paragraph({
+    Title = "Status (สถานะระบบออโต้เข้าทาวเวอร์)",
+    Desc = "Status: [IDLE] | โหมด: ไม่ได้ทำงาน",
+    Image = "castle"
+})
+
+TabTower:Section({ Title = "🏰 TOWER AUTO JOIN" })
+
+local towerAutoJoinToggle
+local towerTeamDropdown
+local towerAfterLossDropdown
+local towerJoinPrioritySlider
+
+towerAutoJoinToggle = TabTower:Toggle({
+    Title = "Enable Auto Join",
+    Desc = "สร้างห้องและเข้าไต่หอคอย (Tower) อัตโนมัติตามชั้นที่กำหนดแบบ 100% AFK",
+    Value = towerAutoJoin,
+    Callback = function(val)
+        towerAutoJoin = val
+        if val then
+            matchCombatEngine = "Smart Play AI"
+        end
+        triggerAutoSave()
+    end
+})
+
+towerTeamDropdown = TabTower:Dropdown({
+    Title = "Tower Team",
+    Desc = "เลือกทีมยูนิตที่ต้องการสวมใส่ก่อนเข้าหอคอย",
+    Values = { "Equipped Team", "Team 1", "Team 2", "Team 3", "Team 4" },
+    Value = towerTeam,
+    Callback = function(val)
+        towerTeam = val
+        triggerAutoSave()
+    end
+})
+
+towerAfterLossDropdown = TabTower:Dropdown({
+    Title = "After A Loss",
+    Desc = "เลือกการกระทำเมื่อพ่ายแพ้ในชั้นนั้นๆ (Start New Run, Retry Floor, Return To Lobby)",
+    Values = { "Start New Run", "Retry Floor", "Return To Lobby" },
+    Value = towerAfterLoss,
+    Callback = function(val)
+        towerAfterLoss = val
+        triggerAutoSave()
+    end
+})
+
+towerJoinPrioritySlider = TabTower:Slider({
+    Title = "Join Priority",
+    Desc = "กำหนดความสำคัญในการเข้าห้องและเริ่มแมตช์ (1 - 10)",
+    Value = {
+        Min = 1,
+        Max = 10,
+        Default = towerJoinPriority,
+    },
+    Callback = function(val)
+        towerJoinPriority = math.floor(val)
+        triggerAutoSave()
+    end
+})
+
+TabTower:Button({
+    Title = "Restore Defaults",
+    Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER AUTO JOIN กลับเป็นค่าเริ่มต้น",
+    Icon = "rotate-ccw",
+    Callback = function()
+        towerAutoJoin = false
+        towerTeam = "Equipped Team"
+        towerAfterLoss = "Start New Run"
+        towerJoinPriority = 1
+
+        pcall(function()
+            if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
+            if towerTeamDropdown and towerTeamDropdown.SetValue then towerTeamDropdown:SetValue("Equipped Team") end
+            if towerAfterLossDropdown and towerAfterLossDropdown.SetValue then towerAfterLossDropdown:SetValue("Start New Run") end
+            if towerJoinPrioritySlider and towerJoinPrioritySlider.SetValue then towerJoinPrioritySlider:SetValue(1) end
+        end)
+
+        triggerAutoSave()
+        WindUI:Notify({ Title = "Tower Auto Join", Content = "Restored defaults successfully!", Duration = 3, Icon = "check" })
+    end
+})
+
+local towerClimbStatusPara = TabTower:Paragraph({
+    Title = "Status (สถานะการไต่หอคอย)",
+    Desc = "Status: [IDLE] | ชั้นปัจจุบัน: Floor 1 | เป้าหมายหยุด: Floor 22",
+    Image = "swords"
+})
+
+TabTower:Section({ Title = "⚔️ TOWER CLIMB" })
+
+local towerCurrentFloorSlider
+towerCurrentFloorSlider = TabTower:Slider({
+    Title = "Current Floor (ชั้นที่ต้องการเล่น/เริ่ม)",
+    Desc = "กำหนดชั้น Tower ที่ต้องการเริ่มเล่น (ระบบจะบวกเพิ่มทีละ 1 ชั้นเมื่อชนะ)",
+    Value = {
+        Min = 1,
+        Max = 100,
+        Default = towerCurrentFloor or 1,
+    },
+    Callback = function(val)
+        towerCurrentFloor = math.floor(val)
+        selectedTowerFloor = towerCurrentFloor
+        triggerAutoSave()
+    end
+})
+
+local towerEnableStopAtToggle
+local towerStopAtBattleSlider
+local towerAtStopBattleDropdown
+
+towerEnableStopAtToggle = TabTower:Toggle({
+    Title = "Enable Leave At Battle",
+    Desc = "เมื่อไต่ถึงชั้นที่กำหนด ให้ทำตามเงื่อนไขที่เลือก (Forfeit And Restart, Return To Lobby, Continue Climbing)",
+    Value = towerEnableStopAt,
+    Callback = function(val)
+        towerEnableStopAt = val
+        triggerAutoSave()
+    end
+})
+
+towerStopAtBattleSlider = TabTower:Slider({
+    Title = "Stop At Battle",
+    Desc = "เลือกชั้นที่ต้องการให้ระบบหยุดหรือรีเซ็ตกลับมาชั้น 1 (ค่าเริ่มต้น: 22)",
+    Value = {
+        Min = 1,
+        Max = 100,
+        Default = towerStopAtBattle or 22,
+    },
+    Callback = function(val)
+        towerStopAtBattle = math.floor(val)
+        triggerAutoSave()
+    end
+})
+
+towerAtStopBattleDropdown = TabTower:Dropdown({
+    Title = "At Stop Battle",
+    Desc = "เลือกการกระทำเมื่อเคลียร์ถึงชั้น Stop At Battle (Forfeit And Restart, Return To Lobby, Continue Climbing)",
+    Values = { "Forfeit And Restart", "Return To Lobby", "Continue Climbing" },
+    Value = towerAtStopBattle,
+    Callback = function(val)
+        towerAtStopBattle = val
+        triggerAutoSave()
+    end
+})
+
+TabTower:Button({
+    Title = "Restore Defaults",
+    Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER CLIMB กลับเป็นค่าเริ่มต้น (22 / Forfeit And Restart)",
+    Icon = "rotate-ccw",
+    Callback = function()
+        towerEnableStopAt = false
+        towerStopAtBattle = 22
+        towerAtStopBattle = "Forfeit And Restart"
+
+        pcall(function()
+            if towerEnableStopAtToggle and towerEnableStopAtToggle.SetValue then towerEnableStopAtToggle:SetValue(false) end
+            if towerStopAtBattleSlider and towerStopAtBattleSlider.SetValue then towerStopAtBattleSlider:SetValue(22) end
+            if towerAtStopBattleDropdown and towerAtStopBattleDropdown.SetValue then towerAtStopBattleDropdown:SetValue("Forfeit And Restart") end
+        end)
+
+        triggerAutoSave()
+        WindUI:Notify({ Title = "Tower Climb", Content = "Restored defaults successfully!", Duration = 3, Icon = "check" })
+    end
+})
+
+-- Background loop for Auto Farm & Room Automation & Tower Climb
 task.spawn(function()
     local lastEnterAttempt = 0
     while scriptRunning do
@@ -1488,16 +1707,16 @@ task.spawn(function()
             local inMatch = (game.PlaceId == 85423571424083)
                 or (gameFolder and gameFolder:FindFirstChild("Started") and gameFolder.Started.Value == true)
 
-            -- Update Status Paragraph
-            if farmStatusPara and farmStatusPara.SetDesc then
-                local currentLoc = "⚪ In Lobby (อยู่ในล็อบบี้)"
-                local inRoom = Character and Character:GetAttribute("InRoom")
-                if inMatch then
-                    currentLoc = "🟢 In Match (กำลังเล่นแมตช์)"
-                elseif inRoom then
-                    currentLoc = "🟡 In Room (อยู่ในห้องเตรียมตัว)"
-                end
+            local currentLoc = "⚪ In Lobby (อยู่ในล็อบบี้)"
+            local inRoom = Character and Character:GetAttribute("InRoom")
+            if inMatch then
+                currentLoc = "🟢 In Match (กำลังเล่นแมตช์)"
+            elseif inRoom then
+                currentLoc = "🟡 In Room (อยู่ในห้องเตรียมตัว)"
+            end
 
+            -- Update Status Paragraph (TabMain)
+            if farmStatusPara and farmStatusPara.SetDesc then
                 local targetDesc = selectedWorld .. " (Act " .. tostring(selectedStage) .. ")"
                 if selectedGameMode == "Raids" then
                     targetDesc = selectedRaid
@@ -1506,7 +1725,7 @@ task.spawn(function()
                 elseif selectedGameMode == "Endless" then
                     targetDesc = selectedEndlessMap .. " (Endless)"
                 elseif selectedGameMode == "Tower" then
-                    targetDesc = "Floor " .. tostring(selectedTowerFloor or 1)
+                    targetDesc = "Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1)
                 end
 
                 farmStatusPara:SetDesc(string.format(
@@ -1519,8 +1738,121 @@ task.spawn(function()
                 ))
             end
 
-            -- Main Auto Farm & Room Engine
-            if autoCreateAndStart then
+            -- Update Status Paragraphs (TabTower)
+            if towerJoinStatusPara and towerJoinStatusPara.SetDesc then
+                local joinStatusText = "[IDLE]"
+                if towerAutoJoin then
+                    if inMatch then
+                        joinStatusText = "[IN BATTLE]"
+                    elseif inRoom then
+                        joinStatusText = "[IN ROOM]"
+                    else
+                        joinStatusText = "[JOINING]"
+                    end
+                end
+                towerJoinStatusPara:SetDesc(string.format(
+                    "Status: %s\nAuto Join: %s | Team: %s\nPriority: %d | After Loss: %s",
+                    joinStatusText,
+                    towerAutoJoin and "🟢 ON" or "⚪ OFF",
+                    towerTeam or "Equipped Team",
+                    towerJoinPriority or 1,
+                    towerAfterLoss or "Start New Run"
+                ))
+            end
+
+            if towerClimbStatusPara and towerClimbStatusPara.SetDesc then
+                local climbStatusText = towerAutoJoin and (inMatch and "[BATTLING]" or "[READY]") or "[IDLE]"
+                local stopRuleText = towerEnableStopAt and (string.format("หยุด/กระทำที่ Floor %d (%s)", towerStopAtBattle or 22, towerAtStopBattle or "Forfeit And Restart")) or "ไต่ต่อเนื่องไม่จำกัดชั้น"
+                towerClimbStatusPara:SetDesc(string.format(
+                    "Status: %s\nชั้นปัจจุบัน (Current Floor): Floor %d\nเงื่อนไขการหยุด: %s",
+                    climbStatusText,
+                    towerCurrentFloor or 1,
+                    stopRuleText
+                ))
+            end
+
+            -- Tower Climb Dedicated Automation
+            if towerAutoJoin then
+                if inMatch then
+                    -- Ensure Smart Play AI is active during tower
+                    if not smartPlayEnabled then
+                        smartPlayEnabled = true
+                        matchCombatEngine = "Smart Play AI"
+                    end
+
+                    -- Check Match Result
+                    local rr, hasEnded, isVictory = getMatchEndGui()
+                    if hasEnded then
+                        if isVictory then
+                            local reachedStop = towerEnableStopAt and (towerCurrentFloor >= (towerStopAtBattle or 22))
+                            if reachedStop then
+                                if towerAtStopBattle == "Forfeit And Restart" then
+                                    WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! รีเซ็ตกลับไปเริ่มชั้น 1", Duration = 4, Icon = "rotate-ccw" })
+                                    towerCurrentFloor = 1
+                                    selectedTowerFloor = 1
+                                elseif towerAtStopBattle == "Return To Lobby" then
+                                    WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
+                                    towerAutoJoin = false
+                                    pcall(function()
+                                        if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
+                                    end)
+                                elseif towerAtStopBattle == "Continue Climbing" then
+                                    towerCurrentFloor = towerCurrentFloor + 1
+                                    selectedTowerFloor = towerCurrentFloor
+                                    WindUI:Notify({ Title = "Tower Climb", Content = "⚔️ ผ่านชั้นเป้าหมายแล้ว! ไต่ต่อเนื่องไปยัง Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "trending-up" })
+                                end
+                            else
+                                towerCurrentFloor = towerCurrentFloor + 1
+                                selectedTowerFloor = towerCurrentFloor
+                                WindUI:Notify({ Title = "Tower Climb", Content = "🏆 ชนะชั้นเดิมแล้ว! เลื่อนไปชั้นถัดไป: Floor " .. tostring(towerCurrentFloor), Duration = 3, Icon = "trending-up" })
+                            end
+                        else
+                            -- Loss / Defeat
+                            if towerAfterLoss == "Start New Run" then
+                                WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! เริ่มรันใหม่ที่ชั้น 1 ตามที่ตั้งค่าไว้", Duration = 4, Icon = "rotate-ccw" })
+                                towerCurrentFloor = 1
+                                selectedTowerFloor = 1
+                            elseif towerAfterLoss == "Retry Floor" then
+                                WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! พยายามเล่นชั้นเดิมซ้ำ: Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "refresh-cw" })
+                            elseif towerAfterLoss == "Return To Lobby" then
+                                WindUI:Notify({ Title = "Tower Climb", Content = "⛔ แพ้การต่อสู้! ปิดระบบและกลับล็อบบี้ตามที่ตั้งค่าไว้", Duration = 4, Icon = "log-out" })
+                                towerAutoJoin = false
+                                pcall(function()
+                                    if towerAutoJoinToggle and towerAutoJoinToggle.SetValue then towerAutoJoinToggle:SetValue(false) end
+                                end)
+                            end
+                        end
+
+                        pcall(function()
+                            if towerCurrentFloorSlider and towerCurrentFloorSlider.SetValue then
+                                towerCurrentFloorSlider:SetValue(towerCurrentFloor)
+                            end
+                        end)
+                        triggerAutoSave()
+
+                        triggerMatchEndAction("Return")
+                        task.wait(4)
+                    end
+                else
+                    -- Outside Match (Lobby or In Room)
+                    if inRoom then
+                        local offRooms = getOfficialRooms()
+                        if offRooms and offRooms.OnStart then
+                            pcall(offRooms.OnStart)
+                        end
+                        publishRemote("Room", {Action = "Start"})
+                        publishRemote("Controls", {Action = "VoteStart"})
+                        task.wait(2.5)
+                    else
+                        if tick() - lastEnterAttempt > 3.0 then
+                            lastEnterAttempt = tick()
+                            enterOrActionRoom("Tower", true)
+                        end
+                    end
+                end
+
+            -- Main Auto Farm & Room Engine (TabMain)
+            elseif autoCreateAndStart then
                 if inMatch then
                     -- Auto arm match engine
                     if matchCombatEngine == "TD Macro" then
@@ -1559,6 +1891,7 @@ task.spawn(function()
                                     end
                                 elseif autoNextTowerFloor and selectedGameMode == "Tower" then
                                     selectedTowerFloor = (selectedTowerFloor or 1) + 1
+                                    towerCurrentFloor = selectedTowerFloor
                                     triggerAutoSave()
                                     WindUI:Notify({ Title = "Tower", Content = "🏆 ชนะชั้นเดิมแล้ว! ขยับไปชั้น " .. tostring(selectedTowerFloor), Duration = 3, Icon = "trending-up" })
                                 end
