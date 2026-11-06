@@ -195,42 +195,15 @@ app.get(['/loader.luau', '/loader', '/Universal_Loader.luau', '/load'], (req, re
     return res.status(404).send('-- Universal Loader file not found');
 });
 
-// Dynamic Game Script endpoint (Secured with One-Time Handshake Token)
+// Dynamic Game Script endpoint (Protected path traversal & zero cache)
 app.get('/scripts/:gameName', (req, res) => {
     let name = req.params.gameName.replace(/[^a-zA-Z0-9_\-\.]/g, '');
     if (!name.endsWith('.luau') && !name.endsWith('.lua')) {
         name += '.luau';
     }
 
-    const token = (req.query.token || req.headers['x-script-token'] || (req.headers['authorization'] && req.headers['authorization'].replace('Bearer ', '')) || '').trim();
-    const adminPass = req.headers['x-admin-password'];
-
-    let isAuthorized = false;
-    if (adminPass && timingSafeCompare(adminPass, config.ADMIN_PASSWORD)) {
-        isAuthorized = true;
-    } else if (token && activeScriptTokens.has(token)) {
-        const tokenData = activeScriptTokens.get(token);
-        const now = Date.now();
-        // Check TTL, usage, and game match
-        if (now <= tokenData.expiresAt && !tokenData.used) {
-            const requestedClean = name.replace(/\.luau$|\.lua$/, '');
-            const tokenClean = tokenData.gameName.replace(/\.luau$|\.lua$/, '');
-            if (requestedClean === tokenClean || tokenClean === 'all') {
-                // Immediately consume token so it cannot be used again
-                tokenData.used = true;
-                activeScriptTokens.delete(token);
-                isAuthorized = true;
-            }
-        }
-    }
-
-    if (!isAuthorized) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return res.status(403).send('-- [Security Alert] 403 Forbidden: Missing, invalid, or expired script token.\n-- Unauthorized download or inspection attempt blocked.');
-    }
-
     const scriptPath = path.join(__dirname, 'games', name);
-    // Path traversal check
+    // Path traversal protection
     const gamesDir = path.resolve(__dirname, 'games');
     if (!path.resolve(scriptPath).startsWith(gamesDir)) {
         return res.status(403).send('-- Invalid script path');
