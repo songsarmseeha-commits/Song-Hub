@@ -53,6 +53,11 @@ end
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    pcall(function()
+        LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+    end)
+end
 
 -- ⚙️ CONFIGURATION
 local SERVER_HOST = "https://song-hub-avp8.onrender.com" -- Worldwide Live Cloud Server (Render)
@@ -64,11 +69,13 @@ local KEY_SAVE_PATH = "UniversalHub/saved_key.txt"
 local function getHardwareId()
     if gethwid then return gethwid() end
     if get_hwid then return get_hwid() end
+    local lp = Players.LocalPlayer or LocalPlayer
+    local uId = (lp and lp.UserId) or 0
     if identifyexecutor then
         local exec = identifyexecutor()
-        return exec .. "_" .. tostring(LocalPlayer.UserId)
+        return exec .. "_" .. tostring(uId)
     end
-    return "DEVICE_" .. tostring(LocalPlayer.UserId)
+    return "DEVICE_" .. tostring(uId)
 end
 
 -- Active Session State & Heartbeat Loop
@@ -193,11 +200,15 @@ local function sendVerifyRequest(key)
         return false, { message = "Executor does not support HTTP requests!" }
     end
 
+    local lp = Players.LocalPlayer or LocalPlayer
+    local uId = (lp and lp.UserId) or 0
+    local uName = (lp and lp.Name) or "Player"
+
     local payload = HttpService:JSONEncode({
         key = key or "",
         hwid = getHardwareId(),
-        userId = LocalPlayer.UserId,
-        username = LocalPlayer.Name,
+        userId = uId,
+        username = uName,
         gameId = game.GameId,
         placeId = game.PlaceId,
         jobId = game.JobId or "",
@@ -300,14 +311,14 @@ local function launchGameScript(scriptFileName, gameTitle)
 
     local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
 
-    -- Candidate URLs: 3-layer resilient cloud pipeline (GitHub Raw + Render + Secondary Backup)
+    -- Candidate URLs: Resilient Multi-Source Cloud Pipeline (Public GitHub CDN + Render API)
     local candidateUrls = {
-        -- 1. Official GitHub Raw (Fastest ~150ms, 99.99% uptime, worldwide CDN)
+        -- 1. Official GitHub Raw (Public Repo - Ultra fast ~100ms)
         "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 2. Secondary GitHub Server Repo
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-        -- 3. Live Render Production Server
+        -- 2. Live Render Production Server (Direct API)
         SERVER_HOST .. "/scripts/" .. scriptFileName .. "?v=" .. cacheBuster,
+        -- 3. Secondary GitHub Server Repo
+        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
     }
 
     -- Optional: If server issues a one-time token, prioritize tokenized endpoint
