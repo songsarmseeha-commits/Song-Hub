@@ -1,4 +1,27 @@
 -- ==============================================================================
+-- ⏳ Auto-Execute & Delta/Mobile Synchronization Guard
+-- Ensures that when running via executor Auto-Execute, the script waits until
+-- the game, network, and LocalPlayer instances are 100% loaded before running!
+-- ==============================================================================
+if not game:IsLoaded() then
+    pcall(function() game.Loaded:Wait() end)
+    local t0 = tick()
+    while not game:IsLoaded() and (tick() - t0) < 25 do
+        task.wait(0.25)
+    end
+end
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    local t0 = tick()
+    while not Players.LocalPlayer and (tick() - t0) < 15 do
+        task.wait(0.25)
+    end
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- ==============================================================================
 -- 🚀 Self-Bypassing Executor Cache Engine
 -- Ensures that EVEN IF an executor executes an old cached URL,
 -- it will immediately fetch the freshest loader code from GitHub using a dynamic timestamp!
@@ -55,8 +78,8 @@ if getgenv then
 end
 
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+if not Players then Players = game:GetService("Players") end
+if not LocalPlayer then LocalPlayer = Players.LocalPlayer end
 
 -- ⚙️ CONFIGURATION
 local SERVER_HOST = "https://song-hub-avp8.onrender.com" -- Worldwide Live Cloud Server (Render)
@@ -254,7 +277,7 @@ pcall(function()
             LocalPlayer.OnTeleport:Connect(function(state)
                 if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
                     pcall(function()
-                        qot([[loadstring(game:HttpGet("https://song-hub-avp8.onrender.com/load?v=" .. tostring(os.time())))()]])
+                        qot([[loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()]])
                     end)
                 end
             end)
