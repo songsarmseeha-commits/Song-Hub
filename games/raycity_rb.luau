@@ -249,9 +249,9 @@ local function driveCarStep(targetPos, speedKmh, isAir)
     local currentPos = root.Position
     local dir = targetPos - currentPos
     local dist = dir.Magnitude
-    if dist < 0.5 then return end
+    if dist < 0.3 then return end
 
-    local speedMps = (speedKmh or 300) / 3.6
+    local speedMps = (speedKmh or 260) / 3.6
     local moveDir
     local nextPos = currentPos
 
@@ -259,18 +259,30 @@ local function driveCarStep(targetPos, speedKmh, isAir)
         moveDir = dir.Unit
         root.AssemblyLinearVelocity = moveDir * speedMps
         root.AssemblyAngularVelocity = Vector3.zero
+        nextPos = currentPos + moveDir * math.min(dist, speedMps * 0.05)
     else
         -- 🚗 Ground road driving mode: Wheels firmly on the tarmac!
         local flatDir = Vector3.new(dir.X, 0, dir.Z)
         moveDir = flatDir.Magnitude > 0.1 and flatDir.Unit or Vector3.new(0, 0, -1)
 
-        -- Raycast to find exact road elevation
-        local groundRay = workspace:Raycast(currentPos + Vector3.new(0, 5, 0), Vector3.new(0, -35, 0))
+        -- Raycast downward from above car to find exact asphalt elevation
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = RaycastFilterType.Exclude
+        local myCar = workspace:FindFirstChild("MyCar")
+        local lpChar = LocalPlayer and LocalPlayer.Character
+        local ignoreList = {}
+        if myCar then table.insert(ignoreList, myCar) end
+        if lpChar then table.insert(ignoreList, lpChar) end
+        rayParams.FilterDescendantsInstances = ignoreList
+
+        local groundRay = workspace:Raycast(currentPos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), rayParams)
         local roadY = groundRay and (groundRay.Position.Y + 1.2) or targetPos.Y
 
-        -- Snap Y smoothly to road surface
+        -- Advance forward along road at current speed
+        local stepDist = math.min(dist, math.max(0.4, speedMps * 0.045))
+        local steppedXZ = currentPos + moveDir * stepDist
         local smoothY = math.abs(currentPos.Y - roadY) > 0.2 and roadY or currentPos.Y
-        nextPos = Vector3.new(currentPos.X, smoothY, currentPos.Z)
+        nextPos = Vector3.new(steppedXZ.X, smoothY, steppedXZ.Z)
 
         -- Downward velocity ensures all wheels make solid contact with the road
         root.AssemblyLinearVelocity = moveDir * speedMps + Vector3.new(0, -6, 0)
