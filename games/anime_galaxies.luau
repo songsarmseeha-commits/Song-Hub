@@ -1163,36 +1163,6 @@ Tabs.Main:Dropdown({
     end
 })
 
-Tabs.Main:Slider({
-    Title = "Tower Floor (เลือกชั้น Tower)",
-    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการลงเล่น",
-    Value = {
-        Min = 1,
-        Max = 100,
-        Default = selectedTowerFloor or 1,
-    },
-    Callback = function(val)
-        selectedTowerFloor = math.floor(val)
-        towerCurrentFloor = selectedTowerFloor
-        pcall(function()
-            if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
-                UI.towerCurrentFloorSlider:SetValue(selectedTowerFloor)
-            end
-        end)
-        triggerAutoSave()
-    end
-})
-
-Tabs.Main:Toggle({
-    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
-    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะปรับบวก 1 ชั้นถัดไปให้อัตโนมัติ (เช่น ชั้น 1 -> ชั้น 2)",
-    Value = (autoNextTowerFloor ~= false),
-    Callback = function(state)
-        autoNextTowerFloor = state
-        triggerAutoSave()
-    end
-})
-
 Tabs.Main:Section({ Title = "🚀 Room Creation & Auto-Start (ระบบสร้างห้องและเริ่มอัตโนมัติ)" })
 
 Tabs.Main:Toggle({
@@ -1250,16 +1220,6 @@ Tabs.Main:Toggle({
 -- Icon = "repeat",
     Callback = function(state)
         autoLoopNextMatch = state
-        triggerAutoSave()
-    end
-})
-
-Tabs.Main:Toggle({
-    Title = "⚡ ออโต้ Forfeit Tower หากติดค้างเมื่อสร้างห้อง (Auto Forfeit Tower If Blocking)",
-    Desc = "หากระบบเกมแจ้งเตือน 'Finish or forfeit your current Battle Tower run first' ขวางการสร้างห้อง Story/Raids บอทจะกดยอมแพ้หอคอยที่ค้างอยู่ให้อัตโนมัติ เพื่อให้สร้างห้องได้ทันที",
-    Value = autoForfeitTowerIfBlocked,
-    Callback = function(state)
-        autoForfeitTowerIfBlocked = state
         triggerAutoSave()
     end
 })
@@ -1487,37 +1447,72 @@ local function getTowerTeamList()
     return team
 end
 
-local function clickUseCheckpointGui()
+local function clickTowerGuiButton(actionType)
+    -- actionType: "checkpoint" or "forfeit"
     local clicked = false
     pcall(function()
         local lp = game:GetService("Players").LocalPlayer
+        if not lp or not lp:FindFirstChild("PlayerGui") then return end
+
+        local targetKeywords = {}
+        if actionType == "checkpoint" then
+            targetKeywords = {"use checkpoint"}
+        elseif actionType == "forfeit" then
+            targetKeywords = {"forfeit"}
+        end
+
+        local function triggerBtn(btn)
+            if not btn then return false end
+            pcall(function()
+                if getconnections then
+                    for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                end
+                if firesignal then
+                    pcall(function() firesignal(btn.Activated) end)
+                    pcall(function() firesignal(btn.MouseButton1Click) end)
+                end
+                local vim = game:GetService("VirtualInputManager")
+                if vim and btn.AbsolutePosition and btn.AbsoluteSize then
+                    local pos = btn.AbsolutePosition
+                    local sz = btn.AbsoluteSize
+                    vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
+                    task.wait(0.04)
+                    vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
+                end
+            end)
+            return true
+        end
+
+        -- Search PlayerGui for button with exact keyword or button name
         for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
-            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                local txt = desc.Text:gsub("%s+", " "):lower()
-                if txt:find("use checkpoint") or txt:find("checkpoint") then
-                    local targetBtn = desc:IsA("TextButton") and desc 
-                        or desc:FindFirstAncestorWhichIsA("TextButton") 
-                        or desc:FindFirstAncestorWhichIsA("ImageButton") 
-                        or (desc.Parent and (desc.Parent:IsA("TextButton") or desc.Parent:IsA("ImageButton")) and desc.Parent)
-                    
-                    if targetBtn and (targetBtn:IsA("TextButton") or targetBtn:IsA("ImageButton")) then
-                        if getconnections then
-                            for _, c in ipairs(getconnections(targetBtn.Activated)) do pcall(function() c:Fire() end) end
-                            for _, c in ipairs(getconnections(targetBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                local text = desc:IsA("TextLabel") and desc.Text or (desc:IsA("TextButton") and desc.Text or "")
+                local name = desc.Name:lower()
+                local lowerText = text:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+
+                for _, kw in ipairs(targetKeywords) do
+                    local isMatch = false
+                    if actionType == "checkpoint" then
+                        if lowerText == "use checkpoint" or lowerText:find("^use checkpoint") or name == "usecheckpoint" or name == "checkpointbutton" then
+                            isMatch = true
                         end
-                        if firesignal then
-                            pcall(function() firesignal(targetBtn.Activated) end)
-                            pcall(function() firesignal(targetBtn.MouseButton1Click) end)
+                    elseif actionType == "forfeit" then
+                        if lowerText == "forfeit" or lowerText:find("^forfeit") or name == "forfeit" or name == "forfeitbutton" then
+                            isMatch = true
                         end
-                        pcall(function()
-                            local vim = game:GetService("VirtualInputManager")
-                            local pos = targetBtn.AbsolutePosition
-                            local sz = targetBtn.AbsoluteSize
-                            vim:SendMouseButtonEvent(pos.X + sz.X/2, pos.Y + sz.Y/2, 0, true, game, 1)
-                            task.wait(0.05)
-                            vim:SendMouseButtonEvent(pos.X + sz.X/2, pos.Y + sz.Y/2, 0, false, game, 1)
-                        end)
-                        clicked = true
+                    end
+
+                    if isMatch then
+                        local btn = desc:IsA("GuiButton") and desc
+                            or desc:FindFirstAncestorWhichIsA("GuiButton")
+                            or (desc.Parent and desc.Parent:FindFirstChildWhichIsA("GuiButton"))
+                            or (desc.Parent and desc.Parent:IsA("GuiButton") and desc.Parent)
+
+                        if btn and btn.Visible ~= false then
+                            clicked = triggerBtn(btn)
+                            if clicked then return end
+                        end
                     end
                 end
             end
@@ -1526,9 +1521,13 @@ local function clickUseCheckpointGui()
     return clicked
 end
 
+local function clickUseCheckpointGui()
+    return clickTowerGuiButton("checkpoint")
+end
+
 local function startTowerBattle()
     -- 1. Click on-screen "Use Checkpoint" button if open
-    clickUseCheckpointGui()
+    local clickedGui = clickTowerGuiButton("checkpoint")
 
     -- 2. Auto equip specified team for Tower
     if towerTeam and towerTeam ~= "Equipped Team" then
@@ -1556,29 +1555,39 @@ local function startTowerBattle()
     local action = isResume and "Continue" or "Start"
     local targetFloor = (currentCheckpoint > 0 and currentCheckpoint) or towerCurrentFloor or selectedTowerFloor or 1
 
-    -- 3. Official Network_Client Publish
+    -- 3. Native Screen Controller Fallback
+    pcall(function()
+        local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
+        if towerScreen then
+            if isResume and type(towerScreen.OnContinue) == "function" then
+                towerScreen.OnContinue()
+            elseif type(towerScreen.OnStart) == "function" then
+                towerScreen.OnStart({ Floor = targetFloor, Team = teamList })
+            end
+        end
+    end)
+
+    -- 4. Official Network_Client Publish
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
             net.Publish(net, "Tower", { Action = action, Floor = targetFloor, Team = teamList })
+            if isResume then
+                net.Publish(net, "Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
+                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
+            end
         end
     end)
 
-    -- 4. Direct RemoteService Handler Fallback
+    -- 5. Direct RemoteService Handler Fallback
     publishRemote("Tower", {
         Action = action,
         Floor = targetFloor,
         Team = teamList
     })
-
-    -- 5. If it's a checkpoint / resume, also call OnContinue from Screens.Tower if available
     if isResume then
-        pcall(function()
-            local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
-            if towerScreen and towerScreen.OnContinue then
-                towerScreen.OnContinue()
-            end
-        end)
+        publishRemote("Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
+        publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
     end
 
     local notifMsg = (action == "Continue" and currentCheckpoint > 0)
@@ -1589,6 +1598,18 @@ local function startTowerBattle()
 end
 
 local function forfeitTower()
+    -- 1. Click on-screen "Forfeit" button if Tower screen is open
+    clickTowerGuiButton("forfeit")
+
+    -- 2. Call native controller if available
+    pcall(function()
+        local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
+        if towerScreen and type(towerScreen.OnForfeit) == "function" then
+            towerScreen.OnForfeit()
+        end
+    end)
+
+    -- 3. Publish remote
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
@@ -1596,11 +1617,15 @@ local function forfeitTower()
         end
     end)
     publishRemote("Tower", { Action = "Forfeit" })
+
     towerCurrentFloor = 1
     selectedTowerFloor = 1
     pcall(function()
         if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
             UI.towerCurrentFloorSlider:SetValue(1)
+        end
+        if UI.towerFloorSlider and UI.towerFloorSlider.SetValue then
+            UI.towerFloorSlider:SetValue(1)
         end
     end)
     triggerAutoSave()
@@ -1744,24 +1769,6 @@ Tabs.Main:Button({
 })
 
 Tabs.Main:Button({
-    Title = "🟢 กดใช้ Checkpoint ทันที (Use Checkpoint & Enter Tower)",
-    Desc = "กดปุ่ม Use Checkpoint บนหน้าจอ และส่งคำสั่งลุยชั้น Checkpoint ต่อทันที 1 คลิก",
-    Icon = "play",
-    Callback = function()
-        startTowerBattle()
-    end
-})
-
-Tabs.Main:Button({
-    Title = "🏳️ ยอมแพ้หอคอยที่ค้างอยู่ (Forfeit Blocking Tower Run)",
-    Desc = "ส่งคำสั่งยอมแพ้หอคอย เพื่อปลดล็อคการสร้างห้องโหมด Story/Raids ที่ติดแจ้งเตือน",
-    Icon = "rotate-ccw",
-    Callback = function()
-        forfeitTower()
-    end
-})
-
-Tabs.Main:Button({
     Title = "❌ ออกจากห้องปัจจุบัน (Instant Leave Room)",
     Desc = "ออกจากห้องเตรียมตัวทันที 1 ครั้ง",
     Icon = "circle-x",
@@ -1779,17 +1786,43 @@ Tabs.Main:Button({
 -- TAB TOWER: TOWER CLIMB SYSTEM 🏰 (BANANA / BLACK HUB CLONE)
 -- ==============================================================================
 UI.towerJoinStatusPara = Tabs.Tower:Paragraph({
-    Title = "Status (สถานะระบบออโต้เข้าทาวเวอร์)",
-    Desc = "Status: [IDLE] | โหมด: ไม่ได้ทำงาน",
+    Title = "Tower Status (สถานะระบบสร้างห้องและไต่หอคอย)",
+    Desc = "Status: [IDLE] | โหมด: ไม่ได้ทำงาน\nชั้นเป้าหมาย: ชั้น " .. tostring(towerCurrentFloor or selectedTowerFloor or 1),
     Image = "castle"
 })
 
-Tabs.Tower:Section({ Title = "🏰 TOWER AUTO JOIN" })
+Tabs.Tower:Section({ Title = "🏰 TOWER CREATION & AUTO JOIN (สร้างห้องและเริ่ม Tower อัตโนมัติ)" })
 
--- [grouped into UI.towerAutoJoinToggle]
--- [grouped into UI.towerTeamDropdown]
--- [grouped into UI.towerAfterLossDropdown]
--- [grouped into UI.towerJoinPrioritySlider]
+UI.towerFloorSlider = Tabs.Tower:Slider({
+    Title = "Tower Floor (เลือกชั้น Tower ที่ต้องการลงเล่น)",
+    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการให้บอทเริ่มเล่น (1 ถึง 100)",
+    Value = {
+        Min = 1,
+        Max = 100,
+        Default = towerCurrentFloor or selectedTowerFloor or 1,
+    },
+    Callback = function(val)
+        selectedTowerFloor = math.floor(val)
+        towerCurrentFloor = selectedTowerFloor
+        pcall(function()
+            if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
+                UI.towerCurrentFloorSlider:SetValue(selectedTowerFloor)
+            end
+        end)
+        triggerAutoSave()
+    end
+})
+
+UI.towerAutoNextFloorToggle = Tabs.Tower:Toggle({
+    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
+    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะปรับบวก 1 ชั้นถัดไปให้อัตโนมัติ (เช่น ชั้น 35 -> ชั้น 36) และกด Next Battle ลุยต่อทันที!",
+    Value = (autoNextTowerFloor ~= false),
+    Callback = function(state)
+        autoNextTowerFloor = state
+        triggerAutoSave()
+    end
+})
+
 UI.towerAutoJoinToggle = Tabs.Tower:Toggle({
     Title = "Enable Auto Join",
     Desc = "สร้างห้องและเข้าไต่หอคอย (Tower) อัตโนมัติตามชั้นที่กำหนดแบบ 100% AFK",
@@ -1943,12 +1976,12 @@ Tabs.Tower:Button({
     end
 })
 
-Tabs.Tower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง)" })
+Tabs.Tower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง & Checkpoint)" })
 
 Tabs.Tower:Button({
-    Title = "🚀 เริ่มเล่น / สร้างห้อง Tower ทันที (Instant Start Tower)",
-    Desc = "ส่งคำสั่งเข้าเล่น Tower ทันที 1 คลิก (Start/Continue)",
-    Icon = "circle-play",
+    Title = "🏰 เข้า/สร้างห้อง Tower ทันที (Instant Enter/Start Tower)",
+    Desc = "ส่งคำสั่งเข้าหรือสร้างห้องหอคอย Tower ตามชั้นที่เลือกทันที 1 คลิก",
+    Icon = "castle",
     Callback = function()
         startTowerBattle()
     end
@@ -1964,11 +1997,21 @@ Tabs.Tower:Button({
 })
 
 Tabs.Tower:Button({
-    Title = "🏳️ ยอมแพ้และรีเซ็ตหอคอย (Forfeit Tower & Reset)",
-    Desc = "ส่งคำสั่งยอมแพ้ เพื่อเริ่มรันใหม่ตั้งแต่ชั้น 1 (Forfeit)",
+    Title = "🏳️ ยอมแพ้หอคอยที่ค้างอยู่ (Forfeit Tower Run)",
+    Desc = "ส่งคำสั่งยอมแพ้ เพื่อรีเซ็ตกลับชั้น 1 หรือปลดล็อคการสร้างห้องโหมด Story/Raids ที่ติดแจ้งเตือน",
     Icon = "rotate-ccw",
     Callback = function()
         forfeitTower()
+    end
+})
+
+UI.towerAutoForfeitIfBlocking = Tabs.Tower:Toggle({
+    Title = "⚡ ออโต้ Forfeit Tower หากติดค้างเมื่อสร้างห้อง Story/Raids",
+    Desc = "หากระบบเกมแจ้งเตือน 'Finish or forfeit your current Battle Tower run first' ขวางการสร้างห้อง Story/Raids บอทจะกดยอมแพ้หอคอยที่ค้างอยู่ให้อัตโนมัติ เพื่อให้สร้างห้องได้ทันที",
+    Value = (autoForfeitTowerIfBlocked ~= false),
+    Callback = function(state)
+        autoForfeitTowerIfBlocked = state
+        triggerAutoSave()
     end
 })
 
