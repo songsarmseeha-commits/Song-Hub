@@ -241,17 +241,34 @@ local function driveCarStep(targetPos, speedKmh, isAir)
     local dist = dir.Magnitude
     if dist < 0.5 then return end
 
-    local unitDir = dir.Unit
-    local flatDir = Vector3.new(unitDir.X, 0, unitDir.Z).Unit
-    local moveDir = isAir and unitDir or flatDir
     local speedMps = (speedKmh or 300) / 3.6
-    local stepVel = moveDir * speedMps
+    local moveDir
+    local nextPos = currentPos
 
-    -- 1. Sync Roblox physics
-    root.AssemblyLinearVelocity = stepVel
-    root.AssemblyAngularVelocity = Vector3.zero
-    local nextLook = currentPos + moveDir * 10
-    root.CFrame = CFrame.lookAt(currentPos, nextLook)
+    if isAir then
+        moveDir = dir.Unit
+        root.AssemblyLinearVelocity = moveDir * speedMps
+        root.AssemblyAngularVelocity = Vector3.zero
+    else
+        -- 🚗 Ground road driving mode: Wheels firmly on the tarmac!
+        local flatDir = Vector3.new(dir.X, 0, dir.Z)
+        moveDir = flatDir.Magnitude > 0.1 and flatDir.Unit or Vector3.new(0, 0, -1)
+
+        -- Raycast to find exact road elevation
+        local groundRay = workspace:Raycast(currentPos + Vector3.new(0, 5, 0), Vector3.new(0, -35, 0))
+        local roadY = groundRay and (groundRay.Position.Y + 1.2) or targetPos.Y
+
+        -- Snap Y smoothly to road surface
+        local smoothY = math.abs(currentPos.Y - roadY) > 0.2 and roadY or currentPos.Y
+        nextPos = Vector3.new(currentPos.X, smoothY, currentPos.Z)
+
+        -- Downward velocity ensures all wheels make solid contact with the road
+        root.AssemblyLinearVelocity = moveDir * speedMps + Vector3.new(0, -6, 0)
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    local nextLook = nextPos + moveDir * 10
+    root.CFrame = CFrame.lookAt(nextPos, nextLook)
 
     -- 2. Sync native RCDrive system
     if rcd and type(rcd.phys) == "table" then
@@ -266,9 +283,10 @@ local function driveCarStep(targetPos, speedKmh, isAir)
                 rcd.phys.airMode = false
                 rcd.phys.anyContact = true
             end
+            local stepVel = moveDir * speedMps
             rcd.phys.v = stepVel / 2
-            local nativePos = currentPos / 2
-            rcd.phys.cf = CFrame.lookAt(nativePos, (currentPos + moveDir * 10) / 2)
+            local nativePos = nextPos / 2
+            rcd.phys.cf = CFrame.lookAt(nativePos, (nextPos + moveDir * 10) / 2)
         end)
     end
 end
@@ -343,6 +361,36 @@ end)
 -- 💬 5. AUTO DIALOGUE SKIPPER & QUEST ACCEPTER
 -- ==============================================================================
 local function pressReturnKey()
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local qGui = pg and pg:FindFirstChild("RaycityQuestUi")
+        if qGui and qGui.Enabled then
+            local npcDialog = qGui:FindFirstChild("NpcDialog", true)
+            if npcDialog and npcDialog.Visible then
+                local nextBtn = npcDialog:FindFirstChild("Next", true) or npcDialog:FindFirstChild("ต่อไป", true)
+                if nextBtn then
+                    if getconnections then
+                        for _, c in ipairs(getconnections(nextBtn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(nextBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                    if firesignal then
+                        pcall(function() firesignal(nextBtn.Activated) end)
+                        pcall(function() firesignal(nextBtn.MouseButton1Click) end)
+                    end
+                end
+            end
+            local missionOffer = qGui:FindFirstChild("MissionOffer", true)
+            if missionOffer and missionOffer.Visible then
+                local yesBtn = missionOffer:FindFirstChild("Yes", true)
+                if yesBtn then
+                    if getconnections then
+                        for _, c in ipairs(getconnections(yesBtn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(yesBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                end
+            end
+        end
+    end)
     pcall(function()
         local vim = game:GetService("VirtualInputManager")
         if vim then
@@ -742,11 +790,11 @@ task.spawn(function()
                             if Config.QuestDriveMode == "Instant Warp" then
                                 local forward = (destPos - root.Position).Unit
                                 teleportCarWithVelocity(CFrame.lookAt(destPos - forward * 8, destPos), forward * 60)
-                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 75 then
-                                -- Glide in air while far away
+                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 150 then
+                                -- Glide in air while far away (> 150 studs)
                                 driveCarStep(destPos + Vector3.new(0, 4, 0), Config.QuestDriveSpeed, true)
                             else
-                                -- Within 75 studs: drive normally on the road surface
+                                -- Before reaching checkpoint (<= 150 studs): Drive normally on the road!
                                 driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
                             end
                         else
@@ -769,13 +817,13 @@ task.spawn(function()
                                     task.wait(0.015)
                                 end
                             end
-                            teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
+                            driveCarStep(destPos, 0, false)
                             dist = 0
                         end
 
                         if dist > 14 then
-                            if Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 75 then
-                                -- Glide in air for speed while far away (> 75 studs)
+                            if Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 150 then
+                                -- Glide in air for speed while far away (> 150 studs)
                                 driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
                             elseif Config.QuestDriveMode == "Realistic Road Drive" then
                                 local nextWp = nil
@@ -790,20 +838,23 @@ task.spawn(function()
                                 end
                                 driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
                             else
-                                -- Within 75 studs of destination: Drive normally on the road without flying!
-                                driveCarStep(destPos, math.min(120, Config.QuestDriveSpeed), false)
+                                -- Before reaching destination (<= 150 studs): Drive normally on the road without flying!
+                                driveCarStep(destPos, math.min(130, Config.QuestDriveSpeed), false)
                             end
                         else
                             -- ==========================================================
-                            -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
+                            -- B. ARRIVED AT OBJECTIVE ON THE ROAD: COMPLETE & CLAIM
                             -- ==========================================================
                             questFarmState = "DELIVERING"
-                            teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
+                            driveCarStep(destPos, 0, false)
 
-                            -- Stop velocity so interaction can trigger
+                            -- Solid brake on the road so interaction triggers 100%
                             if rcd and rcd.phys then
                                 rcd.phys.v = Vector3.zero
                                 rcd.phys.throttle = 0
+                                rcd.phys.brake = 1
+                                rcd.phys.airMode = false
+                                rcd.phys.anyContact = true
                             end
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
