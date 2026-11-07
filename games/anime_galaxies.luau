@@ -257,130 +257,116 @@ local function triggerMatchEndAction(preferredAction)
 
     local action = preferredAction or "Next"
     pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
         local rr, hasEnded, isVictory = getMatchEndGui()
-        if hasEnded and rr then
+
+        local function triggerBtn(btn)
+            if not btn then return false end
+            pcall(function()
+                if getconnections then
+                    for _, ev in ipairs({"Activated", "MouseButton1Click", "TouchTap"}) do
+                        if btn[ev] then
+                            for _, c in ipairs(getconnections(btn[ev])) do pcall(function() c:Fire() end) end
+                        end
+                    end
+                end
+                if firesignal then
+                    for _, ev in ipairs({"Activated", "MouseButton1Click", "TouchTap"}) do
+                        if btn[ev] then pcall(function() firesignal(btn[ev]) end) end
+                    end
+                end
+                local vim = game:GetService("VirtualInputManager")
+                if vim and btn.AbsolutePosition and btn.AbsoluteSize then
+                    local pos = btn.AbsolutePosition
+                    local size = btn.AbsoluteSize
+                    vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, true, game, 1)
+                    task.wait(0.04)
+                    vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, false, game, 1)
+                end
+            end)
+            return true
+        end
+
+        -- Search for specific action button in RoundResult GUI or PlayerGui
+        local clickedButton = false
+        if rr then
             local buttons = (rr:FindFirstChild("Content") and rr.Content:FindFirstChild("GameInfo") and rr.Content.GameInfo:FindFirstChild("Buttons"))
                 or rr:FindFirstChild("Buttons", true)
             if buttons then
                 if action == "Next" and buttons:FindFirstChild("Next") and buttons.Next.Visible then
-                    local btn = buttons.Next
-                    if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                    end
-                    if firesignal then
-                        pcall(function() firesignal(btn.Activated) end)
-                        pcall(function() firesignal(btn.MouseButton1Click) end)
-                    end
-                    pcall(function()
-                        local vim = game:GetService("VirtualInputManager")
-                        local pos = btn.AbsolutePosition
-                        local size = btn.AbsoluteSize
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, true, game, 1)
-                        task.wait(0.05)
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, false, game, 1)
-                    end)
-                    publishRemote("EndGame", "Next")
-                    pcall(function()
-                        if WindUI then
-                            WindUI:Notify({
-                                Title = "Next Battle ⏩",
-                                Content = "🏆 ชนะแล้ว! กด Next Battle เข้าเล่นด่าน/ชั้นถัดไปทันที",
-                                Duration = 3,
-                                Icon = "fast-forward"
-                            })
-                        end
-                    end)
-                    return
+                    triggerBtn(buttons.Next)
+                    clickedButton = true
                 elseif action == "Replay" and buttons:FindFirstChild("Replay") and buttons.Replay.Visible then
-                    local btn = buttons.Replay
-                    if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                    end
-                    if firesignal then
-                        pcall(function() firesignal(btn.Activated) end)
-                        pcall(function() firesignal(btn.MouseButton1Click) end)
-                    end
-                    pcall(function()
-                        local vim = game:GetService("VirtualInputManager")
-                        local pos = btn.AbsolutePosition
-                        local size = btn.AbsoluteSize
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, true, game, 1)
-                        task.wait(0.05)
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, false, game, 1)
-                    end)
-                    publishRemote("EndGame", "Replay")
-                    pcall(function()
-                        if WindUI then
-                            WindUI:Notify({
-                                Title = "Replay Match 🔄",
-                                Content = "🔄 กด Replay เริ่มเล่นด่านเดิมซ้ำ",
-                                Duration = 3,
-                                Icon = "refresh-cw"
-                            })
-                        end
-                    end)
-                    return
-                elseif buttons:FindFirstChild("Return") and buttons.Return.Visible then
-                    local btn = buttons.Return
-                    if getconnections then
-                        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                    end
-                    if firesignal then
-                        pcall(function() firesignal(btn.Activated) end)
-                        pcall(function() firesignal(btn.MouseButton1Click) end)
-                    end
-                    pcall(function()
-                        local vim = game:GetService("VirtualInputManager")
-                        local pos = btn.AbsolutePosition
-                        local size = btn.AbsoluteSize
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, true, game, 1)
-                        task.wait(0.05)
-                        vim:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, false, game, 1)
-                    end)
-                    publishRemote("EndGame", "Return")
-                    pcall(function()
-                        if WindUI then
-                            WindUI:Notify({
-                                Title = "Return To Lobby 🚪",
-                                Content = "🏁 จบการต่อสู้! กด Return กลับสู่ล็อบบี้",
-                                Duration = 3,
-                                Icon = "log-out"
-                            })
-                        end
-                    end)
-                    return
+                    triggerBtn(buttons.Replay)
+                    clickedButton = true
+                elseif action == "Return" and buttons:FindFirstChild("Return") and buttons.Return.Visible then
+                    triggerBtn(buttons.Return)
+                    clickedButton = true
                 end
             end
         end
-        publishRemote("EndGame", action)
+
+        -- Universal screen-wide search for "Next Battle" or "Next" button if not clicked yet
+        if action == "Next" and not clickedButton and lp and lp:FindFirstChild("PlayerGui") then
+            for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
+                if desc:IsA("GuiObject") then
+                    local text = (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text:lower() or ""
+                    local name = desc.Name:lower()
+                    if text:find("next battle", 1, true) or text:find("next stage", 1, true) or name == "next" or name == "nextbattle" then
+                        local btn = desc:IsA("GuiButton") and desc or desc:FindFirstAncestorWhichIsA("GuiButton") or (desc.Parent and desc.Parent:IsA("GuiButton") and desc.Parent)
+                        if btn and btn.Visible ~= false then
+                            triggerBtn(btn)
+                            clickedButton = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Always dispatch authoritative remotes to the server
+        if action == "Next" then
+            publishRemote("EndGame", "Next")
+            publishRemote("EndGame", { Action = "Next" })
+            publishRemote("Tower", { Action = "Next" })
+            publishRemote("Tower", { Action = "NextBattle" })
+            publishRemote("Tower", "Next")
+            if WindUI then
+                WindUI:Notify({
+                    Title = "Next Battle ⏩",
+                    Content = "🏆 ชนะแล้ว! กด Next Battle เข้าเล่นด่าน/ชั้นถัดไปทันที",
+                    Duration = 3,
+                    Icon = "fast-forward"
+                })
+            end
+        elseif action == "Replay" then
+            publishRemote("EndGame", "Replay")
+            publishRemote("EndGame", { Action = "Replay" })
+            publishRemote("Tower", { Action = "Replay" })
+            if WindUI then
+                WindUI:Notify({
+                    Title = "Replay Match 🔄",
+                    Content = "🔄 กด Replay เริ่มเล่นด่านเดิมซ้ำ",
+                    Duration = 3,
+                    Icon = "refresh-cw"
+                })
+            end
+        elseif action == "Return" then
+            publishRemote("EndGame", "Return")
+            publishRemote("EndGame", { Action = "Return" })
+            publishRemote("Room", { Action = "Leave" })
+            if WindUI then
+                WindUI:Notify({
+                    Title = "Return To Lobby 🚪",
+                    Content = "🚪 ออกจากแมตช์และกลับล็อบบี้เรียบร้อย",
+                    Duration = 3,
+                    Icon = "log-out"
+                })
+            end
+        end
     end)
 end
 
--- Load Game Information Modules safely
-local GameInfo = {
-    Champions = nil,
-    LevelRewards = nil,
-    Traits = nil,
-    Worlds = nil,
-}
-
-pcall(function()
-    GameInfo.Champions = require(ReplicatedStorage.Master.Information.Champions)
-end)
-pcall(function()
-    GameInfo.LevelRewards = require(ReplicatedStorage.Master.Information.LevelRewards)
-end)
-pcall(function()
-    GameInfo.Traits = require(ReplicatedStorage.Master.Information.Traits)
-end)
-pcall(function()
-    GameInfo.Worlds = require(ReplicatedStorage.Master.Information.Worlds)
-end)
-
--- Helper: Get list of player's owned units
 local function getOwnedUnitsList()
     local list = {}
     pcall(function()
@@ -1086,9 +1072,9 @@ Tabs.Main:Section({ Title = "🎮 Game Mode Selection (เลือกโหม�
 
 Tabs.Main:Dropdown({
     Title = "Select Game Mode (เลือกโหมด)",
-    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless, Tower)",
-    Values = { "Story", "Raids", "Challenges", "Endless", "Tower" },
-    Value = selectedGameMode,
+    Desc = "เลือกโหมดเกมที่ต้องการให้บอทเข้าเล่น (Story, Raids, Challenges, Endless) *สำหรับโหมด Tower ให้ไปที่แท็บ Tower Climb",
+    Values = { "Story", "Raids", "Challenges", "Endless" },
+    Value = (selectedGameMode == "Tower" and "Story" or selectedGameMode),
     Callback = function(val)
         selectedGameMode = val
         triggerAutoSave()
@@ -1447,6 +1433,8 @@ local function getTowerTeamList()
     return team
 end
 
+local autoUseTowerCheckpoint = true
+
 local function clickTowerGuiButton(actionType)
     -- actionType: "checkpoint" or "forfeit"
     local clicked = false
@@ -1456,63 +1444,75 @@ local function clickTowerGuiButton(actionType)
 
         local targetKeywords = {}
         if actionType == "checkpoint" then
-            targetKeywords = {"use checkpoint"}
+            targetKeywords = {"use checkpoint", "checkpoint", "continue"}
         elseif actionType == "forfeit" then
-            targetKeywords = {"forfeit"}
+            targetKeywords = {"forfeit", "surrender", "give up"}
         end
 
-        local function triggerBtn(btn)
-            if not btn then return false end
+        local function triggerGuiElement(el)
+            if not el then return false end
+            local fired = false
             pcall(function()
+                -- 1. getconnections on all common click/touch events
                 if getconnections then
-                    for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
-                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    for _, ev in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "TouchTap", "InputBegan"}) do
+                        if el[ev] then
+                            for _, c in ipairs(getconnections(el[ev])) do
+                                pcall(function() c:Fire() end)
+                                fired = true
+                            end
+                        end
+                    end
                 end
+                -- 2. firesignal
                 if firesignal then
-                    pcall(function() firesignal(btn.Activated) end)
-                    pcall(function() firesignal(btn.MouseButton1Click) end)
+                    for _, ev in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "TouchTap"}) do
+                        if el[ev] then
+                            pcall(function() firesignal(el[ev]) fired = true end)
+                        end
+                    end
                 end
-                local vim = game:GetService("VirtualInputManager")
-                if vim and btn.AbsolutePosition and btn.AbsoluteSize then
-                    local pos = btn.AbsolutePosition
-                    local sz = btn.AbsoluteSize
-                    vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
-                    task.wait(0.04)
-                    vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
-                end
+                -- 3. VirtualInputManager for desktop
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    if vim and el.AbsolutePosition and el.AbsoluteSize then
+                        local pos = el.AbsolutePosition
+                        local sz = el.AbsoluteSize
+                        vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
+                        task.wait(0.04)
+                        vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
+                        fired = true
+                    end
+                end)
             end)
-            return true
+            return fired
         end
 
-        -- Search PlayerGui for button with exact keyword or button name
+        -- Search PlayerGui
         for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
-            if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("ImageButton") then
-                local text = desc:IsA("TextLabel") and desc.Text or (desc:IsA("TextButton") and desc.Text or "")
+            if desc:IsA("GuiObject") then
+                local text = (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text or ""
                 local name = desc.Name:lower()
                 local lowerText = text:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
 
                 for _, kw in ipairs(targetKeywords) do
                     local isMatch = false
-                    if actionType == "checkpoint" then
-                        if lowerText == "use checkpoint" or lowerText:find("^use checkpoint") or name == "usecheckpoint" or name == "checkpointbutton" then
-                            isMatch = true
-                        end
-                    elseif actionType == "forfeit" then
-                        if lowerText == "forfeit" or lowerText:find("^forfeit") or name == "forfeit" or name == "forfeitbutton" then
-                            isMatch = true
-                        end
+                    if lowerText:find(kw, 1, true) or name:find(kw, 1, true) then
+                        isMatch = true
                     end
 
                     if isMatch then
-                        local btn = desc:IsA("GuiButton") and desc
-                            or desc:FindFirstAncestorWhichIsA("GuiButton")
-                            or (desc.Parent and desc.Parent:FindFirstChildWhichIsA("GuiButton"))
-                            or (desc.Parent and desc.Parent:IsA("GuiButton") and desc.Parent)
-
-                        if btn and btn.Visible ~= false then
-                            clicked = triggerBtn(btn)
-                            if clicked then return end
+                        -- Found match! Trigger the element, its parent, and ancestor button
+                        triggerGuiElement(desc)
+                        if desc.Parent and desc.Parent:IsA("GuiObject") then
+                            triggerGuiElement(desc.Parent)
                         end
+                        local ancestorBtn = desc:FindFirstAncestorWhichIsA("GuiButton")
+                        if ancestorBtn then
+                            triggerGuiElement(ancestorBtn)
+                        end
+                        clicked = true
+                        return
                     end
                 end
             end
@@ -1526,10 +1526,49 @@ local function clickUseCheckpointGui()
 end
 
 local function startTowerBattle()
-    -- 1. Click on-screen "Use Checkpoint" button if open
-    local clickedGui = clickTowerGuiButton("checkpoint")
+    -- Check live player data for active checkpoint
+    local data = LocalPlayer:FindFirstChild("Data")
+    local towerFolder = data and data:FindFirstChild("Tower")
+    local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
+    local isActive = (activeVal and activeVal.Value == true)
+    local streakVal = towerFolder and towerFolder:FindFirstChild("Streak")
+    local currentStreak = (streakVal and streakVal.Value) or 0
+    local checkpointVal = towerFolder and towerFolder:FindFirstChild("Checkpoint")
+    local currentCheckpoint = (checkpointVal and checkpointVal.Value) or 0
 
-    -- 2. Auto equip specified team for Tower
+    local isResume = (isActive or currentStreak > 0 or currentCheckpoint > 0)
+    local targetFloor = (currentCheckpoint > 0 and currentCheckpoint) or towerCurrentFloor or selectedTowerFloor or 1
+
+    -- 1. If Use Checkpoint button is visible on screen, click it directly!
+    local clickedGui = clickTowerGuiButton("checkpoint")
+    if clickedGui then
+        WindUI:Notify({
+            Title = "Battle Tower 🟢",
+            Content = string.format("กด Use Checkpoint (ชั้น %d) ลุยต่อทันที!", targetFloor),
+            Duration = 3.5,
+            Icon = "play"
+        })
+        return true
+    end
+
+    -- 2. If Tower Screen is not currently open, attempt to open it
+    pcall(function()
+        local ifc = ReplicatedStorage:FindFirstChild("Master")
+            and ReplicatedStorage.Master:FindFirstChild("Modules")
+            and ReplicatedStorage.Master.Modules:FindFirstChild("Interface_Client")
+        if ifc then
+            local ok, ifcMod = pcall(require, ifc)
+            if ok and type(ifcMod) == "table" then
+                if type(ifcMod.Open) == "function" then
+                    ifcMod:Open("Tower")
+                elseif type(ifcMod.SetScreen) == "function" then
+                    ifcMod:SetScreen("Tower")
+                end
+            end
+        end
+    end)
+
+    -- 3. Auto equip specified team for Tower
     if towerTeam and towerTeam ~= "Equipped Team" then
         local tNum = tonumber(towerTeam:match("%d+"))
         if tNum then
@@ -1542,57 +1581,67 @@ local function startTowerBattle()
     end
 
     local teamList = getTowerTeamList()
-    local data = LocalPlayer:FindFirstChild("Data")
-    local towerFolder = data and data:FindFirstChild("Tower")
-    local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
-    local isActive = (activeVal and activeVal.Value == true)
-    local streakVal = towerFolder and towerFolder:FindFirstChild("Streak")
-    local currentStreak = (streakVal and streakVal.Value) or 0
-    local checkpointVal = towerFolder and towerFolder:FindFirstChild("Checkpoint")
-    local currentCheckpoint = (checkpointVal and checkpointVal.Value) or 0
 
-    local isResume = (isActive or currentStreak > 0 or currentCheckpoint > 0)
-    local action = isResume and "Continue" or "Start"
-    local targetFloor = (currentCheckpoint > 0 and currentCheckpoint) or towerCurrentFloor or selectedTowerFloor or 1
+    -- 4. Try clicking Use Checkpoint again in case screen just opened
+    task.wait(0.2)
+    clickedGui = clickTowerGuiButton("checkpoint")
+    if clickedGui then
+        WindUI:Notify({
+            Title = "Battle Tower 🟢",
+            Content = string.format("กดปุ่ม Use Checkpoint (ชั้น %d) เรียบร้อย!", targetFloor),
+            Duration = 3.5,
+            Icon = "play"
+        })
+        return true
+    end
 
-    -- 3. Native Screen Controller Fallback
+    -- 5. Native Screen Controller Invocation
     pcall(function()
         local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
         if towerScreen then
-            if isResume and type(towerScreen.OnContinue) == "function" then
+            if type(towerScreen.OnUseCheckpoint) == "function" then
+                towerScreen.OnUseCheckpoint()
+            elseif type(towerScreen.UseCheckpoint) == "function" then
+                towerScreen.UseCheckpoint()
+            elseif type(towerScreen.OnCheckpoint) == "function" then
+                towerScreen.OnCheckpoint()
+            elseif isResume and type(towerScreen.OnContinue) == "function" then
                 towerScreen.OnContinue()
             elseif type(towerScreen.OnStart) == "function" then
-                towerScreen.OnStart({ Floor = targetFloor, Team = teamList })
+                towerScreen.OnStart({ Floor = targetFloor, Team = teamList, Checkpoint = isResume })
             end
         end
     end)
 
-    -- 4. Official Network_Client Publish
+    -- 6. Official Network_Client Publish with all supported action variants
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
-            net.Publish(net, "Tower", { Action = action, Floor = targetFloor, Team = teamList })
-            if isResume then
+            if isResume or autoUseTowerCheckpoint then
                 net.Publish(net, "Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
+                net.Publish(net, "Tower", { Action = "UseCheckpoint" })
+                net.Publish(net, "Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
                 net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
+                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList, UseCheckpoint = true })
+            else
+                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
             end
         end
     end)
 
-    -- 5. Direct RemoteService Handler Fallback
-    publishRemote("Tower", {
-        Action = action,
-        Floor = targetFloor,
-        Team = teamList
-    })
-    if isResume then
+    -- 7. Direct RemoteService Handler Fallback
+    if isResume or autoUseTowerCheckpoint then
         publishRemote("Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
+        publishRemote("Tower", { Action = "UseCheckpoint" })
+        publishRemote("Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
         publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
+    else
+        publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
     end
 
-    local notifMsg = (action == "Continue" and currentCheckpoint > 0)
+    local notifMsg = (currentCheckpoint > 0)
         and ("🟢 ใช้ Checkpoint (ชั้น " .. tostring(currentCheckpoint) .. ") ลุยหอคอยต่อทันที!")
-        or ("🚀 ส่งคำสั่งเริ่มเล่น Tower (" .. action .. ") เรียบร้อย!")
+        or ("🚀 ส่งคำสั่งเริ่มเล่น Tower (ชั้น " .. tostring(targetFloor) .. ") เรียบร้อย!")
     WindUI:Notify({ Title = "Tower Climb", Content = notifMsg, Duration = 3.5, Icon = "castle" })
     return true
 end
@@ -1783,49 +1832,20 @@ Tabs.Main:Button({
 })
 
 -- ==============================================================================
--- TAB TOWER: TOWER CLIMB SYSTEM 🏰 (BANANA / BLACK HUB CLONE)
+-- TAB TOWER: TOWER CLIMB SYSTEM 🏰 (CONSOLIDATED ALL-IN-ONE ENGINE)
 -- ==============================================================================
 UI.towerJoinStatusPara = Tabs.Tower:Paragraph({
-    Title = "Tower Status (สถานะระบบสร้างห้องและไต่หอคอย)",
-    Desc = "Status: [IDLE] | โหมด: ไม่ได้ทำงาน\nชั้นเป้าหมาย: ชั้น " .. tostring(towerCurrentFloor or selectedTowerFloor or 1),
+    Title = "🏰 Tower Status (สถานะระบบสร้างห้องและไต่หอคอย)",
+    Desc = "Status: [IDLE] | ชั้นเป้าหมาย: Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1) .. "
+Auto Tower: ⚪ ปิดอยู่ | Checkpoint: ตรวจสอบ...",
     Image = "castle"
 })
 
-Tabs.Tower:Section({ Title = "🏰 TOWER CREATION & AUTO JOIN (สร้างห้องและเริ่ม Tower อัตโนมัติ)" })
-
-UI.towerFloorSlider = Tabs.Tower:Slider({
-    Title = "Tower Floor (เลือกชั้น Tower ที่ต้องการลงเล่น)",
-    Desc = "เลือกหมายเลขชั้นของโหมด Tower ที่ต้องการให้บอทเริ่มเล่น (1 ถึง 100)",
-    Value = {
-        Min = 1,
-        Max = 100,
-        Default = towerCurrentFloor or selectedTowerFloor or 1,
-    },
-    Callback = function(val)
-        selectedTowerFloor = math.floor(val)
-        towerCurrentFloor = selectedTowerFloor
-        pcall(function()
-            if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
-                UI.towerCurrentFloorSlider:SetValue(selectedTowerFloor)
-            end
-        end)
-        triggerAutoSave()
-    end
-})
-
-UI.towerAutoNextFloorToggle = Tabs.Tower:Toggle({
-    Title = "⏩ ชนะ Tower แล้วไต่ชั้นถัดไปอัตโนมัติ (Auto Next Tower Floor)",
-    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะปรับบวก 1 ชั้นถัดไปให้อัตโนมัติ (เช่น ชั้น 35 -> ชั้น 36) และกด Next Battle ลุยต่อทันที!",
-    Value = (autoNextTowerFloor ~= false),
-    Callback = function(state)
-        autoNextTowerFloor = state
-        triggerAutoSave()
-    end
-})
+Tabs.Tower:Section({ Title = "🏰 TOWER CLIMB & AUTO BATTLE (สร้างห้องและเริ่ม Tower อัตโนมัติ)" })
 
 UI.towerAutoJoinToggle = Tabs.Tower:Toggle({
-    Title = "Enable Auto Join",
-    Desc = "สร้างห้องและเข้าไต่หอคอย (Tower) อัตโนมัติตามชั้นที่กำหนดแบบ 100% AFK",
+    Title = "⚡ เปิดใช้งาน Auto Tower (สร้างห้อง/ลุยหอคอยอัตโนมัติ)",
+    Desc = "สร้างห้องและเข้าไต่หอคอย (Tower) อัตโนมัติ รองรับทั้งเริ่มชั้นใหม่และใช้ Checkpoint ลุยต่อ 100% AFK",
     Value = towerAutoJoin,
     Callback = function(val)
         towerAutoJoin = val
@@ -1836,8 +1856,44 @@ UI.towerAutoJoinToggle = Tabs.Tower:Toggle({
     end
 })
 
+UI.towerCurrentFloorSlider = Tabs.Tower:Slider({
+    Title = "Floor Selection (เลือกชั้นเป้าหมาย / ชั้นที่ต้องการเริ่ม)",
+    Desc = "กำหนดชั้น Tower ที่ต้องการเริ่มเล่น (ระบบจะบวกเพิ่มทีละ 1 ชั้นเมื่อชนะ)",
+    Value = {
+        Min = 1,
+        Max = 100,
+        Default = towerCurrentFloor or selectedTowerFloor or 1,
+    },
+    Callback = function(val)
+        towerCurrentFloor = math.floor(val)
+        selectedTowerFloor = towerCurrentFloor
+        triggerAutoSave()
+    end
+})
+UI.towerFloorSlider = UI.towerCurrentFloorSlider
+
+UI.towerAutoUseCheckpointToggle = Tabs.Tower:Toggle({
+    Title = "🟢 Auto Use Checkpoint (กดใช้ Checkpoint อัตโนมัติเมื่อมีเซฟค้างอยู่)",
+    Desc = "เมื่อมี Checkpoint ค้างอยู่ (เช่น ชั้น 35) ระบบจะกดปุ่ม Use Checkpoint ลุยต่อทันที ไม่ต้องกลัวติดแจ้งเตือน 'Finish or forfeit your current Battle Tower run first'",
+    Value = (autoUseTowerCheckpoint ~= false),
+    Callback = function(state)
+        autoUseTowerCheckpoint = state
+        triggerAutoSave()
+    end
+})
+
+UI.towerAutoNextFloorToggle = Tabs.Tower:Toggle({
+    Title = "⏩ ชนะแล้วกด Next Battle ลุยชั้นถัดไปทันที (Auto Next Battle)",
+    Desc = "เมื่อเคลียร์ชั้น Tower ชนะ จะกดปุ่ม Next Battle ลุยชั้นถัดไปทันทีในห้องเดิม โดยไม่ต้องกลับล็อบบี้หรือสร้างห้องใหม่!",
+    Value = (autoNextTowerFloor ~= false),
+    Callback = function(state)
+        autoNextTowerFloor = state
+        triggerAutoSave()
+    end
+})
+
 UI.towerTeamDropdown = Tabs.Tower:Dropdown({
-    Title = "Tower Team",
+    Title = "Tower Team (เลือกทีมสำหรับ Tower)",
     Desc = "เลือกทีมยูนิตที่ต้องการสวมใส่ก่อนเข้าหอคอย",
     Values = { "Equipped Team", "Team 1", "Team 2", "Team 3", "Team 4" },
     Value = towerTeam,
@@ -1848,7 +1904,7 @@ UI.towerTeamDropdown = Tabs.Tower:Dropdown({
 })
 
 UI.towerAfterLossDropdown = Tabs.Tower:Dropdown({
-    Title = "After A Loss",
+    Title = "After A Loss (เมื่อพ่ายแพ้)",
     Desc = "เลือกการกระทำเมื่อพ่ายแพ้ในชั้นนั้นๆ (Start New Run, Retry Floor, Return To Lobby)",
     Values = { "Start New Run", "Retry Floor", "Return To Lobby" },
     Value = towerAfterLoss,
@@ -1859,7 +1915,7 @@ UI.towerAfterLossDropdown = Tabs.Tower:Dropdown({
 })
 
 UI.towerJoinPrioritySlider = Tabs.Tower:Slider({
-    Title = "Join Priority",
+    Title = "Join Priority (ความสำคัญ)",
     Desc = "กำหนดความสำคัญในการเข้าห้องและเริ่มแมตช์ (1 - 10)",
     Value = {
         Min = 1,
@@ -1872,57 +1928,10 @@ UI.towerJoinPrioritySlider = Tabs.Tower:Slider({
     end
 })
 
-Tabs.Tower:Button({
-    Title = "Restore Defaults",
-    Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER AUTO JOIN กลับเป็นค่าเริ่มต้น",
-    Icon = "rotate-ccw",
-    Callback = function()
-        towerAutoJoin = false
-        towerTeam = "Equipped Team"
-        towerAfterLoss = "Start New Run"
-        towerJoinPriority = 1
+Tabs.Tower:Section({ Title = "🛑 LEAVE / STOP AT BATTLE (กำหนดจุดหยุดพักหรือยอมแพ้)" })
 
-        pcall(function()
-            if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
-            if UI.towerTeamDropdown and UI.towerTeamDropdown.SetValue then UI.towerTeamDropdown:SetValue("Equipped Team") end
-            if UI.towerAfterLossDropdown and UI.towerAfterLossDropdown.SetValue then UI.towerAfterLossDropdown:SetValue("Start New Run") end
-            if UI.towerJoinPrioritySlider and UI.towerJoinPrioritySlider.SetValue then UI.towerJoinPrioritySlider:SetValue(1) end
-        end)
-
-        triggerAutoSave()
-        WindUI:Notify({ Title = "Tower Auto Join", Content = "Restored defaults successfully!", Duration = 3, Icon = "check" })
-    end
-})
-
-UI.towerClimbStatusPara = Tabs.Tower:Paragraph({
-    Title = "Status (สถานะการไต่หอคอย)",
-    Desc = "Status: [IDLE] | ชั้นปัจจุบัน: Floor 1 | เป้าหมายหยุด: Floor 22",
-    Image = "swords"
-})
-
-Tabs.Tower:Section({ Title = "⚔️ TOWER CLIMB" })
-
--- [grouped into UI.towerCurrentFloorSlider]
-UI.towerCurrentFloorSlider = Tabs.Tower:Slider({
-    Title = "Current Floor (ชั้นที่ต้องการเล่น/เริ่ม)",
-    Desc = "กำหนดชั้น Tower ที่ต้องการเริ่มเล่น (ระบบจะบวกเพิ่มทีละ 1 ชั้นเมื่อชนะ)",
-    Value = {
-        Min = 1,
-        Max = 100,
-        Default = towerCurrentFloor or 1,
-    },
-    Callback = function(val)
-        towerCurrentFloor = math.floor(val)
-        selectedTowerFloor = towerCurrentFloor
-        triggerAutoSave()
-    end
-})
-
--- [grouped into UI.towerEnableStopAtToggle]
--- [grouped into UI.towerStopAtBattleSlider]
--- [grouped into UI.towerAtStopBattleDropdown]
 UI.towerEnableStopAtToggle = Tabs.Tower:Toggle({
-    Title = "Enable Leave At Battle",
+    Title = "Enable Leave At Battle (เปิดจุดหยุดพัก)",
     Desc = "เมื่อไต่ถึงชั้นที่กำหนด ให้ทำตามเงื่อนไขที่เลือก (Forfeit And Restart, Return To Lobby, Continue Climbing)",
     Value = towerEnableStopAt,
     Callback = function(val)
@@ -1932,7 +1941,7 @@ UI.towerEnableStopAtToggle = Tabs.Tower:Toggle({
 })
 
 UI.towerStopAtBattleSlider = Tabs.Tower:Slider({
-    Title = "Stop At Battle",
+    Title = "Stop At Battle (หยุดที่ชั้น)",
     Desc = "เลือกชั้นที่ต้องการให้ระบบหยุดหรือรีเซ็ตกลับมาชั้น 1 (ค่าเริ่มต้น: 22)",
     Value = {
         Min = 1,
@@ -1946,7 +1955,7 @@ UI.towerStopAtBattleSlider = Tabs.Tower:Slider({
 })
 
 UI.towerAtStopBattleDropdown = Tabs.Tower:Dropdown({
-    Title = "At Stop Battle",
+    Title = "At Stop Battle (การกระทำเมื่อถึงชั้นที่กำหนด)",
     Desc = "เลือกการกระทำเมื่อเคลียร์ถึงชั้น Stop At Battle (Forfeit And Restart, Return To Lobby, Continue Climbing)",
     Values = { "Forfeit And Restart", "Return To Lobby", "Continue Climbing" },
     Value = towerAtStopBattle,
@@ -1956,41 +1965,21 @@ UI.towerAtStopBattleDropdown = Tabs.Tower:Dropdown({
     end
 })
 
-Tabs.Tower:Button({
-    Title = "Restore Defaults",
-    Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER CLIMB กลับเป็นค่าเริ่มต้น (22 / Forfeit And Restart)",
-    Icon = "rotate-ccw",
-    Callback = function()
-        towerEnableStopAt = false
-        towerStopAtBattle = 22
-        towerAtStopBattle = "Forfeit And Restart"
-
-        pcall(function()
-            if UI.towerEnableStopAtToggle and UI.towerEnableStopAtToggle.SetValue then UI.towerEnableStopAtToggle:SetValue(false) end
-            if UI.towerStopAtBattleSlider and UI.towerStopAtBattleSlider.SetValue then UI.towerStopAtBattleSlider:SetValue(22) end
-            if UI.towerAtStopBattleDropdown and UI.towerAtStopBattleDropdown.SetValue then UI.towerAtStopBattleDropdown:SetValue("Forfeit And Restart") end
-        end)
-
-        triggerAutoSave()
-        WindUI:Notify({ Title = "Tower Climb", Content = "Restored defaults successfully!", Duration = 3, Icon = "check" })
-    end
-})
-
 Tabs.Tower:Section({ Title = "🚪 Manual Tower Controls (สร้างห้อง/เริ่มหอคอยด้วยตัวเอง & Checkpoint)" })
 
 Tabs.Tower:Button({
-    Title = "🏰 เข้า/สร้างห้อง Tower ทันที (Instant Enter/Start Tower)",
-    Desc = "ส่งคำสั่งเข้าหรือสร้างห้องหอคอย Tower ตามชั้นที่เลือกทันที 1 คลิก",
-    Icon = "castle",
+    Title = "🟢 กดใช้ Checkpoint ทันที (Use Checkpoint & Enter)",
+    Desc = "กดปุ่ม Use Checkpoint บนหน้าจอ และส่งคำสั่งลุยชั้น Checkpoint ต่อทันที",
+    Icon = "play",
     Callback = function()
         startTowerBattle()
     end
 })
 
 Tabs.Tower:Button({
-    Title = "🟢 กดใช้ Checkpoint ทันที (Use Checkpoint & Enter)",
-    Desc = "กดปุ่ม Use Checkpoint บนหน้าจอ และส่งคำสั่งลุยชั้น Checkpoint ต่อทันที",
-    Icon = "play",
+    Title = "🏰 เข้า/สร้างห้อง Tower ทันที (Instant Enter/Start Tower)",
+    Desc = "ส่งคำสั่งเข้าหรือสร้างห้องหอคอย Tower ตามชั้นที่เลือกทันที 1 คลิก",
+    Icon = "castle",
     Callback = function()
         startTowerBattle()
     end
@@ -2005,13 +1994,35 @@ Tabs.Tower:Button({
     end
 })
 
-UI.towerAutoForfeitIfBlocking = Tabs.Tower:Toggle({
-    Title = "⚡ ออโต้ Forfeit Tower หากติดค้างเมื่อสร้างห้อง Story/Raids",
-    Desc = "หากระบบเกมแจ้งเตือน 'Finish or forfeit your current Battle Tower run first' ขวางการสร้างห้อง Story/Raids บอทจะกดยอมแพ้หอคอยที่ค้างอยู่ให้อัตโนมัติ เพื่อให้สร้างห้องได้ทันที",
-    Value = (autoForfeitTowerIfBlocked ~= false),
-    Callback = function(state)
-        autoForfeitTowerIfBlocked = state
+Tabs.Tower:Button({
+    Title = "🔄 Restore Defaults",
+    Desc = "รีเซ็ตการตั้งค่าฝั่ง TOWER CLIMB กลับเป็นค่าเริ่มต้น",
+    Icon = "rotate-ccw",
+    Callback = function()
+        towerAutoJoin = false
+        towerTeam = "Equipped Team"
+        towerAfterLoss = "Start New Run"
+        towerJoinPriority = 1
+        towerEnableStopAt = false
+        towerStopAtBattle = 22
+        towerAtStopBattle = "Forfeit And Restart"
+        autoUseTowerCheckpoint = true
+        autoNextTowerFloor = true
+
+        pcall(function()
+            if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
+            if UI.towerTeamDropdown and UI.towerTeamDropdown.SetValue then UI.towerTeamDropdown:SetValue("Equipped Team") end
+            if UI.towerAfterLossDropdown and UI.towerAfterLossDropdown.SetValue then UI.towerAfterLossDropdown:SetValue("Start New Run") end
+            if UI.towerJoinPrioritySlider and UI.towerJoinPrioritySlider.SetValue then UI.towerJoinPrioritySlider:SetValue(1) end
+            if UI.towerEnableStopAtToggle and UI.towerEnableStopAtToggle.SetValue then UI.towerEnableStopAtToggle:SetValue(false) end
+            if UI.towerStopAtBattleSlider and UI.towerStopAtBattleSlider.SetValue then UI.towerStopAtBattleSlider:SetValue(22) end
+            if UI.towerAtStopBattleDropdown and UI.towerAtStopBattleDropdown.SetValue then UI.towerAtStopBattleDropdown:SetValue("Forfeit And Restart") end
+            if UI.towerAutoUseCheckpointToggle and UI.towerAutoUseCheckpointToggle.SetValue then UI.towerAutoUseCheckpointToggle:SetValue(true) end
+            if UI.towerAutoNextFloorToggle and UI.towerAutoNextFloorToggle.SetValue then UI.towerAutoNextFloorToggle:SetValue(true) end
+        end)
+
         triggerAutoSave()
+        WindUI:Notify({ Title = "Tower Climb", Content = "Restored defaults successfully!", Duration = 3, Icon = "check" })
     end
 })
 
