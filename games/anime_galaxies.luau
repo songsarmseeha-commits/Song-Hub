@@ -275,10 +275,7 @@ UI.lastMatchEndActionTick = 0
 UI.matchEndActionDispatched = false
 
 local function triggerMatchEndAction(preferredAction)
-    if UI.matchEndActionDispatched then
-        return
-    end
-    if tick() - (UI.lastMatchEndActionTick or 0) < 6.0 then
+    if tick() - (UI.lastMatchEndActionTick or 0) < 4.0 then
         return
     end
 
@@ -333,9 +330,12 @@ local function triggerMatchEndAction(preferredAction)
                 elseif action == "Replay" and buttons:FindFirstChild("Replay") and buttons.Replay.Visible then
                     triggerBtn(buttons.Replay)
                     clickedButton = true
-                elseif action == "Return" and buttons:FindFirstChild("Return") and buttons.Return.Visible then
-                    triggerBtn(buttons.Return)
-                    clickedButton = true
+                elseif action == "Return" then
+                    local retBtn = buttons:FindFirstChild("Return") or buttons:FindFirstChild("Lobby") or buttons:FindFirstChild("Leave") or buttons:FindFirstChild("Home")
+                    if retBtn and retBtn.Visible then
+                        triggerBtn(retBtn)
+                        clickedButton = true
+                    end
                 end
             end
         end
@@ -347,6 +347,21 @@ local function triggerMatchEndAction(preferredAction)
                     local text = (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text:lower() or ""
                     local name = desc.Name:lower()
                     if text:find("next battle", 1, true) or text:find("next stage", 1, true) or name == "next" or name == "nextbattle" then
+                        local btn = desc:IsA("GuiButton") and desc or desc:FindFirstAncestorWhichIsA("GuiButton") or (desc.Parent and desc.Parent:IsA("GuiButton") and desc.Parent)
+                        if btn and btn.Visible ~= false and btn.AbsolutePosition.X >= 0 then
+                            triggerBtn(btn)
+                            clickedButton = true
+                            break
+                        end
+                    end
+                end
+            end
+        elseif action == "Return" and not clickedButton and lp and lp:FindFirstChild("PlayerGui") then
+            for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
+                if desc:IsA("GuiObject") and desc.Visible and desc.AbsolutePosition.X >= 0 then
+                    local text = (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text:lower() or ""
+                    local name = desc.Name:lower()
+                    if text:find("return", 1, true) or text:find("lobby", 1, true) or text:find("leave", 1, true) or name == "return" or name == "lobby" or name == "leave" then
                         local btn = desc:IsA("GuiButton") and desc or desc:FindFirstAncestorWhichIsA("GuiButton") or (desc.Parent and desc.Parent:IsA("GuiButton") and desc.Parent)
                         if btn and btn.Visible ~= false and btn.AbsolutePosition.X >= 0 then
                             triggerBtn(btn)
@@ -395,6 +410,13 @@ local function triggerMatchEndAction(preferredAction)
             publishRemote("EndGame", "Return")
             publishRemote("EndGame", { Action = "Return" })
             publishRemote("Room", { Action = "Leave" })
+            task.delay(1.5, function()
+                pcall(function()
+                    if game.PlaceId == 85423571424083 then
+                        game:GetService("TeleportService"):Teleport(83869074416117, LocalPlayer)
+                    end
+                end)
+            end)
             if WindUI then
                 WindUI:Notify({
                     Title = "Return To Lobby 🚪",
@@ -508,6 +530,61 @@ local towerJoinPriority = 1
 local towerEnableStopAt = false
 local towerStopAtBattle = 22
 local towerAtStopBattle = "Forfeit And Restart" -- "Forfeit And Restart", "Return To Lobby", "Continue Climbing"
+
+local function getLiveTowerFloor()
+    local hudFloor = nil
+    pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
+        local pg = lp and lp:FindFirstChild("PlayerGui")
+        if pg then
+            -- 1. Check in-match FusionMatchHUD
+            local mm = pg:FindFirstChild("FusionMatchHUD")
+            if mm then
+                for _, desc in ipairs(mm:GetDescendants()) do
+                    if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
+                        local bNum = desc.Text:match("Battle%s*(%d+)") or desc.Text:match("Floor%s*(%d+)")
+                        if bNum then
+                            local num = tonumber(bNum)
+                            if num and num > 0 then
+                                hudFloor = num
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. Check lobby Tower Screen
+            if not hudFloor then
+                local fs = pg:FindFirstChild("FusionScreens") or pg:FindFirstChild("Screens")
+                local tw = fs and fs:FindFirstChild("Tower")
+                if tw then
+                    for _, desc in ipairs(tw:GetDescendants()) do
+                        if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
+                            local bNum = desc.Text:match("Battle%s*(%d+)") or desc.Text:match("Floor%s*(%d+)")
+                            if bNum then
+                                local num = tonumber(bNum)
+                                if num and num > 0 then
+                                    hudFloor = num
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if hudFloor then return hudFloor end
+
+    local data = LocalPlayer and LocalPlayer:FindFirstChild("Data")
+    local tf = data and data:FindFirstChild("Tower")
+    if tf and tf:FindFirstChild("Streak") and tf.Streak.Value ~= nil then
+        return tf.Streak.Value + 1
+    end
+
+    return towerCurrentFloor or selectedTowerFloor or 1
+end
 
 local autoStartMatch = false
 local autoLeaveMatch = false
@@ -1496,6 +1573,21 @@ local function clickTowerStartButton()
     local towerGui = getTowerScreenGui()
     if not towerGui then return false end
     local startBtn = towerGui:FindFirstChild("Start", true)
+        or towerGui:FindFirstChild("Continue", true)
+        or towerGui:FindFirstChild("Battle", true)
+    if not startBtn then
+        for _, desc in ipairs(towerGui:GetDescendants()) do
+            if desc:IsA("GuiButton") and desc.Visible and desc.AbsolutePosition.X >= 0 then
+                local txt = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                local nm = desc.Name:lower()
+                if txt:find("start", 1, true) or txt:find("continue", 1, true) or txt:find("battle", 1, true)
+                    or nm == "start" or nm == "continue" or nm == "battle" then
+                    startBtn = desc
+                    break
+                end
+            end
+        end
+    end
     if startBtn and startBtn:IsA("GuiButton") then
         local fired = false
         pcall(function()
@@ -1531,6 +1623,18 @@ local function clickTowerForfeitButton()
     local towerGui = getTowerScreenGui()
     if not towerGui then return false end
     local forfeitBtn = towerGui:FindFirstChild("Forfeit", true)
+    if not forfeitBtn then
+        for _, desc in ipairs(towerGui:GetDescendants()) do
+            if desc:IsA("GuiButton") and desc.Visible and desc.AbsolutePosition.X >= 0 then
+                local txt = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                local nm = desc.Name:lower()
+                if txt:find("forfeit", 1, true) or nm == "forfeit" then
+                    forfeitBtn = desc
+                    break
+                end
+            end
+        end
+    end
     if forfeitBtn and forfeitBtn:IsA("GuiButton") then
         local fired = false
         pcall(function()
@@ -1548,6 +1652,15 @@ local function clickTowerForfeitButton()
         if not fired and firesignal then
             pcall(function() firesignal(forfeitBtn.Activated) fired = true end)
         end
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            local pos = forfeitBtn.AbsolutePosition
+            local sz = forfeitBtn.AbsoluteSize
+            vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
+            task.wait(0.04)
+            vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
+            fired = true
+        end)
         return fired
     end
     return false
@@ -1640,10 +1753,50 @@ local function startTowerBattle()
 end
 
 local function forfeitTower()
-    -- 1. Click on-screen "Forfeit" button if Tower screen is open
+    -- 1. Ensure Tower screen is open in lobby
+    local towerGui = getTowerScreenGui()
+    if not towerGui or not towerGui.Visible then
+        pcall(function()
+            local ifc = require(ReplicatedStorage.Master.Modules.Interface_Client)
+            if ifc then
+                if type(ifc.Open) == "function" then
+                    ifc:Open("Tower")
+                elseif type(ifc.SetScreen) == "function" then
+                    ifc:SetScreen("Tower")
+                end
+            end
+        end)
+        task.wait(0.3)
+    end
+
+    -- 2. Click on-screen "Forfeit" button if Tower screen is open
     clickTowerForfeitButton()
 
-    -- 2. Call native controller if available
+    -- 3. Auto confirm any confirmation popup if present
+    task.delay(0.2, function()
+        pcall(function()
+            local lp = game:GetService("Players").LocalPlayer
+            local pg = lp and lp:FindFirstChild("PlayerGui")
+            if pg then
+                for _, desc in ipairs(pg:GetDescendants()) do
+                    if desc:IsA("GuiButton") and desc.Visible and desc.AbsolutePosition.X >= 0 then
+                        local name = desc.Name:lower()
+                        local txt = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                        if name == "confirm" or name == "yes" or name == "accept" or txt == "confirm" or txt == "yes" or txt == "accept" then
+                            pcall(function()
+                                if getconnections then
+                                    for _, c in ipairs(getconnections(desc.Activated)) do c:Fire() end
+                                end
+                                if firesignal then firesignal(desc.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+
+    -- 4. Call native controller if available
     pcall(function()
         local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
         if towerScreen and type(towerScreen.OnForfeit) == "function" then
@@ -1651,7 +1804,7 @@ local function forfeitTower()
         end
     end)
 
-    -- 3. Publish remote
+    -- 5. Publish remote
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
@@ -2035,6 +2188,10 @@ task.spawn(function()
     while scriptRunning do
         task.wait(1.5)
         pcall(function()
+            local liveFloor = getLiveTowerFloor()
+            towerCurrentFloor = liveFloor
+            selectedTowerFloor = liveFloor
+
             local gameFolder = workspace:FindFirstChild("Game")
             local inMatch = (game.PlaceId == 85423571424083)
                 or (gameFolder and gameFolder:FindFirstChild("Started") and gameFolder.Started.Value == true)
@@ -2057,7 +2214,7 @@ task.spawn(function()
                 elseif selectedGameMode == "Endless" then
                     targetDesc = selectedEndlessMap .. " (Endless)"
                 elseif selectedGameMode == "Tower" then
-                    targetDesc = "Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1)
+                    targetDesc = "Floor " .. tostring(liveFloor or 1)
                 end
 
                 UI.farmStatusPara:SetDesc(string.format(
@@ -2098,89 +2255,132 @@ task.spawn(function()
                 UI.towerClimbStatusPara:SetDesc(string.format(
                     "Status: %s\nชั้นปัจจุบัน (Current Floor): Floor %d\nเงื่อนไขการหยุด: %s",
                     climbStatusText,
-                    towerCurrentFloor or 1,
+                    liveFloor or 1,
                     stopRuleText
                 ))
             end
 
             -- Tower Climb Dedicated Automation
             if towerAutoJoin then
-                if inMatch then
-                    -- Ensure Smart Play AI is active during tower
-                    if not smartPlayEnabled then
-                        smartPlayEnabled = true
-                        matchCombatEngine = "Smart Play AI"
-                    end
+                local reachedStop = towerEnableStopAt and (liveFloor >= (towerStopAtBattle or 22))
 
-                    -- Check Match Result
-                    local rr, hasEnded, isVictory = getMatchEndGui()
-                    if hasEnded then
-                        if not UI.matchEndActionDispatched then
-                            UI.matchEndActionDispatched = true
-                            local towerAction = "Next"
-                            if isVictory then
-                                local reachedStop = towerEnableStopAt and (towerCurrentFloor >= (towerStopAtBattle or 22))
-                                if reachedStop then
-                                    if towerAtStopBattle == "Forfeit And Restart" then
-                                        WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ส่งคำสั่ง Forfeit และเริ่มใหม่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
-                                        forfeitTower()
+                if inMatch then
+                    -- If reached stop floor while inside match, forfeit / leave immediately!
+                    if reachedStop and (towerAtStopBattle == "Forfeit And Restart" or towerAtStopBattle == "Return To Lobby") then
+                        if tick() - (UI.lastTowerStopLeaveTick or 0) > 4.0 then
+                            UI.lastTowerStopLeaveTick = tick()
+                            if towerAtStopBattle == "Forfeit And Restart" then
+                                WindUI:Notify({
+                                    Title = "Tower Climb 🛑",
+                                    Content = string.format("🎯 ถึงชั้น Floor %d ตามเป้าหมายแล้ว! ยอมแพ้และกลับล็อบบี้เพื่อเริ่มใหม่ชั้น 1", liveFloor),
+                                    Duration = 4,
+                                    Icon = "rotate-ccw"
+                                })
+                            else
+                                WindUI:Notify({
+                                    Title = "Tower Climb 🛑",
+                                    Content = string.format("🏁 ถึงชั้น Floor %d ตามเป้าหมายแล้ว! ปิดระบบและกลับล็อบบี้", liveFloor),
+                                    Duration = 4,
+                                    Icon = "check-check"
+                                })
+                                towerAutoJoin = false
+                                pcall(function()
+                                    if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then
+                                        UI.towerAutoJoinToggle:SetValue(false)
+                                    end
+                                end)
+                            end
+
+                            smartPlayEnabled = false
+                            macroPlaybackEnabled = false
+
+                            publishRemote("EndGame", "Return")
+                            publishRemote("EndGame", { Action = "Return" })
+                            publishRemote("Room", { Action = "Leave" })
+                            pcall(function()
+                                game:GetService("TeleportService"):Teleport(83869074416117, LocalPlayer)
+                            end)
+                        end
+                    else
+                        -- Ensure Smart Play AI is active during tower
+                        if not smartPlayEnabled then
+                            smartPlayEnabled = true
+                            matchCombatEngine = "Smart Play AI"
+                        end
+
+                        -- Check Match Result
+                        local rr, hasEnded, isVictory = getMatchEndGui()
+                        if hasEnded then
+                            if not UI.matchEndActionDispatched then
+                                local towerAction = "Next"
+                                if isVictory then
+                                    if reachedStop then
+                                        if towerAtStopBattle == "Forfeit And Restart" then
+                                            WindUI:Notify({ Title = "Tower Climb", Content = "🎯 ผ่านชั้น Floor " .. tostring(liveFloor) .. " แล้ว! ส่งคำสั่งกลับล็อบบี้เพื่อ Forfeit และเริ่มใหม่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
+                                            towerAction = "Return"
+                                        elseif towerAtStopBattle == "Return To Lobby" then
+                                            WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ผ่านชั้น Floor " .. tostring(liveFloor) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
+                                            towerAutoJoin = false
+                                            pcall(function()
+                                                if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
+                                            end)
+                                            towerAction = "Return"
+                                        elseif towerAtStopBattle == "Continue Climbing" then
+                                            towerAction = "Next"
+                                            WindUI:Notify({ Title = "Tower Climb", Content = "⚔️ ผ่านชั้น Floor " .. tostring(liveFloor) .. " แล้ว! กด Next ไต่ต่อเนื่อง", Duration = 4, Icon = "trending-up" })
+                                        end
+                                    else
+                                        towerAction = "Next"
+                                        WindUI:Notify({ Title = "Tower Climb", Content = "🏆 ชนะชั้นเดิมแล้ว! กด Next เข้าสู่ Floor ถัดไปทันที", Duration = 3, Icon = "trending-up" })
+                                    end
+                                else
+                                    -- Loss / Defeat
+                                    if towerAfterLoss == "Start New Run" then
+                                        WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! ส่งคำสั่ง Forfeit และเริ่มรันใหม่ที่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
                                         towerAction = "Return"
-                                    elseif towerAtStopBattle == "Return To Lobby" then
-                                        WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้นเป้าหมาย Floor " .. tostring(towerStopAtBattle) .. " แล้ว! ปิดระบบและกลับล็อบบี้", Duration = 4, Icon = "check-check" })
+                                    elseif towerAfterLoss == "Retry Floor" then
+                                        WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! กด Replay เล่นชั้นเดิมซ้ำ", Duration = 4, Icon = "refresh-cw" })
+                                        towerAction = "Replay"
+                                    elseif towerAfterLoss == "Return To Lobby" then
+                                        WindUI:Notify({ Title = "Tower Climb", Content = "⛔ แพ้การต่อสู้! ปิดระบบและกลับล็อบบี้ตามที่ตั้งค่าไว้", Duration = 4, Icon = "log-out" })
                                         towerAutoJoin = false
                                         pcall(function()
                                             if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
                                         end)
                                         towerAction = "Return"
-                                    elseif towerAtStopBattle == "Continue Climbing" then
-                                        towerCurrentFloor = towerCurrentFloor + 1
-                                        selectedTowerFloor = towerCurrentFloor
-                                        towerAction = "Next"
-                                        WindUI:Notify({ Title = "Tower Climb", Content = "⚔️ ผ่านชั้นเป้าหมายแล้ว! กด Next ไต่ต่อเนื่องไปยัง Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "trending-up" })
                                     end
-                                else
-                                    towerCurrentFloor = towerCurrentFloor + 1
-                                    selectedTowerFloor = towerCurrentFloor
-                                    towerAction = "Next"
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "🏆 ชนะชั้นเดิมแล้ว! กด Next เลื่อนไปชั้น Floor " .. tostring(towerCurrentFloor) .. " ทันที ไม่ต้องสร้างห้องใหม่", Duration = 3, Icon = "trending-up" })
                                 end
-                            else
-                                -- Loss / Defeat
-                                if towerAfterLoss == "Start New Run" then
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "❌ แพ้การต่อสู้! ส่งคำสั่ง Forfeit และเริ่มรันใหม่ที่ชั้น 1", Duration = 4, Icon = "rotate-ccw" })
-                                    forfeitTower()
-                                    towerAction = "Return"
-                                elseif towerAfterLoss == "Retry Floor" then
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "🔄 แพ้การต่อสู้! กด Replay เล่นชั้นเดิมซ้ำ: Floor " .. tostring(towerCurrentFloor), Duration = 4, Icon = "refresh-cw" })
-                                    towerAction = "Replay"
-                                elseif towerAfterLoss == "Return To Lobby" then
-                                    WindUI:Notify({ Title = "Tower Climb", Content = "⛔ แพ้การต่อสู้! ปิดระบบและกลับล็อบบี้ตามที่ตั้งค่าไว้", Duration = 4, Icon = "log-out" })
-                                    towerAutoJoin = false
-                                    pcall(function()
-                                        if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
-                                    end)
-                                    towerAction = "Return"
-                                end
+
+                                triggerAutoSave()
+                                triggerMatchEndAction(towerAction)
                             end
-
-                            pcall(function()
-                                if UI.towerCurrentFloorSlider and UI.towerCurrentFloorSlider.SetValue then
-                                    UI.towerCurrentFloorSlider:SetValue(towerCurrentFloor)
-                                end
-                            end)
-                            triggerAutoSave()
-
-                            triggerMatchEndAction(towerAction)
+                        else
+                            UI.matchEndActionDispatched = false
                         end
-                    else
-                        UI.matchEndActionDispatched = false
                     end
                 else
                     UI.matchEndActionDispatched = false
-                    -- In Lobby: auto start tower battle
-                    if tick() - lastEnterAttempt > 3.0 then
-                        lastEnterAttempt = tick()
-                        startTowerBattle()
+                    -- In Lobby:
+                    if reachedStop then
+                        if towerAtStopBattle == "Forfeit And Restart" then
+                            if tick() - (UI.lastForfeitAttempt or 0) > 3.0 then
+                                UI.lastForfeitAttempt = tick()
+                                WindUI:Notify({ Title = "Tower Climb", Content = "🏳️ ปัจจุบันอยู่ที่ Floor " .. tostring(liveFloor) .. " (ถึงเป้าหมายแล้ว) กำลังส่งคำสั่ง Forfeit เพื่อรีเซ็ตกลับมาชั้น 1...", Duration = 3, Icon = "rotate-ccw" })
+                                forfeitTower()
+                            end
+                        elseif towerAtStopBattle == "Return To Lobby" then
+                            towerAutoJoin = false
+                            pcall(function()
+                                if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then UI.towerAutoJoinToggle:SetValue(false) end
+                            end)
+                            WindUI:Notify({ Title = "Tower Climb", Content = "🏁 ถึงชั้น Floor " .. tostring(liveFloor) .. " เรียบร้อยแล้ว! หยุดทำงานในล็อบบี้", Duration = 4, Icon = "check-check" })
+                        end
+                    else
+                        -- In Lobby: auto start tower battle if below stop battle
+                        if tick() - lastEnterAttempt > 3.0 then
+                            lastEnterAttempt = tick()
+                            startTowerBattle()
+                        end
                     end
                 end
 
