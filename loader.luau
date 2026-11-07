@@ -140,7 +140,9 @@ local function detectGame()
     end
 
     -- 1. Anime Galaxies
-    if uId == 10770748262 or pId == 83869074416117 or pId == 85423571424083 then
+    if uId == 10770748262 or pId == 83869074416117 or pId == 85423571424083
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("Master") and game:GetService("ReplicatedStorage").Master:FindFirstChild("Modules") and game:GetService("ReplicatedStorage").Master.Modules:FindFirstChild("Network_Client"))
+        or (game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") and game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("FusionHUD")) then
         return "anime_galaxies", "Anime Galaxies ✨", "anime_galaxies.luau"
     end
 
