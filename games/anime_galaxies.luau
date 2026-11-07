@@ -1836,8 +1836,7 @@ Tabs.Main:Button({
 -- ==============================================================================
 UI.towerJoinStatusPara = Tabs.Tower:Paragraph({
     Title = "🏰 Tower Status (สถานะระบบสร้างห้องและไต่หอคอย)",
-    Desc = "Status: [IDLE] | ชั้นเป้าหมาย: Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1) .. "
-Auto Tower: ⚪ ปิดอยู่ | Checkpoint: ตรวจสอบ...",
+    Desc = "Status: [IDLE] | ชั้นเป้าหมาย: Floor " .. tostring(towerCurrentFloor or selectedTowerFloor or 1) .. "\\nAuto Tower: ⚪ ปิดอยู่ | Checkpoint: ตรวจสอบ...",
     Image = "castle"
 })
 
