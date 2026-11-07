@@ -150,6 +150,9 @@ local function teleportCar(targetCF)
     end
     if not targetCF then return end
 
+    local nativePos = targetCF.Position / 2
+    local rot = targetCF - targetCF.Position
+
     -- 1. Sync through game's native RCDrive system (Prevents physics snap-back)
     local rcd = getRCDrive()
     if rcd then
@@ -160,8 +163,7 @@ local function teleportCar(targetCF)
         end
         if type(rcd.phys) == "table" then
             pcall(function()
-                rcd.phys.cf = targetCF
-                rcd.phys.p = targetCF.Position
+                rcd.phys.cf = CFrame.new(nativePos) * rot
                 rcd.phys.v = Vector3.zero
                 if rcd.phys.brake ~= nil then rcd.phys.brake = 0 end
                 if rcd.phys.throttle ~= nil then rcd.phys.throttle = 0 end
@@ -189,6 +191,10 @@ local function teleportCarWithVelocity(targetCF, vel)
         targetCF = CFrame.new(targetCF + Vector3.new(0, 1.5, 0))
     end
     if not targetCF then return end
+    vel = vel or Vector3.zero
+
+    local nativePos = targetCF.Position / 2
+    local rot = targetCF - targetCF.Position
 
     local rcd = getRCDrive()
     if rcd then
@@ -199,10 +205,9 @@ local function teleportCarWithVelocity(targetCF, vel)
         end
         if type(rcd.phys) == "table" then
             pcall(function()
-                rcd.phys.cf = targetCF
-                rcd.phys.p = targetCF.Position
-                if vel then
-                    rcd.phys.v = vel
+                rcd.phys.cf = CFrame.new(nativePos) * rot
+                if vel.Magnitude > 0.1 then
+                    rcd.phys.v = vel / 2
                     rcd.phys.throttle = 1
                     rcd.phys.boosting = true
                 else
@@ -215,7 +220,7 @@ local function teleportCarWithVelocity(targetCF, vel)
     local root = getCarRoot()
     if root then
         root.CFrame = targetCF
-        root.AssemblyLinearVelocity = vel or Vector3.zero
+        root.AssemblyLinearVelocity = vel
         root.AssemblyAngularVelocity = Vector3.zero
     end
     local car = getMyCar()
@@ -229,9 +234,9 @@ end
 local function driveCarStep(targetPos, speedKmh, isAir)
     local root = getCarRoot()
     local rcd = getRCDrive()
-    local currentPos = root and root.Position or (rcd and rcd.phys and rcd.phys.p)
-    if not currentPos then return end
+    if not root then return end
 
+    local currentPos = root.Position
     local dir = targetPos - currentPos
     local dist = dir.Magnitude
     if dist < 0.5 then return end
@@ -242,6 +247,13 @@ local function driveCarStep(targetPos, speedKmh, isAir)
     local speedMps = (speedKmh or 300) / 3.6
     local stepVel = moveDir * speedMps
 
+    -- 1. Sync Roblox physics
+    root.AssemblyLinearVelocity = stepVel
+    root.AssemblyAngularVelocity = Vector3.zero
+    local nextLook = currentPos + moveDir * 10
+    root.CFrame = CFrame.lookAt(currentPos, nextLook)
+
+    -- 2. Sync native RCDrive system
     if rcd and type(rcd.phys) == "table" then
         pcall(function()
             rcd.phys.throttle = 1
@@ -251,16 +263,10 @@ local function driveCarStep(targetPos, speedKmh, isAir)
             if isAir then
                 rcd.phys.airMode = true
             end
-            rcd.phys.v = stepVel
-            local nextP = rcd.phys.p + stepVel * 0.08
-            rcd.phys.p = nextP
-            rcd.phys.cf = CFrame.lookAt(nextP, nextP + moveDir * 10)
+            rcd.phys.v = stepVel / 2
+            local nativePos = currentPos / 2
+            rcd.phys.cf = CFrame.lookAt(nativePos, (currentPos + moveDir * 10) / 2)
         end)
-    end
-
-    if root then
-        root.CFrame = CFrame.lookAt(root.Position + stepVel * 0.08, root.Position + moveDir * 10)
-        root.AssemblyLinearVelocity = stepVel
     end
 end
 
@@ -564,25 +570,60 @@ local function findQuestTargetNpc(targetName)
     return nil
 end
 
+local function getActiveMissionTarget()
+    local targetPos, missionObj, missionType = nil, nil, nil
+    pcall(function()
+        local rs = game:GetService("RunService")
+        local conns = getconnections and getconnections(rs.Heartbeat)
+        if conns then
+            for _, c in ipairs(conns) do
+                local fn = c.Function
+                if fn and tostring(debug.getinfo(fn).short_src):find("RBRCQuestClient") then
+                    local uvs = debug.getupvalues(fn)
+                    local mState = uvs and uvs[2]
+                    if type(mState) == "table" and (mState.state == "running" or mState.state == "boarding") and type(mState.objectives) == "table" then
+                        missionType = mState.state
+                        for _, obj in ipairs(mState.objectives) do
+                            if obj.active and not obj.done and typeof(obj.target) == "Vector3" then
+                                targetPos = obj.target
+                                missionObj = obj
+                                break
+                            end
+                        end
+                    end
+                    break
+                end
+            end
+        end
+    end)
+    return targetPos, missionObj, missionType
+end
+
 local function getActiveQuestDestination()
-    -- Priority 1: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
+    -- Priority 1: Live Active Taxi/Driving Mission checkpoints from RBRCQuestClient
+    local mTarget, mObj, mState = getActiveMissionTarget()
+    if mTarget then
+        return mTarget, nil, nil, "checkpoint", mState
+    end
+
+    -- Priority 2: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
     local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
     if okNav and nav then
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
             if okGl and gl and gl.target then
-                return gl.target, nil, gl.points
+                return gl.target, nil, gl.points, "guideline", nil
             end
         end
         if nav.getGuide then
             local okG, g = pcall(nav.getGuide)
             if okG and g and g.destRoblox then
-                return g.destRoblox, nil, nil
+                return g.destRoblox, nil, nil, "guide", nil
             end
         end
     end
 
-    -- Priority 2: Parse active quest from Favorite UI (RBRCQuestFavorite)
+    -- Priority 3: Parse active quest from Favorite UI (RBRCQuestFavorite)
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     local fav = pg and pg:FindFirstChild("RBRCQuestFavorite")
     local questTexts = {}
@@ -594,32 +635,40 @@ local function getActiveQuestDestination()
         end
     end
 
+    local subQuestNpc = nil
+    local returnNpc = nil
     for _, txt in ipairs(questTexts) do
-        local targetNpcName = txt:match("กลับไปหา%s*([^\n\r]+)")
+        -- Check for incomplete subquest like "ภารกิจ - มาดามอันตราย  0/1"
+        local taskName, curr, maxVal = txt:match("([^\n\r%d%/]+)%s*(%d+)%s*/%s*(%d+)")
+        if taskName and curr and maxVal then
+            local cNum = tonumber(curr) or 0
+            local mNum = tonumber(maxVal) or 1
+            if cNum < mNum then
+                local cleanTask = taskName:gsub("ภารกิจ", ""):gsub("%-", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                local npc = findQuestTargetNpc(cleanTask)
+                if npc then
+                    subQuestNpc = npc
+                end
+            end
+        end
+
+        local retName = txt:match("กลับไปหา%s*([^\n\r]+)")
             or txt:match("ไปพบ%s*([^\n\r]+)")
             or txt:match("คุยกับ%s*([^\n\r]+)")
-            or txt:match("ส่งของให้%s*([^\n\r]+)")
-            or txt:match("ภารกิจ%s*%-%s*([^\n\r%d%/]+)")
-            or txt:match("%[(.+)%]")
-        
-        if targetNpcName then
-            targetNpcName = targetNpcName:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local npcModel = findQuestTargetNpc(targetNpcName)
-            if npcModel then
-                local p = npcModel.PrimaryPart or npcModel:FindFirstChild("Root") or npcModel:FindFirstChildWhichIsA("BasePart")
-                if p then
-                    return p.Position, npcModel, nil
-                end
+        if retName then
+            local cleanRet = retName:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local npc = findQuestTargetNpc(cleanRet)
+            if npc then
+                returnNpc = npc
             end
         end
     end
 
-    -- Priority 3: Check visible NpcTalkPrompt (We are near an NPC!)
-    local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
-    if ntp and ntp.Enabled then
-        local root = getCarRoot()
-        if root then
-            return root.Position, nil, nil
+    local targetNpcModel = subQuestNpc or returnNpc
+    if targetNpcModel then
+        local p = targetNpcModel.PrimaryPart or targetNpcModel:FindFirstChild("Root") or targetNpcModel:FindFirstChildWhichIsA("BasePart")
+        if p then
+            return p.Position, targetNpcModel, nil, "npc", nil
         end
     end
 
@@ -629,12 +678,12 @@ local function getActiveQuestDestination()
         for _, m in ipairs(qMarkers:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, p, nil
+                return p.Position, p, nil, "marker", nil
             end
         end
     end
 
-    return nil, nil, nil
+    return nil, nil, nil, nil, nil
 end
 
 -- ==============================================================================
@@ -651,19 +700,30 @@ task.spawn(function()
             local root = getCarRoot()
             local rcd = getRCDrive()
             if root then
-                local destPos, destObj, points = getActiveQuestDestination()
+                local destPos, destObj, points, destType, mState = getActiveQuestDestination()
 
-                -- Anti-Stuck Detection
-                if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 1.5 then
-                    stuckCounter = stuckCounter + 1
-                    if stuckCounter >= 10 then -- Stuck for ~0.6 second
-                        local forward = root.CFrame.LookVector
-                        teleportCar(root.CFrame + Vector3.new(0, 3, 0) + forward * 8)
+                -- Wait while passenger is boarding taxi
+                if mState == "boarding" then
+                    task.wait(0.5)
+                    continue
+                end
+
+                -- Anti-Stuck Detection (only when driving towards destination)
+                if destPos and destType ~= "npc" then
+                    if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 1.5 then
+                        stuckCounter = stuckCounter + 1
+                        if stuckCounter >= 12 then -- Stuck for ~0.7 second
+                            local forward = root.CFrame.LookVector
+                            teleportCar(root.CFrame + Vector3.new(0, 3, 0) + forward * 8)
+                            stuckCounter = 0
+                        end
+                    else
+                        lastStuckPos = root.Position
                         stuckCounter = 0
                     end
                 else
-                    lastStuckPos = root.Position
                     stuckCounter = 0
+                    lastStuckPos = root.Position
                 end
 
                 if destPos then
@@ -673,114 +733,131 @@ task.spawn(function()
                     questFarmState = "DRIVING"
                     local dist = (root.Position - destPos).Magnitude
 
-                    if Config.QuestDriveMode == "Instant Warp" then
-                        -- Fast waypoint sweep along route to register checkpoints and speed requirement (> 100 km/h)
-                        if points and #points > 0 and dist > 25 then
-                            local step = math.max(1, math.floor(#points / 15))
-                            for i = 1, #points, step do
-                                local pt = points[i]
-                                local lookNext = points[i + step] or destPos
-                                local dir = (lookNext - pt)
-                                local vel = dir.Magnitude > 0.1 and (dir.Unit * 60) or Vector3.new(0, 0, -60)
-                                local targetCF = CFrame.lookAt(pt + Vector3.new(0, 1.5, 0), lookNext + Vector3.new(0, 1.5, 0))
-                                teleportCarWithVelocity(targetCF, vel)
-                                task.wait(0.015)
+                    if destType == "checkpoint" then
+                        -- Checkpoint Gate: Must pass through at speed (> 100 km/h) to trigger
+                        if dist > 20 then
+                            if Config.QuestDriveMode == "Instant Warp" then
+                                local forward = (destPos - root.Position).Unit
+                                teleportCarWithVelocity(CFrame.lookAt(destPos - forward * 8, destPos), forward * 60)
+                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" then
+                                driveCarStep(destPos + Vector3.new(0, 4, 0), Config.QuestDriveSpeed, true)
+                            else
+                                driveCarStep(destPos, Config.QuestDriveSpeed, false)
                             end
-                        end
-                        -- Warp directly to the destination
-                        teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
-                        dist = 0
-                    end
-
-                    if dist > 18 then
-                        if Config.QuestDriveMode == "Hyper Sonic Glide" then
-                            driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
-                        elseif Config.QuestDriveMode == "Realistic Road Drive" then
-                            local nextWp = nil
-                            if points and #points > 0 then
-                                for i = 1, #points do
-                                    local pDist = (points[i] - root.Position).Magnitude
-                                    if pDist > 10 and (points[i] - root.Position):Dot(destPos - root.Position) > -5 then
-                                        nextWp = points[i]
-                                        break
-                                    end
-                                end
-                            end
-                            driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
                         else
-                            driveCarStep(destPos, Config.QuestDriveSpeed, false)
+                            -- Pass smoothly through the gate
+                            driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
+                            task.wait(0.03)
                         end
                     else
-                        -- ==========================================================
-                        -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
-                        -- ==========================================================
-                        questFarmState = "DELIVERING"
-                        teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
-
-                        -- Stop velocity so interaction can trigger
-                        if rcd and rcd.phys then
-                            rcd.phys.v = Vector3.zero
-                            rcd.phys.throttle = 0
-                        end
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-
-                        -- Stop native AutoDrive if running
-                        pcall(function()
-                            local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
-                            if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
-                                require(RaycityUi.AutoDrive).stop()
+                        -- Standard NPC or Delivery Destination
+                        if Config.QuestDriveMode == "Instant Warp" then
+                            if points and #points > 0 and dist > 25 then
+                                local step = math.max(1, math.floor(#points / 15))
+                                for i = 1, #points, step do
+                                    local pt = points[i]
+                                    local lookNext = points[i + step] or destPos
+                                    local dir = (lookNext - pt)
+                                    local vel = dir.Magnitude > 0.1 and (dir.Unit * 60) or Vector3.new(0, 0, -60)
+                                    local targetCF = CFrame.lookAt(pt + Vector3.new(0, 1.5, 0), lookNext + Vector3.new(0, 1.5, 0))
+                                    teleportCarWithVelocity(targetCF, vel)
+                                    task.wait(0.015)
+                                end
                             end
-                        end)
+                            teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
+                            dist = 0
+                        end
 
-                        -- Trigger Touch on destination marker
-                        if destObj and destObj:IsA("BasePart") and firetouchinterest then
+                        if dist > 14 then
+                            if Config.QuestDriveMode == "Hyper Sonic Glide" then
+                                driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
+                            elseif Config.QuestDriveMode == "Realistic Road Drive" then
+                                local nextWp = nil
+                                if points and #points > 0 then
+                                    for i = 1, #points do
+                                        local pDist = (points[i] - root.Position).Magnitude
+                                        if pDist > 10 and (points[i] - root.Position):Dot(destPos - root.Position) > -5 then
+                                            nextWp = points[i]
+                                            break
+                                        end
+                                    end
+                                end
+                                driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
+                            else
+                                driveCarStep(destPos, Config.QuestDriveSpeed, false)
+                            end
+                        else
+                            -- ==========================================================
+                            -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
+                            -- ==========================================================
+                            questFarmState = "DELIVERING"
+                            teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
+
+                            -- Stop velocity so interaction can trigger
+                            if rcd and rcd.phys then
+                                rcd.phys.v = Vector3.zero
+                                rcd.phys.throttle = 0
+                            end
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+
+                            -- Stop native AutoDrive if running
                             pcall(function()
-                                firetouchinterest(root, destObj, 0)
-                                task.wait(0.02)
-                                firetouchinterest(root, destObj, 1)
+                                local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
+                                if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
+                                    require(RaycityUi.AutoDrive).stop()
+                                end
                             end)
+
+                            -- Trigger Touch on destination marker
+                            if destObj and destObj:IsA("BasePart") and firetouchinterest then
+                                pcall(function()
+                                    firetouchinterest(root, destObj, 0)
+                                    task.wait(0.02)
+                                    firetouchinterest(root, destObj, 1)
+                                end)
+                            end
+
+                            -- Trigger Trunk / Delivery completion
+                            pcall(function()
+                                local rep = game:GetService("ReplicatedStorage")
+                                local qDeliver = require(rep.RBRCQuest.QuestDeliver)
+                                if qDeliver then
+                                    if qDeliver.finish then qDeliver.finish() end
+                                    if qDeliver.trunk then qDeliver.trunk(true) end
+                                end
+                            end)
+
+                            -- Submit delivery via server remotes
+                            pcall(function()
+                                local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                                if qRemotes then
+                                    if qRemotes:FindFirstChild("QuestEventUp") then
+                                        qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
+                                    end
+                                    if qRemotes:FindFirstChild("QuestRequest") then
+                                        qRemotes.QuestRequest:InvokeServer("ClaimCurrentQuest")
+                                        qRemotes.QuestRequest:InvokeServer("CompleteQuest")
+                                        qRemotes.QuestRequest:InvokeServer("FinishQuest")
+                                    end
+                                end
+                            end)
+
+                            -- Auto dismiss / claim rewards screen
+                            pcall(function()
+                                local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                                if qUi then
+                                    if qUi.hideResult then qUi.hideResult() end
+                                    if qUi.closeDrops then qUi.closeDrops() end
+                                    if qUi._dialogEnter then qUi._dialogEnter() end
+                                end
+                            end)
+
+                            -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
+                            pressReturnKey()
+
+                            task.wait(0.25)
                         end
-
-                        -- Trigger Trunk / Delivery completion
-                        pcall(function()
-                            local rep = game:GetService("ReplicatedStorage")
-                            local qDeliver = require(rep.RBRCQuest.QuestDeliver)
-                            if qDeliver then
-                                if qDeliver.finish then qDeliver.finish() end
-                                if qDeliver.trunk then qDeliver.trunk(true) end
-                            end
-                        end)
-
-                        -- Submit delivery via server remotes
-                        pcall(function()
-                            local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
-                            if qRemotes then
-                                if qRemotes:FindFirstChild("QuestEventUp") then
-                                    qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
-                                end
-                                if qRemotes:FindFirstChild("QuestRequest") then
-                                    qRemotes.QuestRequest:InvokeServer("ClaimCurrentQuest")
-                                    qRemotes.QuestRequest:InvokeServer("CompleteQuest")
-                                    qRemotes.QuestRequest:InvokeServer("FinishQuest")
-                                end
-                            end
-                        end)
-
-                        -- Auto dismiss / claim rewards screen
-                        pcall(function()
-                            local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
-                            if qUi then
-                                if qUi.hideResult then qUi.hideResult() end
-                                if qUi.closeDrops then qUi.closeDrops() end
-                                if qUi._dialogEnter then qUi._dialogEnter() end
-                            end
-                        end)
-
-                        -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
-                        pressReturnKey()
-
-                        task.wait(0.2)
                     end
                 else
                     -- ==========================================================
