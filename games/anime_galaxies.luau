@@ -1191,12 +1191,20 @@ Tabs.Main:Dropdown({
 
 Tabs.Main:Section({ Title = "🚀 Room Creation & Auto-Start (ระบบสร้างห้องและเริ่มอัตโนมัติ)" })
 
-Tabs.Main:Toggle({
+UI.autoStartToggle = Tabs.Main:Toggle({
     Title = "🔄 เปิดระบบสร้างห้องและเริ่มเกมอัตโนมัติ (Auto Create & Start)",
     Desc = "บอทจะหาห้องว่าง วาปเข้าห้อง ตั้งค่าแมพตามโหมด และกดเริ่มเกมให้อัตโนมัติแบบลูปต่อเนื่อง",
     Value = autoCreateAndStart,
     Callback = function(state)
         autoCreateAndStart = state
+        if state and selectedGameMode ~= "Tower" then
+            towerAutoJoin = false
+            pcall(function()
+                if UI.towerAutoJoinToggle and UI.towerAutoJoinToggle.SetValue then
+                    UI.towerAutoJoinToggle:SetValue(false)
+                end
+            end)
+        end
         triggerAutoSave()
         WindUI:Notify({
             Title = "Auto Room & Match",
@@ -1485,8 +1493,12 @@ local function clickTowerGuiButton(actionType)
         local targetKeywords = {}
         if actionType == "checkpoint" then
             targetKeywords = {"use checkpoint", "checkpoint", "continue"}
+        elseif actionType == "battle" or actionType == "start" then
+            targetKeywords = {"battle", "start", "use checkpoint", "checkpoint", "continue"}
         elseif actionType == "forfeit" then
             targetKeywords = {"forfeit", "surrender", "give up"}
+        else
+            targetKeywords = {tostring(actionType):lower()}
         end
 
         local function triggerGuiElement(el)
@@ -1622,13 +1634,13 @@ local function startTowerBattle()
 
     local teamList = getTowerTeamList()
 
-    -- 4. Try clicking Use Checkpoint again in case screen just opened
+    -- 4. Try clicking Start / Battle / Use Checkpoint in case screen is open
     task.wait(0.2)
-    clickedGui = clickTowerGuiButton("checkpoint")
+    clickedGui = clickTowerGuiButton("checkpoint") or clickTowerGuiButton("battle") or clickTowerGuiButton("start")
     if clickedGui then
         WindUI:Notify({
             Title = "Battle Tower 🟢",
-            Content = string.format("กดปุ่ม Use Checkpoint (ชั้น %d) เรียบร้อย!", targetFloor),
+            Content = string.format("กดปุ่มเริ่มเล่น Tower (ชั้น %d) เรียบร้อย!", targetFloor),
             Duration = 3.5,
             Icon = "play"
         })
@@ -1639,7 +1651,10 @@ local function startTowerBattle()
     pcall(function()
         local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
         if towerScreen then
-            if type(towerScreen.OnUseCheckpoint) == "function" then
+            if type(towerScreen.OnBattle) == "function" then
+                towerScreen.OnBattle()
+            end
+            if currentCheckpoint > 0 and type(towerScreen.OnUseCheckpoint) == "function" then
                 towerScreen.OnUseCheckpoint()
             elseif type(towerScreen.UseCheckpoint) == "function" then
                 towerScreen.UseCheckpoint()
@@ -1648,7 +1663,7 @@ local function startTowerBattle()
             elseif isResume and type(towerScreen.OnContinue) == "function" then
                 towerScreen.OnContinue()
             elseif type(towerScreen.OnStart) == "function" then
-                towerScreen.OnStart({ Floor = targetFloor, Team = teamList, Checkpoint = isResume })
+                towerScreen.OnStart({ Floor = targetFloor, Team = teamList, Checkpoint = (currentCheckpoint > 0) })
             end
         end
     end)
@@ -1657,27 +1672,28 @@ local function startTowerBattle()
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
-            if isResume or autoUseTowerCheckpoint then
+            if currentCheckpoint > 0 and autoUseTowerCheckpoint then
                 net.Publish(net, "Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
                 net.Publish(net, "Tower", { Action = "UseCheckpoint" })
-                net.Publish(net, "Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
-                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
-                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList, UseCheckpoint = true })
-            else
-                net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
             end
+            net.Publish(net, "Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
+            net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
+            net.Publish(net, "Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
+            net.Publish(net, "Tower", "Battle")
+            net.Publish(net, "Tower", "Start")
         end
     end)
 
     -- 7. Direct RemoteService Handler Fallback
-    if isResume or autoUseTowerCheckpoint then
+    if currentCheckpoint > 0 and autoUseTowerCheckpoint then
         publishRemote("Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
         publishRemote("Tower", { Action = "UseCheckpoint" })
-        publishRemote("Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
-        publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList, Checkpoint = true })
-    else
-        publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
     end
+    publishRemote("Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
+    publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
+    publishRemote("Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
+    publishRemote("Tower", "Battle")
+    publishRemote("Tower", "Start")
 
     local notifMsg = (currentCheckpoint > 0)
         and ("🟢 ใช้ Checkpoint (ชั้น " .. tostring(currentCheckpoint) .. ") ลุยหอคอยต่อทันที!")
@@ -1889,7 +1905,18 @@ UI.towerAutoJoinToggle = Tabs.Tower:Toggle({
     Callback = function(val)
         towerAutoJoin = val
         if val then
+            selectedGameMode = "Tower"
+            autoCreateAndStart = false
+            pcall(function()
+                if UI.autoStartToggle and UI.autoStartToggle.SetValue then
+                    UI.autoStartToggle:SetValue(false)
+                end
+                if UI.modeDropdown and UI.modeDropdown.SetValue then
+                    UI.modeDropdown:SetValue("Tower")
+                end
+            end)
             matchCombatEngine = "Smart Play AI"
+            smartPlayEnabled = true
         end
         triggerAutoSave()
     end
@@ -2140,7 +2167,7 @@ task.spawn(function()
             end
 
             -- Tower Climb Dedicated Automation
-            if towerAutoJoin and (selectedGameMode == "Tower") then
+            if towerAutoJoin then
                 if inMatch then
                     -- Ensure Smart Play AI is active during tower
                     if not smartPlayEnabled then
