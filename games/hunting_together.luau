@@ -1176,34 +1176,42 @@ local function getDungeonTarget()
                 local isPillar = (mName:find("pillar") ~= nil or mName:find("ritual") ~= nil or mName:find("seal") ~= nil or mId == "dgn_ritual_pillar")
                 local isWitch = (mName:find("witch") ~= nil or mId:find("witch") ~= nil or mob:GetAttribute("IsMiniBoss") == true)
                 local isBoss = (mob:GetAttribute("IsBoss") == true or mName:find("boss") or mName:find("skull king") or mName:find("crypt") or mId:find("boss") or mId:find("skull"))
+                local isGoldSpecial = (mName:find("gold") ~= nil or mId:find("gold") ~= nil or mName:find("barrel") ~= nil or mId:find("barrel") ~= nil)
+                local isGoblin = (mName:find("goblin") ~= nil or mId:find("goblin") ~= nil or mId:find("gd_") ~= nil)
                 local score = 1000 - dist
 
                 -- 1. Pillar priority: ABSOLUTE TOP PRIORITY if alive pillars exist
                 if isPillar then
                     score = 1000000 - dist
-                -- 2. Mini Boss (Potion Witch) priority during Step 3 or when in/near Witch Lair
+                -- 2. Gold Goblin / Barrel priority in Gold Dungeon
+                elseif isGoldSpecial then
+                    score = 250000 - dist
+                -- 3. Mini Boss (Potion Witch) priority during Step 3 or when in/near Witch Lair
                 elseif isWitch and (dStep == 3 or inWitchLair or (Config.PrioritizeDungeonBoss or Config.PrioritizeBoss)) then
                     if alivePillarCount > 0 then
                         score = -1000000
                     else
                         score = 500000 - dist
                     end
-                -- 3. Final Boss (Skull King) priority during Step 4 or when in Boss Arena
+                -- 4. Final Boss (Skull King) priority during Step 4 or when in Boss Arena
                 elseif isBoss and (dStep >= 4 or inBossArena or (Config.PrioritizeDungeonBoss or Config.PrioritizeBoss)) then
                     if alivePillarCount > 0 then
                         score = -1000000
                     else
                         score = 500000 - dist
                     end
-                -- 4. Close aggro monsters along corridor (clears corridor cleanly without wall snag)
+                -- 5. Standard goblins in Gold Dungeon
+                elseif isGoblin then
+                    score = 50000 - dist
+                -- 6. Close aggro monsters along corridor (clears corridor cleanly without wall snag)
                 elseif dist <= 35 then
                     score = 30000 - dist
                 elseif dist <= 75 then
                     score = 15000 - dist
                 end
 
-                -- Line of sight wall penalty: exempt pillars, witch in step 3/lair, and boss in step 4/arena
-                local exemptLos = isPillar or (isWitch and (dStep == 3 or inWitchLair)) or (isBoss and (dStep >= 4 or inBossArena))
+                -- Line of sight wall penalty: exempt pillars, gold special, witch in step 3/lair, and boss in step 4/arena
+                local exemptLos = isPillar or isGoldSpecial or (isWitch and (dStep == 3 or inWitchLair)) or (isBoss and (dStep >= 4 or inBossArena))
                 if not exemptLos and not hasDungeonLineOfSight(hrp.Position, mPart.Position) then
                     score = score - 60000
                 end
@@ -1447,6 +1455,7 @@ local function advanceDungeonPath()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not canScriptMoveOrWarp() or not Config.AutoDungeon or not hrp or not hum or hum.Health <= 0 or isDungeonDowned() then return end
+    if Config.SelectedDungeon == "gold" or workspace:FindFirstChild("GoldDungeon") then return end
 
     local pPos = hrp.Position
 
@@ -2733,49 +2742,52 @@ local function executeDungeonEnterRoutine(isManual)
     task.wait(0.6)
 
     -- 5.1 Keys & Free Runs Check (Right at the Gate where server allows buy)
-    local keys = getDungeonKeys()
-    local silver = getPlayerSilver()
-    if keys <= 0 and Config.AutoBuyDungeonKey then
-        if silver >= 500000 then
-            if WindUI and WindUI.Notify then
-                WindUI:Notify({
-                    Title = "Auto Buy Key 🗝️",
-                    Content = "กำลังซื้อกุญแจดันเจี้ยนที่ประตู (500,000 Silver)...",
-                    Duration = 2.5,
-                    Icon = "key"
-                })
-            end
-            pcall(function()
-                if DungeonAction then
-                    DungeonAction:FireServer("selectBuyKey")
+    local isGoldDungeon = (Config.SelectedDungeon == "gold")
+    if not isGoldDungeon then
+        local keys = getDungeonKeys()
+        local silver = getPlayerSilver()
+        if keys <= 0 and Config.AutoBuyDungeonKey then
+            if silver >= 500000 then
+                if WindUI and WindUI.Notify then
+                    WindUI:Notify({
+                        Title = "Auto Buy Key 🗝️",
+                        Content = "กำลังซื้อกุญแจดันเจี้ยนที่ประตู (500,000 Silver)...",
+                        Duration = 2.5,
+                        Icon = "key"
+                    })
                 end
-            end)
-            task.wait(1.0)
-            keys = getDungeonKeys()
-            if keys <= 0 then
-                -- Fallback via UI button click
-                local gui = LocalPlayer.PlayerGui:FindFirstChild("HuntDungeonSelect")
-                local buyBtn = gui and gui:FindFirstChild("BuyKey", true)
-                if buyBtn and getconnections then
-                    for _, conn in ipairs(getconnections(buyBtn.MouseButton1Click)) do
-                        pcall(function() conn:Fire() end)
+                pcall(function()
+                    if DungeonAction then
+                        DungeonAction:FireServer("selectBuyKey")
                     end
-                end
+                end)
                 task.wait(1.0)
                 keys = getDungeonKeys()
+                if keys <= 0 then
+                    -- Fallback via UI button click
+                    local gui = LocalPlayer.PlayerGui:FindFirstChild("HuntDungeonSelect")
+                    local buyBtn = gui and gui:FindFirstChild("BuyKey", true)
+                    if buyBtn and getconnections then
+                        for _, conn in ipairs(getconnections(buyBtn.MouseButton1Click)) do
+                            pcall(function() conn:Fire() end)
+                        end
+                    end
+                    task.wait(1.0)
+                    keys = getDungeonKeys()
+                end
+            else
+                if WindUI and WindUI.Notify then
+                    WindUI:Notify({
+                        Title = "Out of Silver & Keys ⚠️",
+                        Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500,000 Silver)",
+                        Duration = 3,
+                        Icon = "alert-triangle"
+                    })
+                end
+                isEnteringDungeon = false
+                isWaitingForParty = false
+                return
             end
-        else
-            if WindUI and WindUI.Notify then
-                WindUI:Notify({
-                    Title = "Out of Silver & Keys ⚠️",
-                    Content = "Silver ไม่พอซื้อกุญแจ (ต้องการ 500,000 Silver)",
-                    Duration = 3,
-                    Icon = "alert-triangle"
-                })
-            end
-            isEnteringDungeon = false
-            isWaitingForParty = false
-            return
         end
     end
 
@@ -7088,10 +7100,14 @@ DungeonTab:Button({
 
 DungeonTab:Dropdown({
     Title = "Select Dungeon (เลือกดันเจี้ยน)",
-    Values = { "Skull King's Crypt (Lv.90+)" },
-    Value = "Skull King's Crypt (Lv.90+)",
+    Values = { "🎃 Skull King's Crypt (Lv.90+)", "💰 Gold Dungeon (Lv.90+ · ไม่ใช้กุญแจ)" },
+    Value = (Config.SelectedDungeon == "gold") and "💰 Gold Dungeon (Lv.90+ · ไม่ใช้กุญแจ)" or "🎃 Skull King's Crypt (Lv.90+)",
     Callback = function(selected)
-        Config.SelectedDungeon = "halloween"
+        if selected:find("Gold") or selected:find("💰") then
+            Config.SelectedDungeon = "gold"
+        else
+            Config.SelectedDungeon = "halloween"
+        end
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
