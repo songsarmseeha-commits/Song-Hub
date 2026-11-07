@@ -993,6 +993,13 @@ task.spawn(function()
                 end
             end
         end
+
+        -- Fallback to remote loader if local file not found
+        local ok, res = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau")
+        if ok and res and #res > 500 then
+            local fn = loadstring(res)
+            if fn then return fn() end
+        end
     end
 end)]=]
 end
