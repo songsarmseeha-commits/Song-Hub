@@ -1483,142 +1483,102 @@ end
 
 local autoUseTowerCheckpoint = true
 
-local function clickTowerGuiButton(actionType)
-    -- actionType: "checkpoint" or "forfeit"
-    local clicked = false
-    pcall(function()
-        local lp = game:GetService("Players").LocalPlayer
-        if not lp or not lp:FindFirstChild("PlayerGui") then return end
+local function getTowerScreenGui()
+    local lp = game:GetService("Players").LocalPlayer
+    local pg = lp and lp:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local fs = pg:FindFirstChild("FusionScreens")
+    local s = pg:FindFirstChild("Screens")
+    return (fs and fs:FindFirstChild("Tower")) or (s and s:FindFirstChild("Tower"))
+end
 
-        local targetKeywords = {}
-        if actionType == "checkpoint" then
-            targetKeywords = {"use checkpoint", "checkpoint", "continue"}
-        elseif actionType == "battle" or actionType == "start" then
-            targetKeywords = {"battle", "start", "use checkpoint", "checkpoint", "continue"}
-        elseif actionType == "forfeit" then
-            targetKeywords = {"forfeit", "surrender", "give up"}
-        else
-            targetKeywords = {tostring(actionType):lower()}
-        end
-
-        local function triggerGuiElement(el)
-            if not el then return false end
-            local fired = false
-            pcall(function()
-                -- 1. getconnections on all common click/touch events
-                if getconnections then
-                    for _, ev in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "TouchTap", "InputBegan"}) do
-                        if el[ev] then
-                            for _, c in ipairs(getconnections(el[ev])) do
-                                pcall(function() c:Fire() end)
-                                fired = true
-                            end
-                        end
-                    end
+local function clickTowerStartButton()
+    local towerGui = getTowerScreenGui()
+    if not towerGui then return false end
+    local startBtn = towerGui:FindFirstChild("Start", true)
+    if startBtn and startBtn:IsA("GuiButton") then
+        local fired = false
+        pcall(function()
+            if getconnections then
+                for _, c in ipairs(getconnections(startBtn.Activated)) do
+                    c:Fire()
+                    fired = true
                 end
-                -- 2. firesignal
-                if firesignal then
-                    for _, ev in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "TouchTap"}) do
-                        if el[ev] then
-                            pcall(function() firesignal(el[ev]) fired = true end)
-                        end
-                    end
-                end
-                -- 3. VirtualInputManager for desktop
-                pcall(function()
-                    local vim = game:GetService("VirtualInputManager")
-                    if vim and el.AbsolutePosition and el.AbsoluteSize then
-                        local pos = el.AbsolutePosition
-                        local sz = el.AbsoluteSize
-                        vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
-                        task.wait(0.04)
-                        vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
-                        fired = true
-                    end
-                end)
-            end)
-            return fired
-        end
-
-        -- Search PlayerGui
-        for _, desc in ipairs(lp.PlayerGui:GetDescendants()) do
-            if desc:IsA("GuiObject") then
-                local text = (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text or ""
-                local name = desc.Name:lower()
-                local lowerText = text:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-
-                for _, kw in ipairs(targetKeywords) do
-                    local isMatch = false
-                    if lowerText:find(kw, 1, true) or name:find(kw, 1, true) then
-                        isMatch = true
-                    end
-
-                    if isMatch then
-                        -- Found match! Trigger the element, its parent, and ancestor button
-                        triggerGuiElement(desc)
-                        if desc.Parent and desc.Parent:IsA("GuiObject") then
-                            triggerGuiElement(desc.Parent)
-                        end
-                        local ancestorBtn = desc:FindFirstAncestorWhichIsA("GuiButton")
-                        if ancestorBtn then
-                            triggerGuiElement(ancestorBtn)
-                        end
-                        clicked = true
-                        return
-                    end
+                for _, c in ipairs(getconnections(startBtn.MouseButton1Click)) do
+                    c:Fire()
+                    fired = true
                 end
             end
+        end)
+        if not fired and firesignal then
+            pcall(function() firesignal(startBtn.Activated) fired = true end)
         end
-    end)
-    return clicked
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            local pos = startBtn.AbsolutePosition
+            local sz = startBtn.AbsoluteSize
+            vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
+            task.wait(0.04)
+            vim:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
+            fired = true
+        end)
+        return fired
+    end
+    return false
+end
+
+local function clickTowerForfeitButton()
+    local towerGui = getTowerScreenGui()
+    if not towerGui then return false end
+    local forfeitBtn = towerGui:FindFirstChild("Forfeit", true)
+    if forfeitBtn and forfeitBtn:IsA("GuiButton") then
+        local fired = false
+        pcall(function()
+            if getconnections then
+                for _, c in ipairs(getconnections(forfeitBtn.Activated)) do
+                    c:Fire()
+                    fired = true
+                end
+                for _, c in ipairs(getconnections(forfeitBtn.MouseButton1Click)) do
+                    c:Fire()
+                    fired = true
+                end
+            end
+        end)
+        if not fired and firesignal then
+            pcall(function() firesignal(forfeitBtn.Activated) fired = true end)
+        end
+        return fired
+    end
+    return false
 end
 
 local function clickUseCheckpointGui()
-    return clickTowerGuiButton("checkpoint")
+    return clickTowerStartButton()
 end
 
 local function startTowerBattle()
-    -- Check live player data for active checkpoint
-    local data = LocalPlayer:FindFirstChild("Data")
-    local towerFolder = data and data:FindFirstChild("Tower")
-    local activeVal = towerFolder and towerFolder:FindFirstChild("Active")
-    local isActive = (activeVal and activeVal.Value == true)
-    local streakVal = towerFolder and towerFolder:FindFirstChild("Streak")
-    local currentStreak = (streakVal and streakVal.Value) or 0
-    local checkpointVal = towerFolder and towerFolder:FindFirstChild("Checkpoint")
-    local currentCheckpoint = (checkpointVal and checkpointVal.Value) or 0
-
-    local isResume = (isActive or currentStreak > 0 or currentCheckpoint > 0)
-    local targetFloor = (currentCheckpoint > 0 and currentCheckpoint) or towerCurrentFloor or selectedTowerFloor or 1
-
-    -- 1. If Use Checkpoint button is visible on screen, click it directly!
-    local clickedGui = clickTowerGuiButton("checkpoint")
-    if clickedGui then
-        WindUI:Notify({
-            Title = "Battle Tower 🟢",
-            Content = string.format("กด Use Checkpoint (ชั้น %d) ลุยต่อทันที!", targetFloor),
-            Duration = 3.5,
-            Icon = "play"
-        })
-        return true
-    end
-
-    -- 2. If Tower Screen is not currently open, attempt to open it
-    pcall(function()
-        local ifc = ReplicatedStorage:FindFirstChild("Master")
-            and ReplicatedStorage.Master:FindFirstChild("Modules")
-            and ReplicatedStorage.Master.Modules:FindFirstChild("Interface_Client")
-        if ifc then
-            local ok, ifcMod = pcall(require, ifc)
-            if ok and type(ifcMod) == "table" then
-                if type(ifcMod.Open) == "function" then
-                    ifcMod:Open("Tower")
-                elseif type(ifcMod.SetScreen) == "function" then
-                    ifcMod:SetScreen("Tower")
+    -- 1. Ensure Tower screen is open
+    local towerGui = getTowerScreenGui()
+    if not towerGui or not towerGui.Visible then
+        pcall(function()
+            local ifc = require(ReplicatedStorage.Master.Modules.Interface_Client)
+            if ifc then
+                if type(ifc.Open) == "function" then
+                    ifc:Open("Tower")
+                elseif type(ifc.SetScreen) == "function" then
+                    ifc:SetScreen("Tower")
                 end
             end
-        end
-    end)
+        end)
+        task.wait(0.3)
+        towerGui = getTowerScreenGui()
+    end
+
+    -- 2. Click the Start / Continue button on the Tower Screen
+    if towerGui then
+        clickTowerStartButton()
+    end
 
     -- 3. Auto equip specified team for Tower
     if towerTeam and towerTeam ~= "Equipped Team" then
@@ -1633,78 +1593,55 @@ local function startTowerBattle()
     end
 
     local teamList = getTowerTeamList()
+    local targetFloor = towerCurrentFloor or selectedTowerFloor or 1
 
-    -- 4. Try clicking Start / Battle / Use Checkpoint in case screen is open
-    task.wait(0.2)
-    clickedGui = clickTowerGuiButton("checkpoint") or clickTowerGuiButton("battle") or clickTowerGuiButton("start")
-    if clickedGui then
-        WindUI:Notify({
-            Title = "Battle Tower 🟢",
-            Content = string.format("กดปุ่มเริ่มเล่น Tower (ชั้น %d) เรียบร้อย!", targetFloor),
-            Duration = 3.5,
-            Icon = "play"
-        })
-        return true
-    end
-
-    -- 5. Native Screen Controller Invocation
+    -- 4. Invoke native controller
     pcall(function()
         local towerScreen = require(ReplicatedStorage.Master.Modules.UI_Client.Screens.Tower)
         if towerScreen then
             if type(towerScreen.OnBattle) == "function" then
                 towerScreen.OnBattle()
             end
-            if currentCheckpoint > 0 and type(towerScreen.OnUseCheckpoint) == "function" then
-                towerScreen.OnUseCheckpoint()
-            elseif type(towerScreen.UseCheckpoint) == "function" then
-                towerScreen.UseCheckpoint()
-            elseif type(towerScreen.OnCheckpoint) == "function" then
-                towerScreen.OnCheckpoint()
-            elseif isResume and type(towerScreen.OnContinue) == "function" then
+            if type(towerScreen.OnContinue) == "function" then
                 towerScreen.OnContinue()
-            elseif type(towerScreen.OnStart) == "function" then
-                towerScreen.OnStart({ Floor = targetFloor, Team = teamList, Checkpoint = (currentCheckpoint > 0) })
+            end
+            if type(towerScreen.OnStart) == "function" then
+                towerScreen.OnStart({ Floor = targetFloor, Team = teamList })
             end
         end
     end)
 
-    -- 6. Official Network_Client Publish with all supported action variants
+    -- 5. Official Network_Client Publish with all supported action variants
     pcall(function()
         local net = require(ReplicatedStorage.Master.Modules.Network_Client)
         if net and net.Publish then
-            if currentCheckpoint > 0 and autoUseTowerCheckpoint then
-                net.Publish(net, "Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
-                net.Publish(net, "Tower", { Action = "UseCheckpoint" })
-            end
-            net.Publish(net, "Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
             net.Publish(net, "Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
             net.Publish(net, "Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
-            net.Publish(net, "Tower", "Battle")
+            net.Publish(net, "Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
             net.Publish(net, "Tower", "Start")
+            net.Publish(net, "Tower", "Battle")
         end
     end)
 
-    -- 7. Direct RemoteService Handler Fallback
-    if currentCheckpoint > 0 and autoUseTowerCheckpoint then
-        publishRemote("Tower", { Action = "UseCheckpoint", Floor = targetFloor, Team = teamList })
-        publishRemote("Tower", { Action = "UseCheckpoint" })
-    end
-    publishRemote("Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
+    -- 6. Direct RemoteService Handler Fallback
     publishRemote("Tower", { Action = "Start", Floor = targetFloor, Team = teamList })
     publishRemote("Tower", { Action = "Continue", Floor = targetFloor, Team = teamList })
-    publishRemote("Tower", "Battle")
+    publishRemote("Tower", { Action = "Battle", Floor = targetFloor, Team = teamList })
     publishRemote("Tower", "Start")
+    publishRemote("Tower", "Battle")
 
-    local notifMsg = (currentCheckpoint > 0)
-        and ("🟢 ใช้ Checkpoint (ชั้น " .. tostring(currentCheckpoint) .. ") ลุยหอคอยต่อทันที!")
-        or ("🚀 ส่งคำสั่งเริ่มเล่น Tower (ชั้น " .. tostring(targetFloor) .. ") เรียบร้อย!")
-    WindUI:Notify({ Title = "Tower Climb", Content = notifMsg, Duration = 3.5, Icon = "castle" })
+    WindUI:Notify({
+        Title = "Battle Tower 🟢",
+        Content = string.format("ส่งคำสั่งเริ่มเล่น Tower (ชั้น %d) เรียบร้อย!", targetFloor),
+        Duration = 3,
+        Icon = "play"
+    })
     return true
 end
 
 local function forfeitTower()
     -- 1. Click on-screen "Forfeit" button if Tower screen is open
-    clickTowerGuiButton("forfeit")
+    clickTowerForfeitButton()
 
     -- 2. Call native controller if available
     pcall(function()
