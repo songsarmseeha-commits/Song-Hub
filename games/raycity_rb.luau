@@ -262,6 +262,9 @@ local function driveCarStep(targetPos, speedKmh, isAir)
             rcd.phys.handbrake = false
             if isAir then
                 rcd.phys.airMode = true
+            else
+                rcd.phys.airMode = false
+                rcd.phys.anyContact = true
             end
             rcd.phys.v = stepVel / 2
             local nativePos = currentPos / 2
@@ -734,18 +737,20 @@ task.spawn(function()
                     local dist = (root.Position - destPos).Magnitude
 
                     if destType == "checkpoint" then
-                        -- Checkpoint Gate: Must pass through at speed (> 100 km/h) to trigger
+                        -- Checkpoint Gate: Must pass through at speed (> 100 km/h) on road to trigger
                         if dist > 20 then
                             if Config.QuestDriveMode == "Instant Warp" then
                                 local forward = (destPos - root.Position).Unit
                                 teleportCarWithVelocity(CFrame.lookAt(destPos - forward * 8, destPos), forward * 60)
-                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" then
+                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 75 then
+                                -- Glide in air while far away
                                 driveCarStep(destPos + Vector3.new(0, 4, 0), Config.QuestDriveSpeed, true)
                             else
-                                driveCarStep(destPos, Config.QuestDriveSpeed, false)
+                                -- Within 75 studs: drive normally on the road surface
+                                driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
                             end
                         else
-                            -- Pass smoothly through the gate
+                            -- Pass smoothly through the gate on road level
                             driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
                             task.wait(0.03)
                         end
@@ -769,7 +774,8 @@ task.spawn(function()
                         end
 
                         if dist > 14 then
-                            if Config.QuestDriveMode == "Hyper Sonic Glide" then
+                            if Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 75 then
+                                -- Glide in air for speed while far away (> 75 studs)
                                 driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
                             elseif Config.QuestDriveMode == "Realistic Road Drive" then
                                 local nextWp = nil
@@ -784,7 +790,8 @@ task.spawn(function()
                                 end
                                 driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
                             else
-                                driveCarStep(destPos, Config.QuestDriveSpeed, false)
+                                -- Within 75 studs of destination: Drive normally on the road without flying!
+                                driveCarStep(destPos, math.min(120, Config.QuestDriveSpeed), false)
                             end
                         else
                             -- ==========================================================
@@ -899,10 +906,11 @@ task.spawn(function()
                             end
 
                             if targetDist > 14 then
-                                if Config.QuestDriveMode == "Hyper Sonic Glide" then
+                                if Config.QuestDriveMode == "Hyper Sonic Glide" and targetDist > 75 then
                                     driveCarStep(targetNpc.Position + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
                                 else
-                                    driveCarStep(targetNpc.Position, Config.QuestDriveSpeed, false)
+                                    -- Within 75 studs: Drive on road at ground level
+                                    driveCarStep(targetNpc.Position, math.min(120, Config.QuestDriveSpeed), false)
                                 end
                             else
                                 -- Arrived at NPC: Stop car and interact to accept quest!
