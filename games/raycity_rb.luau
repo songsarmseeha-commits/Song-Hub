@@ -307,8 +307,8 @@ end
 local Config = {
     -- Autonomous Quest Farming
     AutoFarmQuests = false,
-    QuestDriveMode = "Instant Warp", -- "Instant Warp" | "Hyper Sonic Glide" | "Realistic Road Drive" | "Hybrid Cruise"
-    QuestDriveSpeed = 500, -- km/h
+    QuestDriveMode = "Realistic Road Drive", -- "Realistic Road Drive" | "Instant Warp" | "Hyper Sonic Glide" | "Hybrid Cruise"
+    QuestDriveSpeed = 260, -- km/h
     AutoSkipDialogue = true,
     AutoAcceptQuest = true,
     AutoClaimRewards = true,
@@ -661,25 +661,40 @@ local function getActiveMissionTarget()
 end
 
 local function getActiveQuestDestination()
+    local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
+    local navPoints = nil
+    if okNav and nav and nav.getGuideLine then
+        local okGl, gl = pcall(nav.getGuideLine)
+        if okGl and gl and gl.points and #gl.points > 0 then
+            navPoints = gl.points
+        end
+    end
+
     -- Priority 1: Live Active Taxi/Driving Mission checkpoints from RBRCQuestClient
     local mTarget, mObj, mState = getActiveMissionTarget()
     if mTarget then
-        return mTarget, nil, nil, "checkpoint", mState
+        if not navPoints and okNav and nav and nav.pointTo then
+            pcall(nav.pointTo, mTarget)
+            local okGl2, gl2 = pcall(nav.getGuideLine)
+            if okGl2 and gl2 and gl2.points and #gl2.points > 0 then
+                navPoints = gl2.points
+            end
+        end
+        return mTarget, nil, navPoints, "checkpoint", mState
     end
 
     -- Priority 2: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
-    local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
     if okNav and nav then
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
             if okGl and gl and gl.target then
-                return gl.target, nil, gl.points, "guideline", nil
+                return gl.target, nil, gl.points or navPoints, "guideline", nil
             end
         end
         if nav.getGuide then
             local okG, g = pcall(nav.getGuide)
             if okG and g and g.destRoblox then
-                return g.destRoblox, nil, nil, "guide", nil
+                return g.destRoblox, nil, navPoints, "guide", nil
             end
         end
     end
@@ -729,7 +744,14 @@ local function getActiveQuestDestination()
     if targetNpcModel then
         local p = targetNpcModel.PrimaryPart or targetNpcModel:FindFirstChild("Root") or targetNpcModel:FindFirstChildWhichIsA("BasePart")
         if p then
-            return p.Position, targetNpcModel, nil, "npc", nil
+            if not navPoints and okNav and nav and nav.pointTo then
+                pcall(nav.pointTo, p.Position)
+                local okGl2, gl2 = pcall(nav.getGuideLine)
+                if okGl2 and gl2 and gl2.points and #gl2.points > 0 then
+                    navPoints = gl2.points
+                end
+            end
+            return p.Position, targetNpcModel, navPoints, "npc", nil
         end
     end
 
@@ -739,7 +761,7 @@ local function getActiveQuestDestination()
         for _, m in ipairs(qMarkers:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
             if p then
-                return p.Position, p, nil, "marker", nil
+                return p.Position, p, navPoints, "marker", nil
             end
         end
     end
@@ -789,68 +811,53 @@ task.spawn(function()
 
                 if destPos then
                     -- ==========================================================
-                    -- A. QUEST IN PROGRESS: REACH DESTINATION AT LIGHTNING SPEED
+                    -- A. QUEST IN PROGRESS: STRICT ROAD DRIVING (NO NOCLIP THROUGH BUILDINGS)
                     -- ==========================================================
                     questFarmState = "DRIVING"
                     local dist = (root.Position - destPos).Magnitude
 
-                    if destType == "checkpoint" then
-                        -- Checkpoint Gate: Must pass through at speed (> 100 km/h) on road to trigger
-                        if dist > 20 then
-                            if Config.QuestDriveMode == "Instant Warp" then
-                                local forward = (destPos - root.Position).Unit
-                                teleportCarWithVelocity(CFrame.lookAt(destPos - forward * 8, destPos), forward * 60)
-                            elseif Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 150 then
-                                -- Glide in air while far away (> 150 studs)
-                                driveCarStep(destPos + Vector3.new(0, 4, 0), Config.QuestDriveSpeed, true)
-                            else
-                                -- Before reaching checkpoint (<= 150 studs): Drive normally on the road!
-                                driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
+                    -- Compute road waypoint along the green arrow path
+                    local targetWp = destPos
+                    if points and #points > 0 then
+                        local closestIdx = 1
+                        local closestDist = math.huge
+                        local carPos = root.Position
+                        for i = 1, #points do
+                            local d = (points[i] - carPos).Magnitude
+                            if d < closestDist then
+                                closestDist = d
+                                closestIdx = i
                             end
+                        end
+
+                        if closestDist > 65 then
+                            -- Car was pushed off: return to closest road waypoint first
+                            targetWp = points[closestIdx]
                         else
-                            -- Pass smoothly through the gate on road level
+                            -- Lookahead along the road path by 25 to 35 studs for smooth cornering
+                            targetWp = points[#points]
+                            for i = closestIdx, #points do
+                                if (points[i] - carPos).Magnitude >= 28 then
+                                    targetWp = points[i]
+                                    break
+                                end
+                            end
+                        end
+                    end
+
+                    if destType == "checkpoint" then
+                        -- Checkpoint Gate: Drive strictly on the road and pass smoothly through the gate
+                        if dist > 18 then
+                            driveCarStep(targetWp, math.max(120, Config.QuestDriveSpeed), false)
+                        else
                             driveCarStep(destPos, math.max(120, Config.QuestDriveSpeed), false)
-                            task.wait(0.03)
+                            task.wait(0.02)
                         end
                     else
                         -- Standard NPC or Delivery Destination
-                        if Config.QuestDriveMode == "Instant Warp" then
-                            if points and #points > 0 and dist > 25 then
-                                local step = math.max(1, math.floor(#points / 15))
-                                for i = 1, #points, step do
-                                    local pt = points[i]
-                                    local lookNext = points[i + step] or destPos
-                                    local dir = (lookNext - pt)
-                                    local vel = dir.Magnitude > 0.1 and (dir.Unit * 60) or Vector3.new(0, 0, -60)
-                                    local targetCF = CFrame.lookAt(pt + Vector3.new(0, 1.5, 0), lookNext + Vector3.new(0, 1.5, 0))
-                                    teleportCarWithVelocity(targetCF, vel)
-                                    task.wait(0.015)
-                                end
-                            end
-                            driveCarStep(destPos, 0, false)
-                            dist = 0
-                        end
-
                         if dist > 14 then
-                            if Config.QuestDriveMode == "Hyper Sonic Glide" and dist > 150 then
-                                -- Glide in air for speed while far away (> 150 studs)
-                                driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
-                            elseif Config.QuestDriveMode == "Realistic Road Drive" then
-                                local nextWp = nil
-                                if points and #points > 0 then
-                                    for i = 1, #points do
-                                        local pDist = (points[i] - root.Position).Magnitude
-                                        if pDist > 10 and (points[i] - root.Position):Dot(destPos - root.Position) > -5 then
-                                            nextWp = points[i]
-                                            break
-                                        end
-                                    end
-                                end
-                                driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
-                            else
-                                -- Before reaching destination (<= 150 studs): Drive normally on the road without flying!
-                                driveCarStep(destPos, math.min(130, Config.QuestDriveSpeed), false)
-                            end
+                            -- Strictly follow the road on tarmac (never fly, never cut through buildings)
+                            driveCarStep(targetWp, Config.QuestDriveSpeed, false)
                         else
                             -- ==========================================================
                             -- B. ARRIVED AT OBJECTIVE ON THE ROAD: COMPLETE & CLAIM
@@ -961,25 +968,54 @@ task.spawn(function()
                         end
 
                         if targetNpc then
-                            if Config.QuestDriveMode == "Instant Warp" then
-                                teleportCar(CFrame.lookAt(targetNpc.Position + Vector3.new(0, 1.5, 4), targetNpc.Position))
-                                targetDist = 4
+                            local nPos = targetNpc.Position
+                            -- Route along road to NPC using Navigation
+                            local npcPoints = nil
+                            local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
+                            if okNav and nav and nav.pointTo then
+                                pcall(nav.pointTo, nPos)
+                                local okGl, gl = pcall(nav.getGuideLine)
+                                if okGl and gl and gl.points and #gl.points > 0 then
+                                    npcPoints = gl.points
+                                end
+                            end
+
+                            local targetWp = nPos
+                            if npcPoints and #npcPoints > 0 then
+                                local cIdx = 1
+                                local cMin = math.huge
+                                local cPos = root.Position
+                                for i = 1, #npcPoints do
+                                    local d = (npcPoints[i] - cPos).Magnitude
+                                    if d < cMin then
+                                        cMin = d
+                                        cIdx = i
+                                    end
+                                end
+                                targetWp = npcPoints[#npcPoints]
+                                for i = cIdx, #npcPoints do
+                                    if (npcPoints[i] - cPos).Magnitude >= 25 then
+                                        targetWp = npcPoints[i]
+                                        break
+                                    end
+                                end
                             end
 
                             if targetDist > 14 then
-                                if Config.QuestDriveMode == "Hyper Sonic Glide" and targetDist > 75 then
-                                    driveCarStep(targetNpc.Position + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
-                                else
-                                    -- Within 75 studs: Drive on road at ground level
-                                    driveCarStep(targetNpc.Position, math.min(120, Config.QuestDriveSpeed), false)
-                                end
+                                -- Drive strictly on road towards NPC, never fly, never clip through buildings
+                                driveCarStep(targetWp, math.min(180, Config.QuestDriveSpeed), false)
                             else
-                                -- Arrived at NPC: Stop car and interact to accept quest!
-                                teleportCar(CFrame.lookAt(targetNpc.Position + Vector3.new(0, 1.5, 4), targetNpc.Position))
+                                -- Arrived at NPC on road: Stop car and interact
+                                driveCarStep(nPos, 0, false)
                                 if rcd and rcd.phys then
                                     rcd.phys.v = Vector3.zero
+                                    rcd.phys.throttle = 0
+                                    rcd.phys.brake = 1
+                                    rcd.phys.airMode = false
+                                    rcd.phys.anyContact = true
                                 end
                                 root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
 
                                 pressReturnKey()
                                 task.wait(0.25)
@@ -1330,8 +1366,8 @@ TabQuest:Toggle({
 
 TabQuest:Dropdown({
     Title = "⚡ Speed & Travel Mode (รูปแบบการเดินทางทำเควส)",
-    Desc = "เลือกรูปแบบการเดินทางไปส่งของ: Instant Warp (วาร์ปทันที 0 วิ - ไวสุดในเกม), Hyper Sonic Glide (เหาะทะยานความเร็วสูง 500-800 km/h), Realistic Road Drive (ขับตามถนน)",
-    Values = { "Instant Warp", "Hyper Sonic Glide", "Realistic Road Drive", "Hybrid Cruise" },
+    Desc = "เลือกรูปแบบการเดินทาง: Realistic Road Drive (ขับตามลูกศรบนถนน 100% ไม่บิน ไม่ทะลุตึก - แนะนำ), Hyper Sonic Glide, Instant Warp",
+    Values = { "Realistic Road Drive", "Instant Warp", "Hyper Sonic Glide", "Hybrid Cruise" },
     Value = Config.QuestDriveMode,
     Callback = function(val)
         Config.QuestDriveMode = val
@@ -1340,8 +1376,8 @@ TabQuest:Dropdown({
 
 TabQuest:Slider({
     Title = "⚡ Auto Driving Speed (ความเร็วขับส่งของ km/h)",
-    Desc = "ปรับความเร็วที่บอทใช้เหาะและขับไปส่งของ",
-    Value = { Min = 100, Max = 800, Default = Config.QuestDriveSpeed },
+    Desc = "ปรับความเร็วที่บอทใช้ขับตามถนนไปส่งของ (แนะนำ 200 - 320 km/h)",
+    Value = { Min = 100, Max = 500, Default = Config.QuestDriveSpeed },
     Callback = function(val)
         Config.QuestDriveSpeed = val
     end
