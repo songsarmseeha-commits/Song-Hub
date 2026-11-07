@@ -33,6 +33,16 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+-- Game & Universe ID Safety Guard
+local currentPlaceId = game.PlaceId
+local currentUniverseId = game.GameId
+local isRaycityGame = (currentUniverseId == 10772794231 or currentPlaceId == 117419079466193 or game:GetService("ReplicatedStorage"):FindFirstChild("RCDrive") or workspace:FindFirstChild("MyCar"))
+
+if not isRaycityGame then
+    warn("[Raycity Hub] ❌ Wrong Game! Target is Raycity RB only. Current PlaceId: " .. tostring(currentPlaceId) .. ", GameId: " .. tostring(currentUniverseId))
+    return
+end
+
 -- Global Execution Guard
 if _G.RaycityHubLoaded then
     warn("[Raycity Hub] Script is already running!")
