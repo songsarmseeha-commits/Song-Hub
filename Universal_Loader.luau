@@ -89,13 +89,23 @@ local KEY_SAVE_PATH = "UniversalHub/saved_key.txt"
 
 -- Safe Executor HWID Fetcher
 local function getHardwareId()
-    if gethwid then return gethwid() end
-    if get_hwid then return get_hwid() end
-    if identifyexecutor then
-        local exec = identifyexecutor()
-        return exec .. "_" .. tostring(LocalPlayer.UserId)
+    local hw = nil
+    pcall(function()
+        if type(gethwid) == "function" then
+            hw = gethwid()
+        elseif type(get_hwid) == "function" then
+            hw = get_hwid()
+        end
+    end)
+    if hw and type(hw) == "string" and #hw > 3 then
+        return hw
     end
-    return "DEVICE_" .. tostring(LocalPlayer.UserId)
+    local exec = "Executor"
+    pcall(function()
+        if identifyexecutor then exec = identifyexecutor() end
+    end)
+    local uId = (LocalPlayer and LocalPlayer.UserId) or (game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.UserId) or 0
+    return exec .. "_" .. tostring(uId)
 end
 
 -- Active Session State & Heartbeat Loop
@@ -485,21 +495,61 @@ task.spawn(function()
     end
 
     -- Step B: Check Locally Saved License Key
-    if isfile and isfile(KEY_SAVE_PATH) then
-        local savedKey = ""
-        pcall(function() savedKey = readfile(KEY_SAVE_PATH) end)
-        if savedKey and #savedKey > 3 then
-            local cleanSaved = savedKey:gsub("%s+", "")
-            local keyOk, keyData = sendVerifyRequest(cleanSaved)
-            if keyOk then
-                verifiedAuthKey = cleanSaved
-                print(string.format("[Universal Hub] 🔑 License Key Active: %s (Type: %s)", savedKey, keyData.keyType or "Active"))
-                if keyData and keyData.sessionToken then
-                    startHeartbeatLoop(keyData.sessionToken, cleanSaved)
+    local keyCandidates = {
+        KEY_SAVE_PATH,
+        "saved_key.txt",
+        "UniversalHub/saved_key.txt",
+        "key.txt"
+    }
+
+    local savedKey = nil
+    for _, kPath in ipairs(keyCandidates) do
+        if isfile and isfile(kPath) then
+            local ok, content = pcall(readfile, kPath)
+            if ok and content and #content > 3 then
+                local clean = content:gsub("%s+", "")
+                if #clean > 3 then
+                    savedKey = clean
+                    break
                 end
-                launchGameScript(scriptFileName, gameTitle)
-                return
             end
+        end
+    end
+
+    if savedKey then
+        -- Load saved session token if available for seamless reconnect
+        local tokenCandidates = { "UniversalHub/saved_session.txt", "saved_session.txt" }
+        for _, tPath in ipairs(tokenCandidates) do
+            if isfile and isfile(tPath) then
+                pcall(function()
+                    local t = readfile(tPath)
+                    if t and #t > 10 then activeSessionToken = t:gsub("%s+", "") end
+                end)
+                if activeSessionToken then break end
+            end
+        end
+
+        local keyOk, keyData = sendVerifyRequest(savedKey)
+        -- If session limit exceeded on hop or transient response, wait 1.5s and retry once
+        if not keyOk and keyData and (keyData.code == "SESSION_LIMIT_EXCEEDED" or not keyData.code) then
+            task.wait(1.5)
+            keyOk, keyData = sendVerifyRequest(savedKey)
+        end
+
+        if keyOk then
+            verifiedAuthKey = savedKey
+            print(string.format("[Universal Hub] 🔑 License Key Active: %s (Type: %s)", savedKey, keyData.keyType or "Active"))
+            if keyData and keyData.sessionToken then
+                activeSessionToken = keyData.sessionToken
+                pcall(function()
+                    if not isfolder("UniversalHub") then makefolder("UniversalHub") end
+                    writefile("UniversalHub/saved_session.txt", keyData.sessionToken)
+                end)
+                pcall(function() writefile("saved_session.txt", keyData.sessionToken) end)
+                startHeartbeatLoop(keyData.sessionToken, savedKey)
+            end
+            launchGameScript(scriptFileName, gameTitle)
+            return
         end
     end
 
@@ -617,6 +667,14 @@ task.spawn(function()
             if not isfolder("UniversalHub") then makefolder("UniversalHub") end
             writefile(KEY_SAVE_PATH, validKey)
         end)
+        pcall(function() writefile("saved_key.txt", validKey) end)
+        if resultData and resultData.sessionToken then
+            pcall(function()
+                if not isfolder("UniversalHub") then makefolder("UniversalHub") end
+                writefile("UniversalHub/saved_session.txt", resultData.sessionToken)
+            end)
+            pcall(function() writefile("saved_session.txt", resultData.sessionToken) end)
+        end
 
         WindUI:Notify({
             Title = "Access Granted! ✨",
