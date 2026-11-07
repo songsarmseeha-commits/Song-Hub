@@ -68,7 +68,11 @@ end)
 -- ==============================================================================
 -- 🚗 2. CAR & VEHICLE CONTROLLER (RCDRIVE INTEGRATED PHYSICS ENGINE)
 -- ==============================================================================
+local _cachedRCDrive = nil
 local function getRCDrive()
+    if _cachedRCDrive and _cachedRCDrive.phys then
+        return _cachedRCDrive
+    end
     local rcd = nil
     pcall(function()
         if getrenv then
@@ -78,6 +82,15 @@ local function getRCDrive()
             end
         end
     end)
+    if not rcd and getsenv then
+        pcall(function()
+            local rClient = LocalPlayer.PlayerScripts:FindFirstChild("RCDriveClient")
+            local env = rClient and getsenv(rClient)
+            if env and env.shared and env.shared.RCDrive then
+                rcd = env.shared.RCDrive
+            end
+        end)
+    end
     if not rcd then
         pcall(function()
             if rawget(shared, "RCDrive") then
@@ -91,6 +104,9 @@ local function getRCDrive()
                 rcd = rawget(_G, "RCDrive")
             end
         end)
+    end
+    if rcd then
+        _cachedRCDrive = rcd
     end
     return rcd
 end
@@ -158,6 +174,48 @@ local function teleportCar(targetCF)
     if root then
         root.CFrame = targetCF
         root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+    local car = getMyCar()
+    if car and car.PrimaryPart then
+        pcall(function()
+            car:PivotTo(targetCF)
+        end)
+    end
+end
+
+local function teleportCarWithVelocity(targetCF, vel)
+    if typeof(targetCF) == "Vector3" then
+        targetCF = CFrame.new(targetCF + Vector3.new(0, 1.5, 0))
+    end
+    if not targetCF then return end
+
+    local rcd = getRCDrive()
+    if rcd then
+        if type(rcd.teleport) == "function" then
+            pcall(function()
+                rcd.teleport(targetCF)
+            end)
+        end
+        if type(rcd.phys) == "table" then
+            pcall(function()
+                rcd.phys.cf = targetCF
+                rcd.phys.p = targetCF.Position
+                if vel then
+                    rcd.phys.v = vel
+                    rcd.phys.throttle = 1
+                    rcd.phys.boosting = true
+                else
+                    rcd.phys.v = Vector3.zero
+                end
+            end)
+        end
+    end
+
+    local root = getCarRoot()
+    if root then
+        root.CFrame = targetCF
+        root.AssemblyLinearVelocity = vel or Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
     end
     local car = getMyCar()
@@ -284,6 +342,19 @@ local function pressReturnKey()
             vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
         end
     end)
+    pcall(function()
+        local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
+        local RaycityEscGate = RaycityUi and RaycityUi:FindFirstChild("RaycityEscGate")
+        if RaycityEscGate then
+            require(RaycityEscGate).virtualEnter()
+        end
+    end)
+    pcall(function()
+        local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
+        if qUi and qUi._dialogEnter then
+            qUi._dialogEnter()
+        end
+    end)
 end
 
 local function fireGuiClick(btn)
@@ -299,19 +370,27 @@ local function fireGuiClick(btn)
             for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
             for _, c in ipairs(getconnections(btn.MouseButton1Up)) do c:Fire() end
         end
+        local vim = game:GetService("VirtualInputManager")
+        if vim and btn:IsA("GuiObject") and btn.Visible then
+            local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+            task.wait(0.02)
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+        end
     end)
 end
 
 task.spawn(function()
     while true do
-        task.wait(0.05)
+        task.wait(0.08)
         if Config.AutoFarmQuests or Config.AutoSkipDialogue or Config.AutoAcceptQuest then
             pcall(function()
                 local qUi = nil
                 pcall(function() qUi = require(ReplicatedStorage.RBRCQuest.QuestUI) end)
-                local qGui = LocalPlayer.PlayerGui:FindFirstChild("RaycityQuestUi")
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                local qGui = pg and pg:FindFirstChild("RaycityQuestUi")
 
-                if qGui then
+                if qGui and qGui.Enabled then
                     -- 1. Advance NPC Dialogue (NpcDialog)
                     local npcDialog = qGui:FindFirstChild("NpcDialog", true)
                     if npcDialog and npcDialog.Visible then
@@ -320,29 +399,20 @@ task.spawn(function()
                             fireGuiClick(nextBtn)
                         end
                         if qUi and qUi._dialogEnter then
-                            pcall(function() qUi._dialogEnter() end)
+                            pcall(qUi._dialogEnter)
                         end
                         pressReturnKey()
                     end
 
                     -- 2. Auto Accept Quest Offer (MissionOffer)
                     local missionOffer = qGui:FindFirstChild("MissionOffer", true)
-                    if missionOffer then
+                    if missionOffer and missionOffer.Visible then
                         local yesBtn = missionOffer:FindFirstChild("Yes", true)
                         if yesBtn then
                             fireGuiClick(yesBtn)
                         end
-                        -- Scan for buttons with Thai text or positive confirmation
-                        for _, d in ipairs(missionOffer:GetDescendants()) do
-                            if d:IsA("GuiButton") and d.Name ~= "No" and d.Name ~= "Close" then
-                                local label = d:FindFirstChildWhichIsA("TextLabel")
-                                local txt = (d:IsA("TextButton") and d.Text) or (label and label.Text) or ""
-                                if not txt:find("ปฏิเสธ") and not txt:find("ยกเลิก") then
-                                    fireGuiClick(d)
-                                end
-                            end
-                        end
                         if qUi and qUi._offerAnswer then
+                            pcall(function() qUi._offerAnswer(1) end)
                             pcall(function() qUi._offerAnswer(true) end)
                         end
                         pressReturnKey()
@@ -350,24 +420,24 @@ task.spawn(function()
 
                     -- Fallback for generic offer frames
                     local otherOffer = qGui:FindFirstChild("Offer", true) or qGui:FindFirstChild("QuestOffer", true)
-                    if otherOffer and otherOffer ~= missionOffer then
+                    if otherOffer and otherOffer.Visible and otherOffer ~= missionOffer then
                         local acceptBtn = otherOffer:FindFirstChild("Accept", true) or otherOffer:FindFirstChild("Ok", true) or otherOffer:FindFirstChild("Yes", true)
                         if acceptBtn then
                             fireGuiClick(acceptBtn)
                         end
                         if qUi and qUi._offerAnswer then
-                            pcall(function() qUi._offerAnswer(true) end)
+                            pcall(function() qUi._offerAnswer(1) end)
                         end
                         pressReturnKey()
                     end
 
                     -- 3. Auto Close / Claim Result Dialog (MissionResult, Result, QuestResult, Drops)
                     local resultDialog = qGui:FindFirstChild("MissionResult", true) or qGui:FindFirstChild("Result", true) or qGui:FindFirstChild("QuestResult", true) or qGui:FindFirstChild("Drops", true)
-                    if resultDialog then
+                    if resultDialog and resultDialog.Visible then
                         if qUi then
-                            if qUi.hideResult then pcall(function() qUi.hideResult() end) end
-                            if qUi.closeDrops then pcall(function() qUi.closeDrops() end) end
-                            if qUi._dialogEnter then pcall(function() qUi._dialogEnter() end) end
+                            if qUi.hideResult then pcall(qUi.hideResult) end
+                            if qUi.closeDrops then pcall(qUi.closeDrops) end
+                            if qUi._dialogEnter then pcall(qUi._dialogEnter) end
                         end
                         local closeBtn = resultDialog:FindFirstChild("Close", true) or resultDialog:FindFirstChild("Confirm", true) or resultDialog:FindFirstChild("Ok", true)
                         if closeBtn then
@@ -377,11 +447,17 @@ task.spawn(function()
                     end
                 end
 
+                -- Auto respond if RBRCNpcTalkPrompt is visible
+                local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
+                if ntp and ntp.Enabled and Config.AutoFarmQuests then
+                    pressReturnKey()
+                end
+
                 -- Auto confirm AutoDrive popup or generic confirm windows if present
                 for _, g in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
                     if g:IsA("ScreenGui") and (g.Name:lower():find("confirm") or g.Name:lower():find("autodrive")) then
                         local yes = g:FindFirstChild("Yes", true) or g:FindFirstChild("Confirm", true) or g:FindFirstChild("Ok", true)
-                        if yes and yes:IsA("GuiButton") then
+                        if yes and yes:IsA("GuiButton") and yes.Visible then
                             fireGuiClick(yes)
                         end
                     end
@@ -394,6 +470,100 @@ end)
 -- ==============================================================================
 -- 🏁 6. ACTIVE QUEST DESTINATION DETECTOR
 -- ==============================================================================
+local function findQuestTargetNpc(targetName)
+    if not targetName or targetName == "" then return nil end
+    local cleanName = targetName:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
+    if not npcsFolder then return nil end
+
+    local rep = game:GetService("ReplicatedStorage")
+    local npcNames = nil
+    pcall(function() npcNames = require(rep.RBRCQuest.NpcNames) end)
+
+    -- 1. Check exact or partial NPC model name
+    for _, npc in ipairs(npcsFolder:GetChildren()) do
+        if npc.Name:lower():find(cleanName, 1, true) then
+            return npc
+        end
+    end
+
+    -- 2. Resolve via NpcNames module
+    if npcNames then
+        local targetId = nil
+        for id, name in pairs(npcNames.questNpc or {}) do
+            if tostring(name):lower() == cleanName then
+                targetId = tostring(id):match("(%d+)$")
+                break
+            end
+        end
+        if not targetId then
+            for id, name in pairs(npcNames.mission or {}) do
+                if tostring(name):lower() == cleanName then
+                    local num = tostring(id):match(":(%d+)$") or tostring(id):match("(%d+)$")
+                    if num and npcsFolder:FindFirstChild("Npc_" .. num) then
+                        targetId = num
+                        break
+                    elseif not targetId then
+                        targetId = num
+                    end
+                end
+            end
+        end
+        if not targetId then
+            local bestLen = 0
+            for id, name in pairs(npcNames.questNpc or {}) do
+                local n = tostring(name):lower()
+                if cleanName:find(n, 1, true) or n:find(cleanName, 1, true) then
+                    if #n > bestLen then
+                        bestLen = #n
+                        targetId = tostring(id):match("(%d+)$")
+                    end
+                end
+            end
+            for id, name in pairs(npcNames.mission or {}) do
+                local n = tostring(name):lower()
+                if cleanName:find(n, 1, true) or n:find(cleanName, 1, true) then
+                    if #n > bestLen then
+                        bestLen = #n
+                        targetId = tostring(id):match(":(%d+)$") or tostring(id):match("(%d+)$")
+                    end
+                end
+            end
+        end
+
+        if targetId then
+            -- Pass 1: exact number match (e.g. Npc_1 for targetId "1")
+            for _, npc in ipairs(npcsFolder:GetChildren()) do
+                local num = npc.Name:match("(%d+)$")
+                if num == targetId then
+                    return npc
+                end
+            end
+            -- Pass 2: suffix / substring match (e.g. Npc_939900 for targetId "9900")
+            for _, npc in ipairs(npcsFolder:GetChildren()) do
+                local num = npc.Name:match("(%d+)$")
+                if num and (num:sub(-#targetId) == targetId or targetId:sub(-#num) == num) then
+                    return npc
+                end
+            end
+        end
+    end
+
+    -- 3. Check text labels in NPC models
+    for _, npc in ipairs(npcsFolder:GetChildren()) do
+        for _, d in ipairs(npc:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text ~= "" then
+                local t = d.Text:lower()
+                if t:find(cleanName, 1, true) or cleanName:find(t, 1, true) then
+                    return npc
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
 local function getActiveQuestDestination()
     -- Priority 1: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
     local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
@@ -401,23 +571,7 @@ local function getActiveQuestDestination()
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
             if okGl and gl and gl.target then
-                -- Match marker object if present
-                local destObj = nil
-                local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers") or workspace:FindFirstChild("RBRCQuestGuide")
-                if qMarkers then
-                    local bestDist = 9999
-                    for _, m in ipairs(qMarkers:GetChildren()) do
-                        local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
-                        if p then
-                            local d = (p.Position - gl.target).Magnitude
-                            if d < bestDist then
-                                bestDist = d
-                                destObj = p
-                            end
-                        end
-                    end
-                end
-                return gl.target, destObj, gl.points
+                return gl.target, nil, gl.points
             end
         end
         if nav.getGuide then
@@ -428,43 +582,52 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Priority 2: Check workspace.RBRCQuestMarkers
-    local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers")
+    -- Priority 2: Parse active quest from Favorite UI (RBRCQuestFavorite)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local fav = pg and pg:FindFirstChild("RBRCQuestFavorite")
+    local questTexts = {}
+    if fav and fav.Enabled then
+        for _, d in ipairs(fav:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
+                table.insert(questTexts, d.Text)
+            end
+        end
+    end
+
+    for _, txt in ipairs(questTexts) do
+        local targetNpcName = txt:match("กลับไปหา%s*([^\n\r]+)")
+            or txt:match("ไปพบ%s*([^\n\r]+)")
+            or txt:match("คุยกับ%s*([^\n\r]+)")
+            or txt:match("ส่งของให้%s*([^\n\r]+)")
+            or txt:match("ภารกิจ%s*%-%s*([^\n\r%d%/]+)")
+            or txt:match("%[(.+)%]")
+        
+        if targetNpcName then
+            targetNpcName = targetNpcName:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local npcModel = findQuestTargetNpc(targetNpcName)
+            if npcModel then
+                local p = npcModel.PrimaryPart or npcModel:FindFirstChild("Root") or npcModel:FindFirstChildWhichIsA("BasePart")
+                if p then
+                    return p.Position, npcModel, nil
+                end
+            end
+        end
+    end
+
+    -- Priority 3: Check visible NpcTalkPrompt (We are near an NPC!)
+    local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
+    if ntp and ntp.Enabled then
+        local root = getCarRoot()
+        if root then
+            return root.Position, nil, nil
+        end
+    end
+
+    -- Priority 4: Existing workspace quest markers
+    local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers") or workspace:FindFirstChild("RBRCQuestGuide")
     if qMarkers then
         for _, m in ipairs(qMarkers:GetChildren()) do
             local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart") or (m:IsA("Model") and m.PrimaryPart)
-            if p then
-                return p.Position, p, nil
-            end
-        end
-    end
-
-    -- Priority 3: Check workspace.RBRCQuestGuide
-    local qGuide = workspace:FindFirstChild("RBRCQuestGuide")
-    if qGuide then
-        for _, m in ipairs(qGuide:GetChildren()) do
-            local p = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart")
-            if p then
-                return p.Position, p, nil
-            end
-        end
-    end
-
-    -- Priority 4: Check Player Beams & Navigation
-    local char = LocalPlayer.Character
-    if char then
-        for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("Beam") and d.Attachment1 then
-                return d.Attachment1.WorldPosition, d.Attachment1.Parent, nil
-            end
-        end
-    end
-
-    -- Priority 5: Check RaycityNavigation markers in workspace
-    local navFolder = workspace:FindFirstChild("RaycityNavigation") or workspace:FindFirstChild("QuestMarkers")
-    if navFolder then
-        for _, m in ipairs(navFolder:GetChildren()) do
-            local p = m:IsA("BasePart") and m or (m:IsA("Model") and m.PrimaryPart)
             if p then
                 return p.Position, p, nil
             end
@@ -486,6 +649,7 @@ task.spawn(function()
         task.wait(0.06)
         if Config.AutoFarmQuests then
             local root = getCarRoot()
+            local rcd = getRCDrive()
             if root then
                 local destPos, destObj, points = getActiveQuestDestination()
 
@@ -493,7 +657,6 @@ task.spawn(function()
                 if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 1.5 then
                     stuckCounter = stuckCounter + 1
                     if stuckCounter >= 10 then -- Stuck for ~0.6 second
-                        -- Execute auto un-stuck: hop forward
                         local forward = root.CFrame.LookVector
                         teleportCar(root.CFrame + Vector3.new(0, 3, 0) + forward * 8)
                         stuckCounter = 0
@@ -511,26 +674,28 @@ task.spawn(function()
                     local dist = (root.Position - destPos).Magnitude
 
                     if Config.QuestDriveMode == "Instant Warp" then
-                        -- Fast waypoint sweep to register route checkpoint gates
-                        if points and #points > 0 and dist > 35 then
-                            local step = math.max(1, math.floor(#points / 12))
+                        -- Fast waypoint sweep along route to register checkpoints and speed requirement (> 100 km/h)
+                        if points and #points > 0 and dist > 25 then
+                            local step = math.max(1, math.floor(#points / 15))
                             for i = 1, #points, step do
-                                teleportCar(CFrame.new(points[i] + Vector3.new(0, 1.5, 0)))
+                                local pt = points[i]
+                                local lookNext = points[i + step] or destPos
+                                local dir = (lookNext - pt)
+                                local vel = dir.Magnitude > 0.1 and (dir.Unit * 60) or Vector3.new(0, 0, -60)
+                                local targetCF = CFrame.lookAt(pt + Vector3.new(0, 1.5, 0), lookNext + Vector3.new(0, 1.5, 0))
+                                teleportCarWithVelocity(targetCF, vel)
                                 task.wait(0.015)
                             end
                         end
-                        -- Warp directly to the destination marker
-                        teleportCar(CFrame.new(destPos + Vector3.new(0, 1.5, 0)))
+                        -- Warp directly to the destination
+                        teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
                         dist = 0
                     end
 
-                    if dist > 22 then
+                    if dist > 18 then
                         if Config.QuestDriveMode == "Hyper Sonic Glide" then
-                            -- High-Speed Aerial Glide straight to destination (Bypasses all obstacles)
                             driveCarStep(destPos + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
-
                         elseif Config.QuestDriveMode == "Realistic Road Drive" then
-                            -- Drive along actual Seoul roads using Navigation waypoints
                             local nextWp = nil
                             if points and #points > 0 then
                                 for i = 1, #points do
@@ -541,11 +706,8 @@ task.spawn(function()
                                     end
                                 end
                             end
-                            local driveTarget = nextWp or destPos
-                            driveCarStep(driveTarget, Config.QuestDriveSpeed, false)
-
-                        elseif Config.QuestDriveMode == "Hybrid Cruise" then
-                            -- High-Speed Ground Cruise with obstacle hopping
+                            driveCarStep(nextWp or destPos, Config.QuestDriveSpeed, false)
+                        else
                             driveCarStep(destPos, Config.QuestDriveSpeed, false)
                         end
                     else
@@ -553,7 +715,15 @@ task.spawn(function()
                         -- B. ARRIVED AT OBJECTIVE: COMPLETE, CLAIM & ADVANCE
                         -- ==========================================================
                         questFarmState = "DELIVERING"
-                        teleportCar(CFrame.new(destPos + Vector3.new(0, 1.5, 0)))
+                        teleportCar(CFrame.lookAt(destPos + Vector3.new(0, 1.5, 4), destPos))
+
+                        -- Stop velocity so interaction can trigger
+                        if rcd and rcd.phys then
+                            rcd.phys.v = Vector3.zero
+                            rcd.phys.throttle = 0
+                        end
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
 
                         -- Stop native AutoDrive if running
                         pcall(function()
@@ -571,6 +741,16 @@ task.spawn(function()
                                 firetouchinterest(root, destObj, 1)
                             end)
                         end
+
+                        -- Trigger Trunk / Delivery completion
+                        pcall(function()
+                            local rep = game:GetService("ReplicatedStorage")
+                            local qDeliver = require(rep.RBRCQuest.QuestDeliver)
+                            if qDeliver then
+                                if qDeliver.finish then qDeliver.finish() end
+                                if qDeliver.trunk then qDeliver.trunk(true) end
+                            end
+                        end)
 
                         -- Submit delivery via server remotes
                         pcall(function()
@@ -597,65 +777,64 @@ task.spawn(function()
                             end
                         end)
 
-                        -- Send Enter key to confirm delivery
+                        -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
                         pressReturnKey()
 
-                        task.wait(0.3)
+                        task.wait(0.2)
                     end
                 else
                     -- ==========================================================
-                    -- C. NO ACTIVE QUEST: AUTO WARP / DRIVE TO NEAREST NPC
+                    -- C. NO ACTIVE QUEST IN PROGRESS: FIND QUEST GIVER NPC
                     -- ==========================================================
                     if Config.LoopNextQuest then
                         questFarmState = "SEARCHING"
-                        local nearestNpc, nearestDist = nil, 99999
+                        local targetNpc, targetDist = nil, 99999
                         local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
 
-                        if npcsFolder then
+                        -- 1. First priority: Welcome Newbie (Npc_939900)
+                        local newbie = npcsFolder and npcsFolder:FindFirstChild("Npc_939900")
+                        if newbie then
+                            local nPart = newbie.PrimaryPart or newbie:FindFirstChild("Root") or newbie:FindFirstChildWhichIsA("BasePart")
+                            if nPart then
+                                targetNpc = nPart
+                                targetDist = (root.Position - nPart.Position).Magnitude
+                            end
+                        end
+
+                        -- 2. Fallback: Nearest NPC in RBRCNpcs
+                        if not targetNpc and npcsFolder then
                             for _, npc in ipairs(npcsFolder:GetChildren()) do
                                 local nPart = npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
                                 if nPart then
                                     local d = (root.Position - nPart.Position).Magnitude
-                                    if d < nearestDist then
-                                        nearestDist = d
-                                        nearestNpc = nPart
+                                    if d < targetDist then
+                                        targetDist = d
+                                        targetNpc = nPart
                                     end
                                 end
                             end
                         end
 
-                        if nearestNpc then
+                        if targetNpc then
                             if Config.QuestDriveMode == "Instant Warp" then
-                                -- Instantly warp right in front of the NPC
-                                teleportCar(CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 6), nearestNpc.Position))
-                                nearestDist = 6
+                                teleportCar(CFrame.lookAt(targetNpc.Position + Vector3.new(0, 1.5, 4), targetNpc.Position))
+                                targetDist = 4
                             end
 
-                            if nearestDist > 14 then
-                                -- Drive smoothly towards quest NPC
+                            if targetDist > 14 then
                                 if Config.QuestDriveMode == "Hyper Sonic Glide" then
-                                    driveCarStep(nearestNpc.Position + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
+                                    driveCarStep(targetNpc.Position + Vector3.new(0, 8, 0), Config.QuestDriveSpeed, true)
                                 else
-                                    driveCarStep(nearestNpc.Position, Config.QuestDriveSpeed, false)
+                                    driveCarStep(targetNpc.Position, Config.QuestDriveSpeed, false)
                                 end
                             else
-                                -- Arrived at NPC: stop and interact to take quest!
-                                teleportCar(CFrame.lookAt(nearestNpc.Position + Vector3.new(0, 1.5, 6), nearestNpc.Position))
+                                -- Arrived at NPC: Stop car and interact to accept quest!
+                                teleportCar(CFrame.lookAt(targetNpc.Position + Vector3.new(0, 1.5, 4), targetNpc.Position))
+                                if rcd and rcd.phys then
+                                    rcd.phys.v = Vector3.zero
+                                end
+                                root.AssemblyLinearVelocity = Vector3.zero
 
-                                pcall(function()
-                                    local interactRemote = ReplicatedStorage:FindFirstChild("RaycityInteract") 
-                                        and ReplicatedStorage.RaycityInteract:FindFirstChild("Remotes") 
-                                        and ReplicatedStorage.RaycityInteract.Remotes:FindFirstChild("InteractRequest")
-                                    if interactRemote and nearestNpc.Parent then
-                                        interactRemote:InvokeServer("Talk", nearestNpc.Parent.Name)
-                                    end
-                                end)
-                                pcall(function()
-                                    local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
-                                    if qUi and qUi._dialogEnter then
-                                        qUi._dialogEnter()
-                                    end
-                                end)
                                 pressReturnKey()
                                 task.wait(0.25)
                             end
