@@ -82,6 +82,7 @@ if not Players then Players = game:GetService("Players") end
 if not LocalPlayer then LocalPlayer = Players.LocalPlayer end
 
 -- ⚙️ CONFIGURATION
+local REQUIRE_KEY_SYSTEM = false -- 🔓 false = Free Keyless Mode (รันตรงทันที 100% ไม่ต้องใช้คีย์)
 local SERVER_HOST = "https://song-hub-avp8.onrender.com" -- Worldwide Live Cloud Server (Render)
 local VERIFY_URL = SERVER_HOST .. "/api/v1/verify"
 local GET_KEY_URL = SERVER_HOST .. "/getkey"
@@ -368,7 +369,7 @@ local function launchGameScript(scriptFileName, gameTitle)
 
     -- Request One-Time Cryptographic Execution Token from Render Server (Single-Use 25s TTL)
     local oneTimeToken = nil
-    if requestFn then
+    if REQUIRE_KEY_SYSTEM and requestFn then
         pcall(function()
             local tokenRes = requestFn({
                 Url = SERVER_HOST .. "/api/v1/script-token",
@@ -482,6 +483,13 @@ task.spawn(function()
                 Icon = "alert-triangle"
             })
         end)
+        return
+    end
+
+    -- 🔓 Keyless Direct Mode: Skip all key checks and launch directly!
+    if not REQUIRE_KEY_SYSTEM then
+        print(string.format("[Universal Hub] 🔓 Free Keyless Mode Active! Direct launching %s without key...", gameTitle))
+        launchGameScript(scriptFileName, gameTitle)
         return
     end
 
