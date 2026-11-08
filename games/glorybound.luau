@@ -47,34 +47,56 @@ if not LocalPlayer then
 end
 local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
 
--- Multi-Execute Management
-getgenv().__GloryBoundHubRunId = (tonumber(getgenv().__GloryBoundHubRunId) or 0) + 1
-local currentScriptRunId = getgenv().__GloryBoundHubRunId
+-- ==============================================================================
+-- 🛡️ STRICT SINGLETON & MULTI-EXECUTE PREVENTION
+-- ==============================================================================
+local now = os.clock()
+if getgenv then
+    -- 1. If script is already running with an active UI, block duplicate launch!
+    if getgenv()._GloryBoundRunning == true and getgenv()._GB_Window and (now - (getgenv()._GB_LastStartTime or 0)) < 6 then
+        print("[GloryBound Hub] 🛡️ Script is already running with active UI. Skipping duplicate launch.")
+        return
+    end
 
+    getgenv()._GB_LastStartTime = now
+    getgenv()._GloryBoundRunning = true
+    getgenv()._GloryBoundRunId = (tonumber(getgenv()._GloryBoundRunId) or 0) + 1
+
+    -- 2. Destroy any existing UI instances to prevent overlapping windows
+    pcall(function()
+        if getgenv()._GB_Window and getgenv()._GB_Window.Destroy then
+            getgenv()._GB_Window:Destroy()
+        end
+    end)
+    pcall(function()
+        local roots = {
+            (typeof(gethui) == "function" and gethui()) or nil,
+            game:GetService("CoreGui")
+        }
+        for _, root in ipairs(roots) do
+            if root then
+                for _, child in ipairs(root:GetChildren()) do
+                    if child.Name == "WindUI" or child.Name == "GloryBoundHub" or child.Name == "SongHub" or child.Name:find("WindUI") then
+                        pcall(function()
+                            if child:FindFirstChild("Window") then
+                                child.Window:ClearAllChildren()
+                            end
+                            child:Destroy()
+                        end)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local currentScriptRunId = (getgenv and getgenv()._GloryBoundRunId) or 1
 local function isAlive()
-    local activeRun = tonumber(getgenv().__GloryBoundHubRunId)
-    if activeRun and currentScriptRunId and activeRun > currentScriptRunId then
+    if getgenv and getgenv()._GloryBoundRunId and getgenv()._GloryBoundRunId > currentScriptRunId then
         return false
     end
     return true
 end
-
--- Clean up previous Hub ScreenGuis (NEVER touch PlayerGui)
-pcall(function()
-    local roots = {
-        (typeof(gethui) == "function" and gethui()) or nil,
-        game:GetService("CoreGui")
-    }
-    for _, root in ipairs(roots) do
-        if root then
-            for _, child in ipairs(root:GetChildren()) do
-                if child.Name == "WindUI" or child.Name == "GloryBoundHub" or child.Name == "SongHub" then
-                    pcall(function() child:Destroy() end)
-                end
-            end
-        end
-    end
-end)
 
 -- ==============================================================================
 -- ⚙️ CONFIGURATION & STATE
@@ -91,7 +113,7 @@ local Config = {
 
     -- Combat & Target Lock
     KillAura = false,
-    AttackRadius = 75,
+    AttackRadius = 300,
     TargetLock = false,
     LockMode = "Behind", -- "Behind", "Above", "Face", "Front"
     LockDistance = 3.5,
@@ -100,7 +122,7 @@ local Config = {
     DodgeInterval = 1.8,
     AutoDodgeLowHp = true,
     DodgeHpThreshold = 35,
-    AutoAbility = false,
+    AutoAbility = true,
     AutoBoonPick = true,
     AutoSkipCutscenes = true,
 
@@ -289,6 +311,7 @@ local Window = WindUI:CreateWindow({
     Acrylic = false,
     Resizable = true
 })
+if getgenv then getgenv()._GB_Window = Window end
 
 -- ==============================================================================
 -- 🏋️ TAB 1: GYM & TRAINING
@@ -403,11 +426,16 @@ TabCombat:Toggle({
 TabCombat:Divider()
 
 TabCombat:Toggle({
-    Title = "🎯 Master Target Lock (ล็อคเกาะติดมอนสเตอร์)",
-    Desc = "วาร์ปเกาะติดและหันหน้าล็อคมอนสเตอร์ที่ใกล้ที่สุดอัตโนมัติ ช่วยให้โจมตีโดน 100% ไม่พลาดเป้า",
+    Title = "🎯 Master Target Lock (ล็อคเกาะติดมอนสเตอร์ + โจมตี)",
+    Desc = "วาร์ปเกาะติดหลังมอนสเตอร์และโจมตีอัตโนมัติ ช่วยให้โจมตีโดน 100% ไม่พลาดเป้า",
     Value = Config.TargetLock,
     Callback = function(val)
         Config.TargetLock = val
+        if val then
+            Config.KillAura = true
+            Config.AutoAbility = true
+        end
+        if Config.AutoSave then SaveConfig(true) end
     end
 })
 
@@ -441,11 +469,16 @@ TabCombat:Slider({
 TabCombat:Divider()
 
 TabCombat:Toggle({
-    Title = "⚔️ Master Kill Aura (ออโต้ฟันคอมโบ 1-2-3)",
-    Desc = "โจมตีมอนสเตอร์และศัตรูทั้งหมดในระยะโดยไม่ต้องคลิกเอง (ใช้คู่กับ Target Lock ได้ดีที่สุด)",
+    Title = "⚔️ Master Kill Aura (ออโต้โจมตีคอมโบ + ยิงธนู)",
+    Desc = "โจมตีมอนสเตอร์และศัตรูทั้งหมดในระยะโดยไม่ต้องคลิกเอง (รองรับทั้งดาบและธนู)",
     Value = Config.KillAura,
     Callback = function(val)
         Config.KillAura = val
+        if val then
+            Config.TargetLock = true
+            Config.AutoAbility = true
+        end
+        if Config.AutoSave then SaveConfig(true) end
     end
 })
 
@@ -855,7 +888,7 @@ local function getClosestEnemy(maxDist)
     local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
     if not root then return nil end
 
-    local closest, closestDist = nil, maxDist or 9999
+    local closest, closestDist = nil, maxDist or 300
     for _, e in ipairs(activeEnemies:GetChildren()) do
         local hum = e:FindFirstChildOfClass("Humanoid")
         local eRoot = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
@@ -1122,7 +1155,7 @@ end
 task.spawn(function()
     while isAlive() do
         task.wait(0.03)
-        if Config.TargetLock then
+        if Config.TargetLock or Config.FullAutoArena then
             pcall(function()
                 local char = LocalPlayer.Character
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
@@ -1162,22 +1195,29 @@ task.spawn(function()
     end
 end)
 
--- 2. MASTER COMBAT KILL AURA LOOP
+-- 2. MASTER COMBAT KILL AURA LOOP (MELEE + BOW COMPATIBLE)
 task.spawn(function()
     local combo = 1
     while isAlive() do
         task.wait(0.12)
-        if Config.KillAura then
+        if Config.KillAura or Config.FullAutoArena then
             pcall(function()
                 local rep = game:GetService("ReplicatedStorage")
                 local char = LocalPlayer.Character
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
                 if not root then return end
 
-                local target, dist = getClosestEnemy(Config.AttackRadius)
+                local target, dist = getClosestEnemy(Config.AttackRadius or 300)
                 if target and target.Parent then
                     local hum = target.Parent:FindFirstChildOfClass("Humanoid")
                     if not hum or hum.Health > 0 then
+                        -- Aim camera at target
+                        pcall(function()
+                            if workspace.CurrentCamera then
+                                workspace.CurrentCamera.CFrame = CFrame.lookAt(workspace.CurrentCamera.CFrame.Position, target.Position)
+                            end
+                        end)
+
                         -- Face enemy if target lock is not actively positioning
                         if not Config.TargetLock then
                             pcall(function()
@@ -1185,11 +1225,18 @@ task.spawn(function()
                             end)
                         end
 
-                        -- Attack target
+                        -- Attack Method 1: RemoteEvent Attack + Release
                         rep.Remotes.Attack:FireServer(combo, target.Position, false)
                         task.wait(0.04)
                         rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
                         combo = (combo % 3) + 1
+
+                        -- Attack Method 2: Virtual Click (Fires Bow drawing/release & standard attacks)
+                        pcall(function()
+                            VirtualUser:Button1Down(Vector2.zero, workspace.CurrentCamera.CFrame)
+                            task.wait(0.05)
+                            VirtualUser:Button1Up(Vector2.zero, workspace.CurrentCamera.CFrame)
+                        end)
 
                         -- Cast Ability if enabled
                         if Config.AutoAbility then
