@@ -133,14 +133,14 @@ local Config = {
     KillAura = false,
     AttackRadius = 350,
     TargetLock = false,
-    LockMode = "Behind", -- "Behind (เกาะหลัง 100% ไม่โดนตี)", "Above (ลอยเหนือหัว)", "Orbit (วนรอบตัว)", "WalkTo (เดินอ้อมหลัง)", "Face", "Front"
-    LockDistance = 4.5,
-    UntouchableGodMode = true, -- ระบบหลบหลีก 100% ไร้เทียมทาน (ไม่โดนโจมตี)
+    LockMode = "WalkTo", -- "WalkTo (เดินไปตีมอนสเตอร์ - เสถียรสุด)", "Behind (เกาะหลัง)", "Above (ลอยเหนือหัว)", "Orbit (วนรอบตัว)"
+    LockDistance = 18,
+    UntouchableGodMode = true,
     AutoParry = true,
     AutoDodge = true,
-    DodgeInterval = 0.3,
+    DodgeInterval = 1.0,
     AutoDodgeLowHp = true,
-    DodgeHpThreshold = 45,
+    DodgeHpThreshold = 35,
     AutoAbility = true,
     AutoBoonPick = true,
     AutoSkipCutscenes = true,
@@ -519,30 +519,24 @@ TabCombat:Toggle({
 })
 
 TabCombat:Dropdown({
-    Title = "🎯 Combat Movement & Lock Mode (ระบบหลบหลีก / ตำแหน่งสู้)",
-    Desc = "เลือกมุมต่อสู้: แนะนำ 'Behind (เกาะหลัง)' หรือ 'Above (ลอยเหนือหัว)' มอนสเตอร์จะตีไม่ถึง 100%",
+    Title = "🎯 Combat Movement & Lock Mode (ระบบการเคลื่อนที่ต่อสู้)",
+    Desc = "เลือกรูปแบบการต่อสู้: WalkTo (เดินยิง/ฟันแบบธรรมชาติ ไม่วาร์ปมั่ว), Behind (เกาะหลัง), Above (ลอยเหนือหัว)",
     Values = {
-        "Behind (เกาะหลังมอนสเตอร์ - หลบได้ 100% แนะนำ)",
-        "Above (ลอยเหนือหัวมอนสเตอร์ - มอนตีไม่ถึง 100%)",
-        "Orbit (เดินวนรอบตัวมอนสเตอร์ Kiting - หลบวงฟัน)",
-        "WalkTo (เดินอ้อมไปตีข้างหลัง)",
-        "Face Target (หันหน้าเข้าหา)",
-        "Front (ประชิดหน้า)"
+        "WalkTo (เดินสู้ตามธรรมชาติ - เสถียรและแม่นยำสุด แนะนำ)",
+        "Behind (เกาะหลังมอนสเตอร์)",
+        "Above (ลอยเหนือหัวมอนสเตอร์)",
+        "Orbit (เดินวนรอบตัว Kiting)"
     },
-    Value = "Behind (เกาะหลังมอนสเตอร์ - หลบได้ 100% แนะนำ)",
+    Value = "WalkTo (เดินสู้ตามธรรมชาติ - เสถียรและแม่นยำสุด แนะนำ)",
     Callback = function(val)
-        if val:find("Behind") then
+        if val:find("WalkTo") then
+            Config.LockMode = "WalkTo"
+        elseif val:find("Behind") then
             Config.LockMode = "Behind"
         elseif val:find("Above") then
             Config.LockMode = "Above"
         elseif val:find("Orbit") then
             Config.LockMode = "Orbit"
-        elseif val:find("WalkTo") then
-            Config.LockMode = "WalkTo"
-        elseif val:find("Face") then
-            Config.LockMode = "Face"
-        elseif val:find("Front") then
-            Config.LockMode = "Front"
         end
     end
 })
@@ -1569,13 +1563,41 @@ local function autoRevive()
     end)
 end
 
--- 1.10. MASTER 100% UNTOUCHABLE COMBAT MOVEMENT CONTROLLER
+-- ==============================================================================
+-- ⚔️ UNIFIED HIGH-PRECISION COMBAT, AUTO-AIM & INTELLIGENT EVASION ENGINE
+-- ==============================================================================
+local lockedCombatTarget = nil
+local lastCombatDodgeTime = 0
+local lastCombatParryTime = 0
 local lastPathStuckCheck = 0
 local lastPlayerPos = nil
 
+-- 1. Rock-solid Target Locking (Latches to 1 target until DEAD to prevent target flipping)
+local function getActiveCombatTarget()
+    if lockedCombatTarget and lockedCombatTarget.Parent and lockedCombatTarget.Parent.Parent then
+        local eHum = lockedCombatTarget.Parent:FindFirstChildOfClass("Humanoid")
+        if eHum and eHum.Health > 0 then
+            local char = LocalPlayer.Character
+            local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+            if root then
+                local dist = (lockedCombatTarget.Position - root.Position).Magnitude
+                if dist <= (Config.AttackRadius or 350) then
+                    return lockedCombatTarget, dist
+                end
+            end
+        end
+    end
+
+    -- Acquire new target only when current is nil, dead, or out of range
+    local newTarget, newDist = getClosestEnemy(Config.AttackRadius or 350)
+    lockedCombatTarget = newTarget
+    return lockedCombatTarget, newDist
+end
+
+-- 2. Clean Natural Combat Movement & Positioning (NO erratic teleport spam)
 task.spawn(function()
     while isAlive() do
-        task.wait(0.02)
+        task.wait(0.03)
         if Config.TargetLock or Config.FullAutoArena or Config.KillAura or Config.UntouchableGodMode then
             pcall(function()
                 local char = LocalPlayer.Character
@@ -1583,92 +1605,93 @@ task.spawn(function()
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
                 if not hum or not root or hum.Health <= 0 then return end
 
-                local target, dist = getClosestEnemy(Config.AttackRadius or 350)
-                if target and target.Parent then
-                    local eHum = target.Parent:FindFirstChildOfClass("Humanoid")
-                    if not eHum or eHum.Health > 0 then
-                        -- Auto Equip Weapon from Backpack if unequipped
-                        local currentTool = char:FindFirstChildWhichIsA("Tool")
-                        if not currentTool then
-                            local bp = LocalPlayer:FindFirstChild("Backpack")
-                            local tool = bp and bp:FindFirstChildWhichIsA("Tool")
-                            if tool then
-                                hum:EquipTool(tool)
-                                currentTool = tool
-                            end
+                local target, dist = getActiveCombatTarget()
+                if not target or not target.Parent then return end
+
+                -- Auto-equip weapon from backpack if unequipped
+                local currentTool = char:FindFirstChildWhichIsA("Tool")
+                if not currentTool then
+                    local bp = LocalPlayer:FindFirstChild("Backpack")
+                    local tool = bp and bp:FindFirstChildWhichIsA("Tool")
+                    if tool then
+                        hum:EquipTool(tool)
+                        currentTool = tool
+                    end
+                end
+
+                local toolName = currentTool and currentTool.Name:lower() or ""
+                local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
+                local targetPos = target.Position
+                local targetLook = target.CFrame.LookVector
+
+                -- Steady face target
+                root.CFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+
+                if Config.LockMode == "WalkTo" then
+                    -- NATURAL TACTICAL NAVIGATION (Clean, smooth, effective)
+                    if isRanged then
+                        -- Ranged Bow: Sweet spot is 16 - 22 Studs
+                        if dist > 22 then
+                            hum:MoveTo(targetPos)
+                            hum:Move((targetPos - root.Position).Unit, false)
+                        elseif dist < 12 then
+                            -- Backpedal away from approaching enemy to keep distance
+                            local awayDir = (root.Position - targetPos).Unit
+                            hum:Move(awayDir, false)
+                        else
+                            -- Perfect shooting distance: hold ground steadily
+                            hum:Move(Vector3.zero, false)
                         end
-
-                        local toolName = currentTool and currentTool.Name:lower() or ""
-                        local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
-                        local desiredDist = isRanged and 26 or (Config.LockDistance or 4.5)
-                        local targetPos = target.Position
-                        local targetLook = target.CFrame.LookVector
-
-                        if Config.LockMode == "Behind" then
-                            -- 100% UNTOUCHABLE BEHIND: Always pinned to enemy blindspot rear arc
-                            local behindPos = targetPos - (targetLook * desiredDist) + Vector3.new(0, 0.4, 0)
-                            root.CFrame = CFrame.lookAt(behindPos, targetPos)
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-
-                        elseif Config.LockMode == "Above" then
-                            -- 100% UNTOUCHABLE HEIGHT: Ground melee hitboxes cannot reach Y + 6.0
-                            local abovePos = targetPos + Vector3.new(0, 6.0, 0)
-                            root.CFrame = CFrame.lookAt(abovePos, targetPos)
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-
-                        elseif Config.LockMode == "Orbit" then
-                            -- CIRCLE-STRAFE KITING: Continuously orbits at high speed around target
-                            local angle = tick() * 3.5
-                            local orbitOffset = Vector3.new(math.cos(angle), 0, math.sin(angle)) * desiredDist
-                            local orbitPos = targetPos + orbitOffset + Vector3.new(0, 0.6, 0)
-                            root.CFrame = CFrame.lookAt(orbitPos, targetPos)
-                            root.AssemblyLinearVelocity = Vector3.zero
-
-                        elseif Config.LockMode == "WalkTo" then
-                            -- Natural Walking but navigates directly to the BEHIND of the enemy!
-                            local safeBehindPos = targetPos - (targetLook * desiredDist)
-                            local toBehind = (safeBehindPos - root.Position)
-                            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
-
-                            if toBehind.Magnitude > 2.5 then
-                                hum:MoveTo(safeBehindPos)
-                                hum:Move(toBehind.Unit, false)
-
-                                local now = tick()
-                                if dist > 65 or (lastPlayerPos and (root.Position - lastPlayerPos).Magnitude < 1 and (now - lastPathStuckCheck) > 2.0) then
-                                    lastPathStuckCheck = now
-                                    local glidePos = safeBehindPos + Vector3.new(0, 0.8, 0)
-                                    root.CFrame = CFrame.lookAt(glidePos, targetPos)
-                                    root.AssemblyLinearVelocity = Vector3.zero
-                                end
-                                lastPlayerPos = root.Position
-                            else
-                                -- At the rear: Small micro-strafe behind enemy
-                                local strafeOffset = target.CFrame.RightVector * (math.sin(tick() * 4) * 2.2)
-                                root.CFrame = CFrame.lookAt(safeBehindPos + strafeOffset, targetPos)
-                                hum:Move(Vector3.zero, false)
-                            end
-                        elseif Config.LockMode == "Front" then
-                            local frontPos = targetPos + (targetLook * desiredDist)
-                            root.CFrame = CFrame.lookAt(frontPos, targetPos)
-                            root.AssemblyLinearVelocity = Vector3.zero
-                        else -- "Face"
-                            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+                    else
+                        -- Melee Weapon: Approach smoothly to 4.0 Studs
+                        if dist > 4.5 then
+                            hum:MoveTo(targetPos)
+                            hum:Move((targetPos - root.Position).Unit, false)
+                        else
+                            -- In strike reach: hold ground
+                            hum:Move(Vector3.zero, false)
                         end
                     end
+
+                    -- Anti-stuck: only glide if very far (> 75 studs)
+                    local now = tick()
+                    if dist > 75 or (lastPlayerPos and (root.Position - lastPlayerPos).Magnitude < 1 and (now - lastPathStuckCheck) > 3.0) then
+                        lastPathStuckCheck = now
+                        local approachDist = isRanged and 18 or 4.0
+                        local safeGlidePos = targetPos - ((targetPos - root.Position).Unit * approachDist) + Vector3.new(0, 0.5, 0)
+                        root.CFrame = CFrame.lookAt(safeGlidePos, targetPos)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    lastPlayerPos = root.Position
+
+                elseif Config.LockMode == "Behind" then
+                    local standDist = isRanged and 16 or 3.5
+                    local behindPos = targetPos - (targetLook * standDist) + Vector3.new(0, 0.4, 0)
+                    root.CFrame = CFrame.lookAt(behindPos, targetPos)
+                    root.AssemblyLinearVelocity = Vector3.zero
+
+                elseif Config.LockMode == "Above" then
+                    local abovePos = targetPos + Vector3.new(0, 6.0, 0)
+                    root.CFrame = CFrame.lookAt(abovePos, targetPos)
+                    root.AssemblyLinearVelocity = Vector3.zero
+
+                elseif Config.LockMode == "Orbit" then
+                    local orbitDist = isRanged and 18 or 4.5
+                    local angle = tick() * 2.8
+                    local orbitPos = targetPos + Vector3.new(math.cos(angle) * orbitDist, 0.5, math.sin(angle) * orbitDist)
+                    root.CFrame = CFrame.lookAt(orbitPos, targetPos)
+                    root.AssemblyLinearVelocity = Vector3.zero
                 end
             end)
         end
     end
 end)
 
--- 2. MASTER COMBAT KILL AURA LOOP (MELEE + BOW COMPATIBLE)
+-- 3. 100% Accurate Attack Execution Engine (Steady camera aim + Remote + Native click)
 task.spawn(function()
     local combo = 1
     while isAlive() do
-        task.wait(0.11)
+        task.wait(0.10)
         if Config.KillAura or Config.FullAutoArena or Config.TargetLock then
             pcall(function()
                 local rep = game:GetService("ReplicatedStorage")
@@ -1677,44 +1700,57 @@ task.spawn(function()
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
                 if not hum or not root or hum.Health <= 0 then return end
 
-                local target, dist = getClosestEnemy(Config.AttackRadius or 350)
-                if target and target.Parent then
-                    local eHum = target.Parent:FindFirstChildOfClass("Humanoid")
-                    if not eHum or eHum.Health > 0 then
-                        local currentTool = char:FindFirstChildWhichIsA("Tool")
-                        local toolName = currentTool and currentTool.Name:lower() or ""
-                        local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
-                        local maxStrikeDist = isRanged and 45 or 8.5
+                local target, dist = getActiveCombatTarget()
+                if not target or not target.Parent then return end
 
-                        -- Only strike if within effective weapon reach!
-                        if dist <= maxStrikeDist then
-                            -- Aim camera at target
-                            pcall(function()
-                                if workspace.CurrentCamera then
-                                    workspace.CurrentCamera.CFrame = CFrame.lookAt(workspace.CurrentCamera.CFrame.Position, target.Position)
-                                end
-                            end)
+                local eHum = target.Parent:FindFirstChildOfClass("Humanoid")
+                if eHum and eHum.Health <= 0 then
+                    lockedCombatTarget = nil
+                    return
+                end
 
-                            -- Attack Method 1: RemoteEvent Attack + Release
-                            rep.Remotes.Attack:FireServer(combo, target.Position, false)
-                            task.wait(0.04)
-                            rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
-                            combo = (combo % 3) + 1
+                local currentTool = char:FindFirstChildWhichIsA("Tool")
+                local toolName = currentTool and currentTool.Name:lower() or ""
+                local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
+                local maxStrikeDist = isRanged and 55 or 7.5
 
-                            -- Attack Method 2: Virtual Click (Fires Bow drawing/release & standard attacks)
-                            pcall(function()
-                                local cam = workspace.CurrentCamera
-                                local center = cam and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or Vector2.zero
-                                VirtualUser:Button1Down(center, cam and cam.CFrame or CFrame.identity)
-                                task.wait(0.06)
-                                VirtualUser:Button1Up(center, cam and cam.CFrame or CFrame.identity)
-                            end)
+                if dist <= maxStrikeDist then
+                    local targetPos = target.Position
 
-                            -- Cast Ability if enabled
-                            if Config.AutoAbility then
-                                rep.Remotes.AbilityCast:FireServer(target.Position)
-                            end
+                    -- 1. Precision camera aim directly at target center
+                    pcall(function()
+                        local cam = workspace.CurrentCamera
+                        if cam then
+                            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, targetPos)
                         end
+                    end)
+
+                    -- 2. Character face target
+                    root.CFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+
+                    -- 3. Trigger Attack
+                    local cam = workspace.CurrentCamera
+                    local center = cam and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or Vector2.zero
+
+                    rep.Remotes.Attack:FireServer(combo, targetPos, false)
+                    VirtualUser:Button1Down(center)
+                    task.wait(0.12) -- Essential draw / swing windup time
+                    rep.Remotes.AttackRelease:FireServer(combo, 1, targetPos)
+                    VirtualUser:Button1Up(center)
+
+                    -- 4. Native CombatController attack trigger
+                    pcall(function()
+                        local cc = require(LocalPlayer.PlayerScripts.Controllers.CombatController)
+                        if cc and cc.attack then
+                            cc.attack(combo, false)
+                        end
+                    end)
+
+                    combo = (combo % 3) + 1
+
+                    -- 5. Cast Ability on cooldown
+                    if Config.AutoAbility and rep.Remotes:FindFirstChild("AbilityCast") then
+                        rep.Remotes.AbilityCast:FireServer(targetPos)
                     end
                 end
             end)
@@ -1722,57 +1758,10 @@ task.spawn(function()
     end
 end)
 
--- ==============================================================================
--- 🛡️ 100% UNTOUCHABLE AUTO DODGE & GOD PARRY ENGINE (ACTIVE 50Hz EVASION)
--- ==============================================================================
-local lastCombatDodge = 0
-local lastParryTime = 0
-
-local function performUntouchableEvasion(threatModel, escapeCFrame)
-    local now = tick()
-    if now - lastCombatDodge < 0.22 then return end
-    lastCombatDodge = now
-
-    local char = LocalPlayer.Character
-    local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-    if not root then return end
-
-    -- 1. Physical Relocation (100% out of attack hitbox!)
-    if escapeCFrame then
-        root.CFrame = escapeCFrame
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-    end
-
-    -- 2. Trigger native client dash + remote dash
-    local rep = game:GetService("ReplicatedStorage")
-    local tRoot = threatModel and (threatModel:FindFirstChild("HumanoidRootPart") or threatModel.PrimaryPart)
-    local dodgeDir = tRoot and (root.Position - tRoot.Position).Unit or -root.CFrame.LookVector
-
-    pcall(function()
-        local cc = require(LocalPlayer.PlayerScripts.Controllers.CombatController)
-        if cc and cc.dash then
-            cc.dash(dodgeDir)
-        end
-    end)
-
-    if rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("Dash") then
-        rep.Remotes.Dash:FireServer(dodgeDir)
-    end
-
-    -- 3. Trigger God Parry / Block Window
-    if rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("Block") and (now - lastParryTime > 0.35) then
-        lastParryTime = now
-        rep.Remotes.Block:FireServer(true, 0)
-        task.delay(0.2, function()
-            pcall(function() rep.Remotes.Block:FireServer(false, 0.2) end)
-        end)
-    end
-end
-
+-- 4. Smart Reactive Dodge & God Parry (Native Dash & Block - ZERO Random Warping)
 task.spawn(function()
     while isAlive() do
-        task.wait(0.02) -- 50Hz instantaneous response!
+        task.wait(0.05)
         if Config.AutoDodge or Config.UntouchableGodMode or Config.AutoParry or Config.FullAutoArena then
             pcall(function()
                 local rep = game:GetService("ReplicatedStorage")
@@ -1782,119 +1771,60 @@ task.spawn(function()
                 if not hum or not root or hum.Health <= 0 then return end
 
                 local now = tick()
-                local myPos = root.Position
                 local hpPct = (hum.Health / math.max(1, hum.MaxHealth)) * 100
 
-                -- A. Emergency Low HP Retreat Vault (HP <= 45%)
-                if (Config.AutoDodgeLowHp or Config.UntouchableGodMode or Config.FullAutoArena) and hpPct <= (Config.DodgeHpThreshold or 45) then
-                    if now - lastCombatDodge > 0.8 then
-                        local target = getClosestEnemy(35)
-                        local escapeDir = target and (myPos - target.Position).Unit or -root.CFrame.LookVector
-                        local safeEscapePos = myPos + (escapeDir * 16) + Vector3.new(0, 3.5, 0)
-                        performUntouchableEvasion(target and target.Parent, CFrame.lookAt(safeEscapePos, myPos))
+                -- A. Emergency Low HP Retreat Dash (health <= 35%)
+                if (Config.AutoDodgeLowHp or Config.UntouchableGodMode or Config.FullAutoArena) and hpPct <= (Config.DodgeHpThreshold or 35) then
+                    if now - lastCombatDodgeTime > (Config.DodgeInterval or 1.0) then
+                        lastCombatDodgeTime = now
+                        local target = getClosestEnemy(30)
+                        local escapeDir = target and (root.Position - target.Position).Unit or -root.CFrame.LookVector
+                        pcall(function()
+                            local cc = require(LocalPlayer.PlayerScripts.Controllers.CombatController)
+                            if cc and cc.dash then cc.dash(escapeDir) end
+                        end)
+                        if rep.Remotes:FindFirstChild("Dash") then
+                            rep.Remotes.Dash:FireServer(escapeDir)
+                        end
                         return
                     end
                 end
 
-                -- B. Scan ALL active enemies in Arena (Multi-target Threat Detection)
-                local ae = workspace:FindFirstChild("ActiveEnemies")
-                local threats = {}
+                -- B. Dynamic Reactive Dodge & Parry on incoming strike
+                local target, dist = getActiveCombatTarget()
+                if target and dist and dist <= 14 and target.Parent then
+                    local targetModel = target.Parent
+                    local windup = tonumber(targetModel:GetAttribute("WindupEnd")) or 0
+                    local aiState = tostring(targetModel:GetAttribute("AIState") or ""):lower()
+                    local isAttacking = (windup > 0 and (windup > now or (now - windup) < 0.35)) or (aiState:find("attack") ~= nil)
 
-                local function evaluateThreat(e)
-                    if not e or not e:IsA("Model") or e == char then return end
-                    local eHum = e:FindFirstChildOfClass("Humanoid")
-                    if eHum and eHum.Health <= 0 then return end
+                    if isAttacking then
+                        -- 1. God Parry (90% damage cut + 50% damage reflection)
+                        if (Config.AutoParry or Config.UntouchableGodMode or Config.FullAutoArena) and (now - lastCombatParryTime > 0.45) then
+                            lastCombatParryTime = now
+                            if rep.Remotes:FindFirstChild("Block") then
+                                rep.Remotes.Block:FireServer(true, 0)
+                                task.delay(0.18, function()
+                                    pcall(function() rep.Remotes.Block:FireServer(false, 0.18) end)
+                                end)
+                            end
+                        end
 
-                    local eRoot = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart or e:FindFirstChildWhichIsA("BasePart")
-                    if not eRoot then return end
+                        -- 2. Tactical Native Dash (Flank or Backdash)
+                        if (Config.AutoDodge or Config.UntouchableGodMode or Config.FullAutoArena) and (now - lastCombatDodgeTime > (Config.DodgeInterval or 1.0)) then
+                            lastCombatDodgeTime = now
+                            local currentTool = char:FindFirstChildWhichIsA("Tool")
+                            local isRanged = currentTool and currentTool.Name:lower():find("bow")
+                            local dodgeDir = isRanged and (root.Position - target.Position).Unit or (math.random() > 0.5 and root.CFrame.RightVector or -root.CFrame.RightVector).Unit
 
-                    local toMe = (myPos - eRoot.Position)
-                    local dist = toMe.Magnitude
-                    if dist > 22 then return end
-
-                    local eLook = eRoot.CFrame.LookVector
-                    local isFacingMe = (dist > 0.1) and (eLook:Dot(toMe.Unit) > 0.15)
-                    local windup = tonumber(e:GetAttribute("WindupEnd")) or 0
-                    local isWindingUp = (windup > 0 and (windup > now or (now - windup) < 0.35))
-                    local aiState = tostring(e:GetAttribute("AIState") or ""):lower()
-                    local atkKind = tostring(e:GetAttribute("AttackKind") or "")
-                    local isAttacking = (aiState:find("attack") ~= nil) or (atkKind ~= "")
-
-                    -- Threat trigger: Winding up, Attacking, or Facing player within strike range (< 9.5 studs)
-                    if isWindingUp or isAttacking or (isFacingMe and dist <= 9.5) or (dist <= 6.0) then
-                        table.insert(threats, { model = e, root = eRoot, dist = dist, look = eLook, isWindingUp = isWindingUp })
-                    end
-                end
-
-                if ae then
-                    for _, e in ipairs(ae:GetChildren()) do evaluateThreat(e) end
-                end
-
-                if #threats == 0 then
-                    local target, dist = getClosestEnemy(15)
-                    if target and target.Parent then
-                        evaluateThreat(target.Parent)
-                    end
-                end
-
-                -- C. Execute 100% Slip-Behind Evasion on any detected threat
-                if #threats > 0 then
-                    local threat = threats[1]
-                    local tRoot = threat.root
-                    local tLook = threat.look
-                    local tPos = tRoot.Position
-                    local desiredBehind = 5.0
-
-                    if Config.LockMode == "Above" then
-                        local abovePos = tPos + Vector3.new(0, 6.0, 0)
-                        performUntouchableEvasion(threat.model, CFrame.lookAt(abovePos, tPos))
-                    else
-                        local safeBehindPos = tPos - (tLook * desiredBehind) + Vector3.new(0, 0.8, 0)
-                        performUntouchableEvasion(threat.model, CFrame.lookAt(safeBehindPos, tPos))
-                    end
-                end
-            end)
-        end
-    end
-end)
-
--- 5. AUTO SKIP BOSS CUTSCENES, BOON PICKER, REVIVE & RETRY VOTE LOOP
-task.spawn(function()
-    while isAlive() do
-        task.wait(0.35)
-        pcall(function()
-            local rep = game:GetService("ReplicatedStorage")
-            if (Config.AutoSkipCutscenes or Config.MasterFullAuto) and rep.Remotes:FindFirstChild("BossCutsceneSkip") then
-                rep.Remotes.BossCutsceneSkip:FireServer(1)
-            end
-
-            if Config.AutoBoonPick or Config.FullAutoArena or Config.MasterFullAuto then
-                autoPickBoon()
-            end
-
-            if Config.AutoRetryVote or Config.FullAutoArena or Config.MasterFullAuto then
-                autoRetryVote()
-            end
-
-            if Config.AutoReviveTeammates or Config.FullAutoArena or Config.MasterFullAuto then
-                autoRevive()
-            end
-        end)
-    end
-end)
-
--- 6. ARENA AUTO QUEUE LOOP
-task.spawn(function()
-    while isAlive() do
-        task.wait(2)
-        if Config.AutoQueueArena or Config.MasterFullAuto then
-            pcall(function()
-                local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
-                local inArena = LocalPlayer:GetAttribute("InArena")
-                if zone == "Lobby" and not inArena then
-                    local rep = game:GetService("ReplicatedStorage")
-                    if rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("QueueJoin") then
-                        rep.Remotes.QueueJoin:FireServer()
+                            pcall(function()
+                                local cc = require(LocalPlayer.PlayerScripts.Controllers.CombatController)
+                                if cc and cc.dash then cc.dash(dodgeDir) end
+                            end)
+                            if rep.Remotes:FindFirstChild("Dash") then
+                                rep.Remotes.Dash:FireServer(dodgeDir)
+                            end
+                        end
                     end
                 end
             end)
