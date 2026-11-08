@@ -33,43 +33,59 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- Game & Universe ID Safety Guard
-local currentPlaceId = game.PlaceId
-local currentUniverseId = game.GameId
-local isRaycityGame = (currentUniverseId == 10772794231 or currentPlaceId == 117419079466193 or game:GetService("ReplicatedStorage"):FindFirstChild("RCDrive") or workspace:FindFirstChild("MyCar"))
+-- Execution Run Management & Multi-Execute Clean Up
+getgenv().__RaycityHubRunId = (tonumber(getgenv().__RaycityHubRunId) or 0) + 1
+local currentScriptRunId = getgenv().__RaycityHubRunId
 
-if not isRaycityGame then
-    warn("[Raycity Hub] ❌ Wrong Game! Target is Raycity RB only. Current PlaceId: " .. tostring(currentPlaceId) .. ", GameId: " .. tostring(currentUniverseId))
-    return
+local function isAlive()
+    local activeRun = tonumber(getgenv().__RaycityHubRunId)
+    if activeRun and currentScriptRunId and activeRun > currentScriptRunId then
+        return false
+    end
+    return true
 end
 
--- Global Execution Guard
-if _G.RaycityHubLoaded then
-    warn("[Raycity Hub] Script is already running!")
-    return
-end
-_G.RaycityHubLoaded = true
+-- Clean up any previous WindUI ScreenGuis cleanly
+pcall(function()
+    local roots = {
+        (typeof(gethui) == "function" and gethui()) or nil,
+        game:GetService("CoreGui"),
+        game:GetService("CoreGui"):FindFirstChild("RobloxGui"),
+        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            for _, child in ipairs(root:GetChildren()) do
+                if string.find(child.Name, "WindUI") or string.find(child.Name, "Raycity") then
+                    pcall(function() child:Destroy() end)
+                end
+            end
+        end
+    end
+end)
 
 -- ==============================================================================
 -- 🛡️ 1. ANTI-CHEAT BYPASS & SAFETY SHIELD
 -- ==============================================================================
 pcall(function()
     local acFolder = ReplicatedStorage:FindFirstChild("RaycityAntiCheat")
-    if acFolder and acFolder:FindFirstChild("Remotes") then
-        local remotes = acFolder.Remotes
-        local acPush = remotes:FindFirstChild("AcPush")
-        local acMove = remotes:FindFirstChild("AcMove")
-        local acThrill = remotes:FindFirstChild("AcThrill")
-
-        if hookmetamethod then
-            local oldNamecall = nil
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local remotes = acFolder and acFolder:FindFirstChild("Remotes")
+    if remotes and typeof(hookmetamethod) == "function" then
+        local blocked = {}
+        for _, name in ipairs({ "AcPush", "AcMove", "AcThrill" }) do
+            local r = remotes:FindFirstChild(name)
+            if r then blocked[r] = true end
+        end
+        if next(blocked) ~= nil then
+            local oldNamecall
+            local hookFn = function(self, ...)
                 local method = getnamecallmethod()
-                if (method == "FireServer" or method == "fireServer") and (self == acPush or self == acMove or self == acThrill) then
-                    return nil -- Silently drop telemetry
+                if (method == "FireServer" or method == "fireServer") and blocked[self] then
+                    return nil
                 end
                 return oldNamecall(self, ...)
-            end)
+            end
+            oldNamecall = hookmetamethod(game, "__namecall", typeof(newcclosure) == "function" and newcclosure(hookFn) or hookFn)
             print("[Raycity Hub] 🛡️ Anti-Cheat Telemetry Shield Activated!")
         end
     end
@@ -360,7 +376,7 @@ local Config = {
 -- 👻 4. GHOST TRAFFIC (NOCLIP THROUGH CIVILIAN CARS)
 -- ==============================================================================
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(1.5)
         if Config.GhostTraffic then
             pcall(function()
@@ -455,7 +471,7 @@ local function pressReturnKey()
 end
 
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(0.08)
         if Config.AutoFarmQuests or Config.AutoSkipDialogue or Config.AutoAcceptQuest then
             pcall(function()
@@ -793,7 +809,7 @@ local function executeMoveStep(targetPos, speedKmh)
 end
 
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(0.06)
         if Config.AutoFarmQuests then
             local root = getCarRoot()
@@ -1218,7 +1234,7 @@ end)
 
 -- Infinite Booster / SP Loop
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(0.5)
         if Config.InfiniteBoost then
             pcall(function()
@@ -1239,7 +1255,7 @@ end)
 
 -- Super AutoDrive Engine Hook
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(1)
         if Config.SuperAutoDrive then
             pcall(function()
@@ -1262,7 +1278,7 @@ end)
 
 -- Auto Road Fight & Whirl Skill Loop
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(0.3)
         if Config.AutoRoadFight then
             local missionCars = workspace:FindFirstChild("RBRCMissionCars")
@@ -1310,7 +1326,7 @@ end)
 -- 💎 9. AUTO PICKUP VACUUM
 -- ==============================================================================
 task.spawn(function()
-    while true do
+    while isAlive() do
         task.wait(0.5)
         if Config.AutoPickups then
             local root = getCarRoot()
