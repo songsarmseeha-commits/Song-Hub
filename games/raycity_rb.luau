@@ -282,17 +282,25 @@ local function driveCarStep(targetPos, speedKmh, isAir)
         moveDir = flatDir.Magnitude > 0.1 and flatDir.Unit or Vector3.new(0, 0, -1)
 
         -- Raycast downward from above car to find exact asphalt elevation
-        local rayParams = RaycastParams.new()
-        rayParams.FilterType = RaycastFilterType.Exclude
-        local myCar = workspace:FindFirstChild("MyCar")
-        local lpChar = LocalPlayer and LocalPlayer.Character
-        local ignoreList = {}
-        if myCar then table.insert(ignoreList, myCar) end
-        if lpChar then table.insert(ignoreList, lpChar) end
-        rayParams.FilterDescendantsInstances = ignoreList
+        local roadY = targetPos.Y
+        pcall(function()
+            local rayParams = RaycastParams.new()
+            local rayFilter = (Enum and Enum.RaycastFilterType and (Enum.RaycastFilterType.Exclude or Enum.RaycastFilterType.Blacklist))
+            if rayFilter then
+                rayParams.FilterType = rayFilter
+            end
+            local myCar = workspace:FindFirstChild("MyCar")
+            local lpChar = LocalPlayer and LocalPlayer.Character
+            local ignoreList = {}
+            if myCar then table.insert(ignoreList, myCar) end
+            if lpChar then table.insert(ignoreList, lpChar) end
+            rayParams.FilterDescendantsInstances = ignoreList
 
-        local groundRay = workspace:Raycast(currentPos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), rayParams)
-        local roadY = groundRay and (groundRay.Position.Y + 1.2) or targetPos.Y
+            local groundRay = workspace:Raycast(currentPos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), rayParams)
+            if groundRay and groundRay.Position then
+                roadY = groundRay.Position.Y + 1.2
+            end
+        end)
 
         -- Advance forward along road at current speed
         local stepDist = math.min(dist, math.max(0.4, speedMps * 0.045))
@@ -305,8 +313,12 @@ local function driveCarStep(targetPos, speedKmh, isAir)
         root.AssemblyAngularVelocity = Vector3.zero
     end
 
-    local nextLook = nextPos + moveDir * 10
-    root.CFrame = CFrame.lookAt(nextPos, nextLook)
+    if moveDir and moveDir.Magnitude > 0.01 then
+        local nextLook = nextPos + moveDir * 10
+        pcall(function()
+            root.CFrame = CFrame.lookAt(nextPos, nextLook)
+        end)
+    end
 
     -- 2. Sync native RCDrive system
     if rcd and type(rcd.phys) == "table" then
@@ -426,6 +438,20 @@ end
 local function pressReturnKey()
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        -- 1. MobileTap in RBRCNpcTalkPrompt (Talk to NPC prompt)
+        local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
+        if ntp and ntp.Enabled then
+            local tap = ntp:FindFirstChild("MobileTap", true)
+            if tap then fireGuiClick(tap) end
+        end
+
+        -- 2. Enter button in RBRCGameGuide (Guide Mission prompt)
+        local gg = pg and pg:FindFirstChild("RBRCGameGuide")
+        if gg and gg.Enabled then
+            local enterBtn = gg:FindFirstChild("Enter", true)
+            if enterBtn and enterBtn.Visible then fireGuiClick(enterBtn) end
+        end
+
         local qGui = pg and pg:FindFirstChild("RaycityQuestUi")
         if qGui and qGui.Enabled then
             for _, d in ipairs(qGui:GetDescendants()) do
@@ -511,8 +537,20 @@ task.spawn(function()
 
                 -- Auto respond if RBRCNpcTalkPrompt is visible
                 local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
-                if ntp and ntp.Enabled and Config.AutoFarmQuests then
+                if ntp and ntp.Enabled and (Config.AutoFarmQuests or Config.AutoAcceptQuest) then
+                    local tap = ntp:FindFirstChild("MobileTap", true)
+                    if tap then fireGuiClick(tap) end
                     pressReturnKey()
+                end
+
+                -- Auto respond if RBRCGameGuide has Enter visible
+                local gg = pg and pg:FindFirstChild("RBRCGameGuide")
+                if gg and gg.Enabled and (Config.AutoFarmQuests or Config.AutoAcceptQuest) then
+                    local enterBtn = gg:FindFirstChild("Enter", true)
+                    if enterBtn and enterBtn.Visible then
+                        fireGuiClick(enterBtn)
+                        pressReturnKey()
+                    end
                 end
 
                 -- Auto confirm AutoDrive popup or generic confirm windows if present
@@ -620,6 +658,11 @@ local function findQuestTargetNpc(targetName)
                 local t = d.Text:lower()
                 if t:find(cleanName, 1, true) or cleanName:find(t, 1, true) then
                     return npc
+                end
+                for word in cleanName:gmatch("%S+") do
+                    if #word >= 3 and t:find(word, 1, true) then
+                        return npc
+                    end
                 end
             end
         end
@@ -749,8 +792,28 @@ local function getActiveQuestDestination()
     end
 
     local targetNpcModel = subQuestNpc or returnNpc
+    if not targetNpcModel and pg then
+        local gg = pg:FindFirstChild("RBRCGameGuide")
+        if gg and gg.Enabled then
+            for _, d in ipairs(gg:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
+                    for matchName in d.Text:gmatch("%[(.-)%]") do
+                        if matchName and matchName ~= "" and not matchName:find("Lv") then
+                            local npc = findQuestTargetNpc(matchName)
+                            if npc then
+                                targetNpcModel = npc
+                                break
+                            end
+                        end
+                    end
+                end
+                if targetNpcModel then break end
+            end
+        end
+    end
+
     if targetNpcModel then
-        local p = targetNpcModel.PrimaryPart or targetNpcModel:FindFirstChild("Root") or targetNpcModel:FindFirstChildWhichIsA("BasePart")
+        local p = targetNpcModel.PrimaryPart or targetNpcModel:FindFirstChild("HumanoidRootPart") or targetNpcModel:FindFirstChild("Root") or targetNpcModel:FindFirstChildWhichIsA("BasePart")
         if p then
             if not navPoints and okNav and nav and nav.pointTo then
                 pcall(nav.pointTo, p.Position)
@@ -799,6 +862,12 @@ local function executeMoveStep(targetPos, speedKmh)
         else
             driveCarStep(targetPos, speedKmh or 180, false)
         end
+    elseif Config.QuestDriveMode == "Hybrid Cruise" then
+        if dist > 60 then
+            driveCarStep(targetPos, speedKmh or 400, true)
+        else
+            driveCarStep(targetPos, speedKmh or 220, false)
+        end
     else
         -- "Realistic Road Drive" or fallback
         driveCarStep(targetPos, speedKmh, false)
@@ -809,7 +878,8 @@ task.spawn(function()
     while isAlive() do
         task.wait(0.06)
         if Config.AutoFarmQuests then
-            local root = getCarRoot()
+            pcall(function()
+                local root = getCarRoot()
             local rcd = getRCDrive()
             if root then
                 local destPos, destObj, points, destType, mState = getActiveQuestDestination()
@@ -1079,6 +1149,7 @@ task.spawn(function()
                     end
                 end
             end
+            end)
         end
     end
 end)
