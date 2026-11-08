@@ -115,7 +115,7 @@ local Config = {
     NoClip = false,
 
     -- Progression & Automation
-    AutoRebirth = false,
+    AutoRebirth = true,
     AutoClaimDaily = true,
 
     -- Safety
@@ -232,6 +232,15 @@ TabGym:Toggle({
             end)
             WindUI:Notify({ Title = "Auto Train Paused", Content = "Stopped barbell workout.", Duration = 2, Icon = "pause" })
         end
+    end
+})
+
+TabGym:Toggle({
+    Title = "🔄 Auto Rebirth on Max Strength (จุติทันทีเมื่อสเตตัสเต็ม)",
+    Desc = "เมื่อ Strength เต็มขีดจำกัด (เช่น 50/50, 70/70) บอทจะวาร์ปไปจุติที่ Shrine of Mars อัตโนมัติแล้วกลับมายกต่อทันที",
+    Value = Config.AutoRebirth,
+    Callback = function(val)
+        Config.AutoRebirth = val
     end
 })
 
@@ -582,7 +591,7 @@ local TabProg = Window:Tab({ Title = "Progression", Icon = "award" })
 
 TabProg:Toggle({
     Title = "🔄 Auto Rebirth (จุติตัวละครอัตโนมัติ)",
-    Desc = "กด Rebirth ทันทีที่เลเวลถึงเกณฑ์เพื่อรับ Skill Points และบูสต์โบนัส",
+    Desc = "จุติที่ Shrine of Mars ทันทีที่ Strength เต็มขีดจำกัด (เช่น 50/50, 70/70) แล้วกลับมายกบาร์เบลต่ออัตโนมัติ",
     Value = Config.AutoRebirth,
     Callback = function(val)
         Config.AutoRebirth = val
@@ -590,15 +599,11 @@ TabProg:Toggle({
 })
 
 TabProg:Button({
-    Title = "🔄 Manual Rebirth Now",
-    Desc = "ส่งคำสั่ง Rebirth ไปที่ Shrine of Mars ทันที",
+    Title = "🔄 Manual Rebirth Now (กดจุติทันที)",
+    Desc = "วาร์ปไป Shrine of Mars และทำการ Rebirth ทันทีในคลิกเดียว",
     Icon = "rotate-cw",
     Callback = function()
-        pcall(function()
-            local rep = game:GetService("ReplicatedStorage")
-            rep.Remotes.Rebirth:FireServer()
-            WindUI:Notify({ Title = "Rebirth", Content = "Fired Rebirth signal.", Duration = 2 })
-        end)
+        task.spawn(performRebirth)
     end
 })
 
@@ -615,6 +620,60 @@ TabProg:Toggle({
 -- 🛡️ TAB 7: SETTINGS
 -- ==============================================================================
 local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
+
+TabSettings:Paragraph({
+    Title = "⚡ Auto Execute System (ระบบรันสคริปต์อัตโนมัติ)",
+    Desc = "ตั้งค่าให้ Song Hub โหลดและทำงานทันทีเมื่อเปิด Roblox หรือเปลี่ยนห้อง โดยไม่ต้องก็อปลิงก์มาวางใหม่",
+    Image = "zap"
+})
+
+TabSettings:Button({
+    Title = "💾 Install Auto-Execute (ติดตั้งไฟล์ลง autoexec อัตโนมัติ)",
+    Desc = "สร้างไฟล์ SongHub.luau ในโฟลเดอร์ autoexec ของตัวรัน (Wave/Solara/Swift/Delta/etc.)",
+    Icon = "download",
+    Callback = function()
+        local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+        local success = false
+        pcall(function()
+            if writefile then
+                if makefolder then pcall(makefolder, "autoexec") end
+                writefile("autoexec/SongHub.luau", code)
+                writefile("autoexec/SongHub.lua", code)
+                writefile("autoexec/SongHub_GloryBound.luau", code)
+                success = true
+            end
+        end)
+        if setclipboard then pcall(setclipboard, code) end
+        if success then
+            WindUI:Notify({ 
+                Title = "Auto-Execute Installed! ⚡", 
+                Content = "ติดตั้งไฟล์ลง autoexec เรียบร้อย และคัดลอกโค้ดไว้ในคลิปบอร์ดแล้ว!", 
+                Duration = 4, 
+                Icon = "check" 
+            })
+        else
+            WindUI:Notify({ 
+                Title = "Copied to Clipboard 📋", 
+                Content = "คัดลอกคำสั่งเรียบร้อยแล้ว นำไปวางในโฟลเดอร์ autoexec ของตัวรันได้เลย", 
+                Duration = 4, 
+                Icon = "clipboard" 
+            })
+        end
+    end
+})
+
+TabSettings:Button({
+    Title = "📋 Copy Loader Script (คัดลอกโค้ดสำหรับใส่ autoexec)",
+    Desc = "คัดลอกคำสั่ง loadstring เพื่อนำไปสร้างไฟล์ .lua/.luau ในโฟลเดอร์ autoexec ด้วยตนเอง",
+    Icon = "clipboard",
+    Callback = function()
+        local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+        if setclipboard then
+            setclipboard(code)
+            WindUI:Notify({ Title = "Copied! 📋", Content = "คัดลอกโค้ดสำหรับ autoexec เรียบร้อยแล้ว", Duration = 3, Icon = "check" })
+        end
+    end
+})
 
 TabSettings:Toggle({
     Title = "🛡️ Anti-AFK (กันหลุด 20 นาที)",
@@ -689,12 +748,154 @@ end
 -- 🚀 BACKGROUND THREADS & ENGINES
 -- ==============================================================================
 
+-- ==============================================================================
+-- 🔄 AUTO REBIRTH SYSTEM & HELPERS
+-- ==============================================================================
+local isRebirthing = false
+
+local function checkRebirthReady()
+    local ready = false
+    -- Method 1: ClientState Controller
+    pcall(function()
+        local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
+        local state = cs and cs.get and cs.get()
+        if state then
+            if state.RebirthReady == true then
+                ready = true
+            elseif state.Strength and state.StrengthCap and tonumber(state.Strength) and tonumber(state.StrengthCap) then
+                if tonumber(state.Strength) >= tonumber(state.StrengthCap) then
+                    ready = true
+                end
+            end
+        end
+    end)
+    if ready then return true end
+
+    -- Method 2: Training HUD Text
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local tr = pg and pg:FindFirstChild("Training")
+        if tr then
+            local push = tr:FindFirstChild("Push", true)
+            if push then
+                local lbl = push:FindFirstChild("Label", true)
+                if lbl and lbl.Text and lbl.Text:lower():find("rebirth") then
+                    ready = true
+                end
+            end
+            local status = tr:FindFirstChild("Status", true)
+            if status and status.Text and status.Text:lower():find("rebirth ready") then
+                ready = true
+            end
+            local val = tr:FindFirstChild("Value", true)
+            if val and val.Text then
+                local cur, maxVal = val.Text:match("(%d+)%s*/%s*(%d+)")
+                if cur and maxVal and tonumber(cur) and tonumber(maxVal) and tonumber(cur) >= tonumber(maxVal) then
+                    ready = true
+                end
+            end
+        end
+    end)
+    if ready then return true end
+
+    -- Method 3: LobbyHUD
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local lhud = pg and pg:FindFirstChild("LobbyHUD")
+        if lhud then
+            for _, desc in ipairs(lhud:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text and desc.Text:lower():find("rebirth ready") then
+                    ready = true
+                    break
+                end
+            end
+        end
+    end)
+
+    return ready
+end
+
+local function performRebirth()
+    if isRebirthing then return end
+    isRebirthing = true
+
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local lp = LocalPlayer
+        local char = lp.Character
+        local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+        local shrine = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Stations") and workspace.Lobby.Stations:FindFirstChild("RebirthShrine")
+        local shrinePart = shrine and shrine:FindFirstChild("PromptPart")
+        
+        if not shrinePart or not root then
+            isRebirthing = false
+            return
+        end
+
+        WindUI:Notify({ 
+            Title = "Auto Rebirth 🔄", 
+            Content = "Strength is Max! Travelling to Shrine of Mars...", 
+            Duration = 3, 
+            Icon = "refresh-cw" 
+        })
+
+        -- 1. Disengage from barbell
+        rep.Remotes.TrainStop:FireServer()
+        task.wait(0.3)
+
+        -- 2. Teleport & pin at shrine
+        local currentRebirth = tonumber(lp:GetAttribute("Rebirth")) or 0
+        local startTime = tick()
+
+        while isAlive() and (tick() - startTime < 3.5) do
+            root.CFrame = shrinePart.CFrame + Vector3.new(0, 1.2, 0)
+            root.AssemblyLinearVelocity = Vector3.zero
+
+            -- Open prompt if present
+            if fireproximityprompt and shrinePart:FindFirstChild("OpenPrompt") and shrinePart.OpenPrompt.Enabled then
+                fireproximityprompt(shrinePart.OpenPrompt)
+            end
+
+            -- Fire rebirth remote
+            rep.Remotes.Rebirth:FireServer()
+
+            -- Check if rebirth registered
+            local newRebirth = tonumber(lp:GetAttribute("Rebirth")) or 0
+            if newRebirth > currentRebirth then
+                break
+            end
+
+            task.wait(0.2)
+        end
+
+        task.wait(0.4)
+
+        local finalRebirth = tonumber(lp:GetAttribute("Rebirth")) or 0
+        if finalRebirth > currentRebirth then
+            WindUI:Notify({ 
+                Title = "Rebirth Successful! 🎉", 
+                Content = string.format("Ascended to Rebirth %d! Resuming workout...", finalRebirth), 
+                Duration = 3, 
+                Icon = "award" 
+            })
+        end
+    end)
+
+    isRebirthing = false
+end
+
 -- 1. GYM AUTO TRAINING LOOP
 task.spawn(function()
     while isAlive() do
         task.wait(1 / math.max(1, Config.TrainSpeedRps))
-        if Config.AutoTrain then
+        if Config.AutoTrain and not isRebirthing then
             pcall(function()
+                -- Check if rebirth ready first!
+                if Config.AutoRebirth and checkRebirthReady() then
+                    performRebirth()
+                    return
+                end
+
                 local rep = game:GetService("ReplicatedStorage")
                 local lp = LocalPlayer
                 local char = lp.Character
@@ -1000,17 +1201,14 @@ end)
 -- 7. AUTO REBIRTH & DAILY REWARDS
 task.spawn(function()
     while isAlive() do
-        task.wait(5)
+        task.wait(2)
         pcall(function()
             local rep = game:GetService("ReplicatedStorage")
             if Config.AutoClaimDaily then
                 rep.Remotes.DailyAction:FireServer("Claim")
             end
-            if Config.AutoRebirth then
-                local lvl = tonumber(LocalPlayer:GetAttribute("Level")) or 0
-                if lvl >= 50 then
-                    rep.Remotes.Rebirth:FireServer()
-                end
+            if Config.AutoRebirth and not isRebirthing and checkRebirthReady() then
+                performRebirth()
             end
         end)
     end
@@ -1060,3 +1258,15 @@ end)
 
 print("[GloryBound Hub] ✨ Successfully loaded [TRIALS] GloryBound Automation Hub!")
 
+
+-- Auto-install to autoexec folder if supported by executor
+pcall(function()
+    if writefile and readfile then
+        local installed = pcall(readfile, "autoexec/SongHub.luau")
+        if not installed then
+            if makefolder then pcall(makefolder, "autoexec") end
+            local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+            writefile("autoexec/SongHub.luau", code)
+        end
+    end
+end)
