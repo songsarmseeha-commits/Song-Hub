@@ -280,8 +280,17 @@ pcall(function() ClientDataManager = require(ReplicatedStorage.Client.Data.Clien
 DayNightService = nil
 pcall(function() DayNightService = require(ReplicatedStorage.Shared.Services.DayNightService) end)
 
-HalloweenService = nil
-pcall(function() HalloweenService = require(ReplicatedStorage.Shared.Services.HalloweenService) end)
+TournamentService = nil
+pcall(function() TournamentService = require(ReplicatedStorage.Shared.Services.TournamentService) end)
+
+TournamentGuiClient = nil
+pcall(function() TournamentGuiClient = require(ReplicatedStorage.Client.Core.Gui.TournamentGuiClient) end)
+
+TournamentMinigameClient = nil
+pcall(function() TournamentMinigameClient = require(ReplicatedStorage.Client.Core.Gui.TournamentMinigameClient) end)
+
+TournamentMatchClient = nil
+pcall(function() TournamentMatchClient = require(ReplicatedStorage.Client.Core.Classes.TournamentMatchClient) end)
 
 CurrencyService = nil
 pcall(function() CurrencyService = require(ReplicatedStorage.Shared.Services.CurrencyService) end)
@@ -307,8 +316,6 @@ pcall(function() TokensService = require(ReplicatedStorage.Shared.Services.Token
 GradeService = nil
 pcall(function() GradeService = require(ReplicatedStorage.Shared.Services.GradeService) end)
 
-ZombieWaveService = nil
-pcall(function() ZombieWaveService = require(ReplicatedStorage.Shared.Services.ZombieWaveService) end)
 
 ObbyBonusService = nil
 pcall(function() ObbyBonusService = require(ReplicatedStorage.Shared.Services.ObbyBonusService) end)
@@ -432,36 +439,7 @@ local function getNightTimeRemaining()
     end
 end
 
--- Helper: Get player's Candy currency
-local function getCandyAmount()
-    local attr = LocalPlayer:GetAttribute("CurrencyHalloween_2026") or LocalPlayer:GetAttribute("Candy")
-    if attr and tonumber(attr) and tonumber(attr) > 0 then return tonumber(attr) end
-    if CurrencyService and typeof(CurrencyService.GetCurrencyAmount) == "function" then
-        local ok, val = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Halloween_2026")
-        if ok and typeof(val) == "number" and val > 0 then return val end
-        local ok2, val2 = pcall(CurrencyService.GetCurrencyAmount, LocalPlayer, "Candy")
-        if ok2 and typeof(val2) == "number" and val2 > 0 then return val2 end
-    end
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local fg = pg and pg:FindFirstChild("FrontGui")
-        local lbf = fg and fg:FindFirstChild("LeftBottomFrame")
-        local ch = lbf and lbf:FindFirstChild("CandyHolder")
-        local img = ch and ch:FindFirstChild("ImageLabel")
-        local lbl = img and img:FindFirstChild("AmountLabel")
-        if lbl and lbl.Text then
-            local num = tonumber(lbl.Text)
-            if num then return num end
-        end
-    end)
-    if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
-        local ok, d = pcall(ClientDataManager.GetData)
-        if d and d.Currency and (d.Currency.Halloween_2026 or d.Currency.Candy) then
-            return d.Currency.Halloween_2026 or d.Currency.Candy
-        end
-    end
-    return 0
-end
+-- (Candy currency removed with Halloween event)
 
 -- Helper: Parse formatted number strings with suffixes (e.g. "$25M", "500K", "$1Sp", "1.5Qa")
 local function parseSuffixNumber(str)
@@ -822,10 +800,7 @@ local function isUnitSelected(guid, uData, selectedList)
     return false
 end
 
--- Helper: Ensure player is holding a PlayerUnit tool (Required for Grave Digging)
-local function ensurePlayerUnitHeld()
-    local char = LocalPlayer.Character
-    if not char then return false end
+-- (Grave digging helper removed with Halloween event)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
 
@@ -1054,22 +1029,17 @@ local selectedWeatherGlobe = "CosmicGlobe"
 local autoCraftScientist = false
 local autoClaimMissions = false
 
--- Halloween Event Automation
-local autoTrickOrTreat = false
-local autoGraves = false
-local autoConveyorCandy = false
-local autoCollectCandyCorn = false
+-- World Map Tokens Automation
 local autoCollectMapTokens = false
 local autoSnatchVariantTokens = false
-local selectedVariantTokens = { "Shadow", "Admin", "Halloween", "Unknown", "Predator", "FlowState" }
-local autoBuyHalloweenShop = false
-local selectedHalloweenShopItems = { "HauntedHorrors (250)" }
-local prioritizeAdminHouse = true
+local selectedVariantTokens = { "Shadow", "Admin", "Unknown", "Predator", "FlowState" }
 
--- Zombie Wave Defense Event Automation
-local autoKillZombies = false
-local prioritizeKingZombies = true
-local zombieSessionKills = 0
+-- 🏆 Tournament Mode Automation (New Update)
+local autoTournament = false
+local tournamentAutoEquipBest = true
+local tournamentPerfectKick = true
+local tournamentAutoReMatch = true
+local TournamentStatusParagraph = nil
 local scriptStartTime = os.clock()
 
 -- Infinity Tower
@@ -1105,96 +1075,92 @@ local fxAnimationSpeed = 1.0
 -- Table storing references to UI controls & live FX instances
 local UIElements = {}
 
--- Helper: Rapidly sweep Candy Corn dropped near a location
-local function sweepCandiesAround(centerPos, maxRadius)
-    if not isAlive() then return end
-    local hrp = getRoot()
-    if not hrp then return end
-    maxRadius = maxRadius or 35
-
-    pcall(function()
-        local eff = workspace:FindFirstChild("Effects")
-        if eff then
-            for _, item in ipairs(eff:GetChildren()) do
-                if item:IsA("Model") and (item.Name == "CandyCorn" or string.find(item.Name, "Candy")) then
-                    local pos = item:GetPivot().Position
-                    if not centerPos or (pos - centerPos).Magnitude <= maxRadius then
-                        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 1.2, 0))
-                        task.wait(0.08)
-                    end
+-- Helper: Retrieve Tournament Field representation
+local function getTournamentField()
+    local fieldModel = workspace:FindFirstChild("Systems") and workspace.Systems:FindFirstChild("Tournament") and workspace.Systems.Tournament:FindFirstChild("Field")
+    if not fieldModel then return nil end
+    local base = fieldModel.PrimaryPart or fieldModel:FindFirstChild("Base")
+    local hGoal = fieldModel:FindFirstChild("HomeGoal")
+    local aGoal = fieldModel:FindFirstChild("AwayGoal")
+    if not base or not hGoal or not aGoal then return nil end
+    return {
+        Model = fieldModel,
+        Key = fieldModel:GetFullName(),
+        Base = base,
+        HomeGoal = hGoal,
+        AwayGoal = aGoal,
+        GetGeometry = function(self)
+            local v1 = {}
+            for _, j in ipairs(self.Model:GetChildren()) do
+                if j:IsA("BasePart") and j.Name:sub(1, 10) == "GoalieZone" then
+                    table.insert(v1, j)
                 end
             end
+            if TournamentMatchClient then
+                return TournamentMatchClient.GetFieldGeometry(self.Base, self.HomeGoal, self.AwayGoal, v1)
+            end
+            return nil
         end
-    end)
+    }
 end
 
--- Helper: Retrieve active spawned zombies in the game
-local function getActiveZombies()
-    local zombies = {}
+-- Helper: Initiate Tournament Match natively through UI
+local isStartingTournament = false
+local function doStartTournamentMatch()
+    if isStartingTournament then return false end
+    if TournamentGuiClient and TournamentGuiClient.IsInMatch() then return true end
+
+    isStartingTournament = true
+    local started = false
+
     pcall(function()
-        for _, z in ipairs(CollectionService:GetTagged("SpawnedZombie")) do
-            if z and z.Parent and z:FindFirstChild("HumanoidRootPart") then
-                local hum = z:FindFirstChildOfClass("Humanoid")
-                if not hum or hum.Health > 0 then
-                    table.insert(zombies, z)
-                end
+        local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+        local main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
+
+        -- 1. If selection frame is not open, open it
+        if not main or not main.Visible then
+            local fObj = getTournamentField()
+            if fObj and TournamentGuiClient then
+                TournamentGuiClient.Open(fObj)
+                task.wait(0.5)
+            end
+        end
+
+        -- 2. Equip Best Units if enabled
+        local btnHolder = main and main:FindFirstChild("ButtonHolder")
+        local equipBest = btnHolder and btnHolder:FindFirstChild("EquipBestButton")
+        local startBtn = btnHolder and btnHolder:FindFirstChild("StartButton")
+
+        if tournamentAutoEquipBest and equipBest and typeof(getconnections) == "function" then
+            for _, c in ipairs(getconnections(equipBest.MouseButton1Click)) do
+                pcall(function() c:Fire() end)
+            end
+            task.wait(0.4)
+        end
+
+        -- 3. Click StartButton
+        if startBtn and typeof(getconnections) == "function" then
+            for _, c in ipairs(getconnections(startBtn.MouseButton1Click)) do
+                pcall(function() c:Fire() end)
+            end
+            task.wait(0.8)
+        end
+
+        if TournamentGuiClient and TournamentGuiClient.IsInMatch() then
+            started = true
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Tournament Match Started! ⚽",
+                    Content = "Starting tournament match with your best units!",
+                    Duration = 3,
+                    Icon = "trophy"
+                })
             end
         end
     end)
-    pcall(function()
-        local hw = workspace:FindFirstChild("Halloween")
-        if hw then
-            for _, c in ipairs(hw:GetChildren()) do
-                if c:IsA("Model") and (c.Name == "SpawnedZombie" or c.Name == "SpawnedKingZombie" or string.find(c.Name:lower(), "zombie")) then
-                    if not table.find(zombies, c) and c:FindFirstChild("HumanoidRootPart") then
-                        table.insert(zombies, c)
-                    end
-                end
-            end
-        end
-    end)
 
-    if prioritizeKingZombies then
-        table.sort(zombies, function(a, b)
-            local isKingA = (a.Name == "SpawnedKingZombie") or (a:GetAttribute("IsKing") == true)
-            local isKingB = (b.Name == "SpawnedKingZombie") or (b:GetAttribute("IsKing") == true)
-            if isKingA and not isKingB then return true end
-            if not isKingA and isKingB then return false end
-            return false
-        end)
-    end
-    return zombies
-end
-
--- Helper: Teleport to and eliminate a specific zombie
-local function killTargetZombie(zombie)
-    if not zombie or not zombie.Parent then return false end
-    local zRoot = zombie:FindFirstChild("HumanoidRootPart") or zombie.PrimaryPart or (zombie:IsA("BasePart") and zombie)
-    if not zRoot then return false end
-    local hrp = getRoot()
-    if not hrp then return false end
-
-    -- Position slightly above zombie
-    hrp.CFrame = CFrame.new(zRoot.Position + Vector3.new(0, 2.5, 0))
-    task.wait(0.12)
-
-    -- Proximity Prompt trigger fallback
-    local prompt = zombie:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and typeof(fireproximityprompt) == "function" then
-        pcall(fireproximityprompt, prompt)
-    end
-
-    -- Direct Remote Event execution
-    if Remotes:FindFirstChild("KillSpawnedZombie") then
-        Remotes.KillSpawnedZombie:FireServer(zombie)
-    end
-
-    task.wait(0.18)
-
-    -- Sweep dropped candies around kill site
-    sweepCandiesAround(zRoot.Position, 35)
-    zombieSessionKills = zombieSessionKills + 1
-    return true
+    isStartingTournament = false
+    return started
 end
 
 -- Helper: Disable GamePass Tycoon Floor Buttons to prevent accidental Robux prompts
@@ -1216,78 +1182,6 @@ local function disablePlotGamepassButtons()
             end
         end
     end)
-end
-
-local lastAdminHouseKnockedTick = 0
-
--- Helper: Get Admin House (Boss House) status and 1-hour cooldown
-local function getAdminHouseStatus()
-    local adminHouse = workspace:FindFirstChild("HouseModelAdmin", true)
-    if not adminHouse then
-        local houses = CollectionService:GetTagged("HouseSystemModel")
-        for _, h in ipairs(houses) do
-            if h.Name == "HouseModelAdmin" or h.Name:lower():find("admin") then
-                adminHouse = h
-                break
-            end
-        end
-    end
-
-    local onCooldown = false
-    local secLeft = 0
-    local formatted = "00:00"
-    local now = workspace:GetServerTimeNow()
-
-    -- 1. Check local session knock tracker (guarantees immediate 1-hour cooldown registration upon knocking)
-    if lastAdminHouseKnockedTick > 0 then
-        local elapsed = os.clock() - lastAdminHouseKnockedTick
-        if elapsed < 3600 then
-            onCooldown = true
-            secLeft = math.max(secLeft, math.ceil(3600 - elapsed))
-        end
-    end
-
-    -- 2. Check ClientDataManager persisted HouseKnocks (syncs across reconnects / server sessions)
-    if ClientDataManager and typeof(ClientDataManager.GetData) == "function" then
-        local ok, data = pcall(ClientDataManager.GetData)
-        if ok and data and data.Events and data.Events.Halloween_2026 and data.Events.Halloween_2026.HouseKnocks then
-            local serverKnockTime = tonumber(data.Events.Halloween_2026.HouseKnocks.HouseModelAdmin) or 0
-            if serverKnockTime > 0 and (now - serverKnockTime) < 3600 then
-                onCooldown = true
-                secLeft = math.max(secLeft, math.ceil(3600 - (now - serverKnockTime)))
-            end
-        end
-    end
-
-    -- 3. Check HalloweenService Cooldown End
-    if HalloweenService and typeof(HalloweenService.GetHouseCooldownEnd) == "function" then
-        local ok, cdEnd = pcall(HalloweenService.GetHouseCooldownEnd, LocalPlayer, "HouseModelAdmin")
-        if ok and cdEnd and cdEnd > now then
-            onCooldown = true
-            secLeft = math.max(secLeft, math.ceil(cdEnd - now))
-        end
-    end
-
-    -- 4. Check HalloweenService IsHouseOnCooldown
-    if not onCooldown and HalloweenService and typeof(HalloweenService.IsHouseOnCooldown) == "function" then
-        local ok, cd = pcall(HalloweenService.IsHouseOnCooldown, LocalPlayer, "HouseModelAdmin")
-        if ok and cd == true then
-            onCooldown = true
-            if secLeft <= 0 then secLeft = 3600 end
-        end
-    end
-
-    if secLeft > 0 then
-        formatted = string.format("%02d:%02d", math.floor(secLeft / 60), secLeft % 60)
-    end
-
-    return {
-        house = adminHouse,
-        onCooldown = onCooldown,
-        secLeft = secLeft,
-        formatted = formatted,
-        ready = (not onCooldown) and (adminHouse ~= nil)
-    }
 end
 
 --------------------------------------------------------------------------------
@@ -1396,21 +1290,14 @@ local function collectConfigData()
         autoApplyBallSkins = autoApplyBallSkins,
         selectedBallSkins = selectedBallSkins,
 
-        -- Halloween Event
-        autoTrickOrTreat = autoTrickOrTreat,
-        prioritizeAdminHouse = prioritizeAdminHouse,
-        autoConveyorCandy = autoConveyorCandy,
-        autoGraves = autoGraves,
-        autoCollectCandyCorn = autoCollectCandyCorn,
+        -- Tournament Mode
+        autoTournament = autoTournament,
+        tournamentAutoEquipBest = tournamentAutoEquipBest,
+        tournamentPerfectKick = tournamentPerfectKick,
+        tournamentAutoReMatch = tournamentAutoReMatch,
         autoCollectMapTokens = autoCollectMapTokens,
         autoSnatchVariantTokens = autoSnatchVariantTokens,
         selectedVariantTokens = selectedVariantTokens,
-        autoBuyHalloweenShop = autoBuyHalloweenShop,
-        selectedHalloweenShopItems = selectedHalloweenShopItems,
-
-        -- Zombie Wave Defense Event
-        autoKillZombies = autoKillZombies,
-        prioritizeKingZombies = prioritizeKingZombies,
 
         -- Automation & Multi-Select Filters
         autoCollectSellCrates = autoCollectSellCrates,
@@ -1481,25 +1368,14 @@ local function applyConfigData(data)
     if data.autoApplyBallSkins ~= nil then autoApplyBallSkins = data.autoApplyBallSkins end
     if data.selectedBallSkins ~= nil then selectedBallSkins = toTable(data.selectedBallSkins, { "Beach" }) end
 
-    -- Halloween Event
-    if data.autoTrickOrTreat ~= nil then autoTrickOrTreat = data.autoTrickOrTreat end
-    if data.prioritizeAdminHouse ~= nil then prioritizeAdminHouse = data.prioritizeAdminHouse end
-    if data.autoConveyorCandy ~= nil then autoConveyorCandy = data.autoConveyorCandy end
-    if data.autoGraves ~= nil then autoGraves = data.autoGraves end
-    if data.autoCollectCandyCorn ~= nil then autoCollectCandyCorn = data.autoCollectCandyCorn end
+    -- Tournament Mode
+    if data.autoTournament ~= nil then autoTournament = data.autoTournament end
+    if data.tournamentAutoEquipBest ~= nil then tournamentAutoEquipBest = data.tournamentAutoEquipBest end
+    if data.tournamentPerfectKick ~= nil then tournamentPerfectKick = data.tournamentPerfectKick end
+    if data.tournamentAutoReMatch ~= nil then tournamentAutoReMatch = data.tournamentAutoReMatch end
     if data.autoCollectMapTokens ~= nil then autoCollectMapTokens = data.autoCollectMapTokens end
     if data.autoSnatchVariantTokens ~= nil then autoSnatchVariantTokens = data.autoSnatchVariantTokens end
     if data.selectedVariantTokens ~= nil then selectedVariantTokens = toTable(data.selectedVariantTokens, { "Shadow" }) end
-    if data.autoBuyHalloweenShop ~= nil then autoBuyHalloweenShop = data.autoBuyHalloweenShop end
-    if data.selectedHalloweenShopItems ~= nil then
-        selectedHalloweenShopItems = toTable(data.selectedHalloweenShopItems, { "HauntedHorrors (250)" })
-    elseif data.selectedHalloweenShopItem ~= nil then
-        selectedHalloweenShopItems = toTable(data.selectedHalloweenShopItem, { "HauntedHorrors (250)" })
-    end
-
-    -- Zombie Wave Defense Event
-    if data.autoKillZombies ~= nil then autoKillZombies = data.autoKillZombies end
-    if data.prioritizeKingZombies ~= nil then prioritizeKingZombies = data.prioritizeKingZombies end
 
     -- Automation & Multi-Select Filters
     if data.autoCollectSellCrates ~= nil then autoCollectSellCrates = data.autoCollectSellCrates end
@@ -1661,68 +1537,11 @@ local UpgradesList = {
     "CratePolisher",
 }
 
-local HalloweenShopCostMap = {
-    ["CashPotion"] = 20,
-    ["GradeSpeedPotion"] = 25,
-    ["GradeTokens"] = 50,
-    ["TraitTokens"] = 50,
-    ["BluetoothPotion"] = 50,
-    ["PumpkinPotion"] = 200,
-    ["HalloweenVariantToken"] = 200,
-    ["BallRetriever"] = 200,
-    ["HauntedHorrors"] = 250,
-    ["CandyPotion"] = 300,
-    ["PlotCandyBag50"] = 500,
-    ["TimeSkip2h"] = 500,
-    ["HalloweenGlobe"] = 1000,
-    ["GoldenGlobe"] = 1000,
-    ["PlotCandyBag100"] = 1000,
-    ["JackpotToken"] = 1500,
-    ["InventorySpace50"] = 1500,
-    ["SpiderBall"] = 2500,
-    ["PumpkinBall"] = 3000,
-    ["MummyBall"] = 3000,
-    ["PumpkinAura"] = 5000,
-    ["SkullsAura"] = 5000,
-    ["BatAura"] = 5000,
-    ["TrickStrikerTitle"] = 10000,
-    ["HalloweenPlotSkin"] = 25000,
-}
-
-local HalloweenShopOptions = {
-    "HauntedHorrors (250)",
-    "JackpotToken (1500)",
-    "PlotCandyBag50 (500)",
-    "PlotCandyBag100 (1000)",
-    "HalloweenGlobe (1000)",
-    "GoldenGlobe (1000)",
-    "CashPotion (20)",
-    "GradeSpeedPotion (25)",
-    "GradeTokens (50)",
-    "TraitTokens (50)",
-    "BluetoothPotion (50)",
-    "PumpkinPotion (200)",
-    "HalloweenVariantToken (200)",
-    "BallRetriever (200)",
-    "CandyPotion (300)",
-    "TimeSkip2h (500)",
-    "InventorySpace50 (1500)",
-    "SpiderBall (2500)",
-    "PumpkinBall (3000)",
-    "MummyBall (3000)",
-    "PumpkinAura (5000)",
-    "SkullsAura (5000)",
-    "BatAura (5000)",
-    "TrickStrikerTitle (10000)",
-    "HalloweenPlotSkin (25000)",
-}
-
 local WeatherGlobeOptions = {
     "CosmicGlobe",
     "GoldenGlobe",
     "ThunderGlobe",
     "SnowGlobe",
-    "HalloweenGlobe",
 }
 
 -- Ball Skins Data with Multipliers & Actual Cash Prices
@@ -1769,7 +1588,7 @@ local VariantTokenOptions = { "Shadow", "Admin", "Halloween", "Unknown", "Predat
 -- TABS SETUP (FOOTBALL STADIUM EDITION)
 --------------------------------------------------------------------------------
 local TabAutomation
-local WeatherStatusParagraph, HalloweenStatusParagraph, ZombieWaveStatusParagraph, ScientistStatusParagraph, BallSkinStatusParagraph
+local WeatherStatusParagraph, ScientistStatusParagraph, BallSkinStatusParagraph
 local TowerStageDisplayMap, getTargetTowerStage, doStartTowerBattle, doExitTowerBattle
 
 do
@@ -1793,14 +1612,9 @@ WeatherStatusParagraph = TabEvents:Paragraph({
     Desc = "Loading weather parameters..."
 })
 
-HalloweenStatusParagraph = TabEvents:Paragraph({
-    Title = "Halloween Event Status",
-    Desc = "Loading event parameters..."
-})
-
-ZombieWaveStatusParagraph = TabEvents:Paragraph({
-    Title = "Zombie Wave Event Status",
-    Desc = "Loading zombie wave parameters..."
+TournamentStatusParagraph = TabEvents:Paragraph({
+    Title = "🏆 Tournament Match Status",
+    Desc = "Loading tournament rotation & match parameters..."
 })
 
 TabEvents:Section({ Title = "Weather & Item Rain Automation" })
@@ -1881,111 +1695,78 @@ TabEvents:Button({
     end
 })
 
-TabEvents:Section({ Title = "Halloween Event Automation" })
+TabEvents:Section({ Title = "🏆 Tournament Mode Automation (New Update)" })
 
-UIElements.autoTrickOrTreat = TabEvents:Toggle({
-    Title = "Auto Trick or Treat (Knock 84 Houses)",
-    Desc = "Visits all 84 houses at night, teleports to doors, knocks, collects candy, respects 5.2s cooldown",
+UIElements.autoTournament = TabEvents:Toggle({
+    Title = "Auto Tournament Mode",
+    Desc = "Automatically enters tournament match, equips top 6 units, kicks perfect shots, and plays matches",
     Value = false,
     Callback = function(val)
-        autoTrickOrTreat = val
+        autoTournament = val
         if val then
             WindUI:Notify({
-                Title = "Trick or Treat Active",
-                Content = isNightTime() and "Starting house knocking run now!" or "Waiting for nightfall to begin knocking.",
+                Title = "Tournament Active",
+                Content = "Auto Tournament mode started! Heading to tournament field.",
                 Duration = 3,
-                Icon = "moon"
+                Icon = "trophy"
             })
         end
     end
 })
 
-UIElements.prioritizeAdminHouse = TabEvents:Toggle({
-    Title = "Prioritize Admin House (1h Cooldown)",
-    Desc = "Always prioritizes rushing the giant Admin Pumpkin House first when off cooldown for massive Candy drops",
+UIElements.tournamentAutoEquipBest = TabEvents:Toggle({
+    Title = "Auto Equip Best Units (Top 6)",
+    Desc = "Automatically selects and equips your top 6 highest-power striker units before starting match",
     Value = true,
     Callback = function(val)
-        prioritizeAdminHouse = val
+        tournamentAutoEquipBest = val
+    end
+})
+
+UIElements.tournamentPerfectKick = TabEvents:Toggle({
+    Title = "100% Perfect Minigame Shot",
+    Desc = "Guarantees 100% Perfect score on the rotation kick minigame for maximum goals & power",
+    Value = true,
+    Callback = function(val)
+        tournamentPerfectKick = val
+    end
+})
+
+UIElements.tournamentAutoReMatch = TabEvents:Toggle({
+    Title = "Auto Rematch on Seed Rotation",
+    Desc = "Automatically queues and re-enters tournament matches when the 15-minute rotation seed refreshes",
+    Value = true,
+    Callback = function(val)
+        tournamentAutoReMatch = val
     end
 })
 
 TabEvents:Button({
-    Title = "Knock Admin House Now (1h Cooldown)",
-    Desc = "Teleports to the giant Admin Pumpkin House and attempts to knock immediately",
+    Title = "Start Tournament Match Now",
+    Desc = "One-click opens tournament menu, equips best units, and enters match immediately",
     Callback = function()
         task.spawn(function()
-            local adminStatus = getAdminHouseStatus()
-            if not adminStatus.house then
-                WindUI:Notify({
-                    Title = "Admin House",
-                    Content = "Admin House model not found in workspace.",
-                    Duration = 3,
-                    Icon = "alert-triangle"
-                })
-                return
-            end
-
-            if not isNightTime() then
-                WindUI:Notify({
-                    Title = "Admin House Locked",
-                    Content = "Admin House can only be knocked at Night! (Cooldown: " .. adminStatus.formatted .. ")",
-                    Duration = 3.5,
-                    Icon = "moon"
-                })
-                return
-            end
-
-            if adminStatus.onCooldown then
-                WindUI:Notify({
-                    Title = "Admin House on Cooldown",
-                    Content = "Cooldown active: " .. adminStatus.formatted .. " remaining (1 hour cooldown).",
-                    Duration = 3.5,
-                    Icon = "clock"
-                })
-                return
-            end
-
-            local doorRig = adminStatus.house:FindFirstChild("Door_Rig")
-            local primaryPart = doorRig and (doorRig.PrimaryPart or doorRig:FindFirstChild("RootPart"))
-            local hrp = getRoot()
-            if primaryPart and hrp then
-                local doorPos = primaryPart.Position
-                hrp.CFrame = CFrame.new(doorPos + Vector3.new(0, 1.5, 3.5))
-                task.wait(0.3)
-                isInteractingHalloween = true
-                local prompt = doorRig:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt and typeof(fireproximityprompt) == "function" then
-                    pcall(fireproximityprompt, prompt)
-                end
-                if Remotes:FindFirstChild("TrickOrTreat") then
-                    pcall(function() Remotes.TrickOrTreat:InvokeServer("HouseModelAdmin") end)
-                end
-                task.wait(4.0)
-                sweepAllCandies(doorPos, 65)
-                lastAdminHouseKnockedTick = os.clock()
-                locallyKnockedHouses["HouseModelAdmin"] = os.clock()
-                isInteractingHalloween = false
-                WindUI:Notify({
-                    Title = "Admin House Knocked! 🎃",
-                    Content = "Collected massive candy burst from the Admin Pumpkin House!",
-                    Duration = 4,
-                    Icon = "sparkles"
-                })
-            end
+            WindUI:Notify({
+                Title = "Tournament",
+                Content = "Starting tournament match...",
+                Duration = 2.5,
+                Icon = "play"
+            })
+            doStartTournamentMatch()
         end)
     end
 })
 
 TabEvents:Button({
-    Title = "Teleport to Admin House (Giant Pumpkin)",
-    Desc = "Teleports directly in front of the Admin House door",
+    Title = "Teleport to Tournament Stadium Pitch",
+    Desc = "Teleports directly onto the tournament field (-1795, 4, 171.5)",
     Callback = function()
         local hrp = getRoot()
         if hrp then
-            hrp.CFrame = CFrame.new(Vector3.new(-1797.4, 4.5, 426.4))
+            hrp.CFrame = CFrame.new(Vector3.new(-1795, 4.0, 171.5))
             WindUI:Notify({
                 Title = "Teleport",
-                Content = "Teleported to Admin House!",
+                Content = "Teleported to Tournament Field!",
                 Duration = 2.5,
                 Icon = "map-pin"
             })
@@ -1993,35 +1774,7 @@ TabEvents:Button({
     end
 })
 
-UIElements.autoConveyorCandy = TabEvents:Toggle({
-    Title = "Auto Conveyor Candy Bags (Pickup & Sell)",
-    Desc = "Collects candy bags dropped onto your tycoon conveyor and sells them for instant Candy",
-    Value = false,
-    Callback = function(val)
-        autoConveyorCandy = val
-    end
-})
-
-UIElements.autoGraves = TabEvents:Toggle({
-    Title = "Auto Dig Active Graves",
-    Desc = "Equips Player Unit tool, teleports to active graves, digs for 3.0s and claims rare rewards",
-    Value = false,
-    Callback = function(val)
-        autoGraves = val
-        if val then
-            ensurePlayerUnitHeld()
-        end
-    end
-})
-
-UIElements.autoCollectCandyCorn = TabEvents:Toggle({
-    Title = "Auto Collect Candy Corn",
-    Desc = "Collects dropped Candy Corn on the ground around houses & map",
-    Value = false,
-    Callback = function(val)
-        autoCollectCandyCorn = val
-    end
-})
+TabEvents:Section({ Title = "World Items & Mutation Spawns" })
 
 UIElements.autoCollectMapTokens = TabEvents:Toggle({
     Title = "Auto Collect Map Tokens",
@@ -2050,108 +1803,6 @@ UIElements.selectedVariantTokens = TabEvents:Dropdown({
     AllowNone = true,
     Callback = function(val)
         selectedVariantTokens = toTable(val, VariantTokenOptions)
-    end
-})
-
-TabEvents:Section({ Title = "Halloween Event Shop (Multi-Select)" })
-
-UIElements.selectedHalloweenShopItems = TabEvents:Dropdown({
-    Title = "Target Shop Items (Multi-Select)",
-    Desc = "Select all items you want to auto-purchase with Candies",
-    Values = HalloweenShopOptions,
-    Value = selectedHalloweenShopItems,
-    Multi = true,
-    AllowNone = true,
-    Callback = function(val)
-        selectedHalloweenShopItems = toTable(val, { "HauntedHorrors (250)" })
-    end
-})
-
-UIElements.autoBuyHalloweenShop = TabEvents:Toggle({
-    Title = "Auto Buy Selected Shop Items",
-    Desc = "Automatically buys selected items whenever candy balance is sufficient",
-    Value = false,
-    Callback = function(val)
-        autoBuyHalloweenShop = val
-    end
-})
-
-TabEvents:Section({ Title = "Zombie Wave Defense Event" })
-
-UIElements.autoKillZombies = TabEvents:Toggle({
-    Title = "Auto Slay Zombie Waves",
-    Desc = "Automatically targets, teleports to, and eliminates spawned Zombies & King Zombies during wave events",
-    Value = false,
-    Callback = function(val)
-        autoKillZombies = val
-        if val then
-            WindUI:Notify({
-                Title = "Zombie Slay Active",
-                Content = "Hunting and eliminating spawned zombies!",
-                Duration = 3,
-                Icon = "swords"
-            })
-        end
-    end
-})
-
-UIElements.prioritizeKingZombies = TabEvents:Toggle({
-    Title = "Prioritize King Zombies",
-    Desc = "Focuses and kills high-value King Zombies (100 Candy) first before regular zombies",
-    Value = true,
-    Callback = function(val)
-        prioritizeKingZombies = val
-    end
-})
-
-TabEvents:Button({
-    Title = "Slay All Active Zombies Now",
-    Desc = "One-click sweeps and eliminates all currently spawned zombies in the world",
-    Callback = function()
-        task.spawn(function()
-            local zombies = getActiveZombies()
-            if #zombies == 0 then
-                WindUI:Notify({
-                    Title = "Zombie Slay",
-                    Content = "No active zombies found in the server.",
-                    Duration = 3,
-                    Icon = "info"
-                })
-                return
-            end
-            local killed = 0
-            for _, z in ipairs(zombies) do
-                if z and z.Parent then
-                    if killTargetZombie(z) then
-                        killed = killed + 1
-                    end
-                    task.wait(0.2)
-                end
-            end
-            WindUI:Notify({
-                Title = "Zombie Slay Complete",
-                Content = string.format("Successfully eliminated %d zombies!", killed),
-                Duration = 3.5,
-                Icon = "check-check"
-            })
-        end)
-    end
-})
-
-TabEvents:Button({
-    Title = "Teleport to Zombie Wave Spawns Area",
-    Desc = "Teleports to the main zombie spawn zone in the Halloween cemetery area",
-    Callback = function()
-        local hrp = getRoot()
-        if hrp then
-            hrp.CFrame = CFrame.new(Vector3.new(-1800, 4.5, 380))
-            WindUI:Notify({
-                Title = "Teleport",
-                Content = "Teleported to Zombie Wave area!",
-                Duration = 2.5,
-                Icon = "map-pin"
-            })
-        end
     end
 })
 
@@ -3522,59 +3173,17 @@ TabTeleport:Button({
 TabTeleport:Section({ Title = "World POIs & Events" })
 
 TabTeleport:Button({
-    Title = "Teleport to Halloween Event Shop",
+    Title = "Teleport to Tournament Stadium Pitch",
     Callback = function()
         local hrp = getRoot()
         if hrp then
-            hrp.CFrame = CFrame.new(Vector3.new(125, 4.5, -85))
-        end
-    end
-})
-
-TabTeleport:Button({
-    Title = "Teleport to Cemetery (Graves)",
-    Callback = function()
-        local hw = workspace:FindFirstChild("Halloween")
-        local graves = hw and hw:FindFirstChild("Graves")
-        local hrp = getRoot()
-        if graves and hrp and #graves:GetChildren() > 0 then
-            local firstGrave = graves:GetChildren()[1]
-            hrp.CFrame = CFrame.new(firstGrave.Position + Vector3.new(0, 4, 0))
-        end
-    end
-})
-
-TabTeleport:Button({
-    Title = "Teleport to Trick-or-Treat Town",
-    Callback = function()
-        local houses = CollectionService:GetTagged("HouseSystemModel")
-        local hrp = getRoot()
-        if #houses > 0 and hrp then
-            local h = houses[1]
-            local door = h:FindFirstChild("Door_Rig")
-            if door and door.PrimaryPart then
-                hrp.CFrame = CFrame.new(door.PrimaryPart.Position + Vector3.new(0, 3, 5))
-            end
-        end
-    end
-})
-
-TabTeleport:Button({
-    Title = "Teleport to Zombie Wave Spawns Area",
-    Callback = function()
-        local hrp = getRoot()
-        if hrp then
-            hrp.CFrame = CFrame.new(Vector3.new(-1800, 4.5, 380))
-        end
-    end
-})
-
-TabTeleport:Button({
-    Title = "Teleport to Admin House (Giant Pumpkin)",
-    Callback = function()
-        local hrp = getRoot()
-        if hrp then
-            hrp.CFrame = CFrame.new(Vector3.new(-1797.4, 4.5, 426.4))
+            hrp.CFrame = CFrame.new(Vector3.new(-1795, 4.0, 171.5))
+            WindUI:Notify({
+                Title = "Teleport",
+                Content = "Teleported to Tournament Field!",
+                Duration = 2,
+                Icon = "map-pin"
+            })
         end
     end
 })
@@ -5128,98 +4737,61 @@ task.spawn(function()
             end
         end)
 
-        -- 2. Halloween Status
+        -- 2. Tournament Mode Live Status Monitor
         pcall(function()
-            if HalloweenStatusParagraph then
-                local remaining, isNight = getNightTimeRemaining()
-                local candy = getCandyAmount()
-                local timeStr = isNight and ("🌙 Night: " .. remaining .. "s remaining (Trick-or-Treat Active!)")
-                    or ("☀️ Day: " .. remaining .. "s until Night")
+            if TournamentStatusParagraph then
+                local inMatch = TournamentGuiClient and TournamentGuiClient.IsInMatch()
+                local seed = (TournamentService and TournamentService.GetSeed and TournamentService.GetSeed()) or 0
+                local nextRotSec = (TournamentService and TournamentService.GetTimeUntilNextRotation and TournamentService.GetTimeUntilNextRotation()) or 0
+                local rotMin = math.floor(nextRotSec / 60)
+                local rotSec = nextRotSec % 60
+                local rotTimeStr = string.format("%02d:%02d", rotMin, rotSec)
 
-                local now = tick()
-                if (now - lastHouseCheck) >= 5 then
-                    lastHouseCheck = now
-                    if isNight and HalloweenService then
-                        local housesAvail = 0
-                        local houses = CollectionService:GetTagged("HouseSystemModel")
-                        for _, h in ipairs(houses) do
-                            pcall(function()
-                                if not HalloweenService.IsHouseOnCooldown(LocalPlayer, h.Name) then
-                                    housesAvail = housesAvail + 1
-                                end
-                            end)
-                        end
-                        cachedHouseStr = housesAvail .. " / " .. (#houses > 0 and #houses or 84) .. " Ready"
-                    else
-                        cachedHouseStr = "Locked (Unlocks at Night)"
-                    end
+                local teamName = "Unknown"
+                if TournamentService and TournamentService.GetTeamNameForSeed then
+                    local ok, name = pcall(TournamentService.GetTeamNameForSeed, seed)
+                    if ok and name then teamName = tostring(name) end
                 end
 
-                local gravesCount = 0
-                local hw = workspace:FindFirstChild("Halloween")
-                local graves = hw and hw:FindFirstChild("Graves")
-                if graves then
-                    for _, g in ipairs(graves:GetChildren()) do
-                        if g:GetAttribute("Spawned") == true and g:GetAttribute("DiggerUserId") == nil then
-                            gravesCount = gravesCount + 1
-                        end
-                    end
+                local hasWon = false
+                if TournamentService and TournamentService.HasWonSeed then
+                    local ok, won = pcall(TournamentService.HasWonSeed, LocalPlayer, seed)
+                    if ok and won then hasWon = true end
                 end
+                local wonStr = hasWon and "🏆 Won (Reward Claimed)" or "⏳ Not Won Yet"
 
-                local adminStatus = getAdminHouseStatus()
-                local adminStr = adminStatus.ready and "✨ READY TO KNOCK! (Massive Candy)" or ("⏳ " .. adminStatus.formatted .. " Cooldown (1h)")
+                local matchStatusStr = inMatch and "⚽ In Match (Playing)" or "💤 Ready (In Lobby)"
+                local scoreStr = "0 - 0"
+                local quarterStr = "Q1"
 
-                local descStr = "• Cycle: " .. timeStr .. "\n" ..
-                    "• Candy: " .. tostring(candy) .. " 🍬\n" ..
-                    "• Houses: " .. cachedHouseStr .. "\n" ..
-                    "• Admin House (1h): " .. adminStr .. "\n" ..
-                    "• Active Graves: " .. gravesCount .. " ready to dig"
+                pcall(function()
+                    local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+                    local scoreFrame = gui and gui:FindFirstChild("ScoreFrame")
+                    if scoreFrame and scoreFrame.Visible then
+                        local homeScore = scoreFrame:FindFirstChild("HomeScore")
+                        local awayScore = scoreFrame:FindFirstChild("AwayScore")
+                        if homeScore and awayScore then
+                            scoreStr = tostring(homeScore.Text) .. " - " .. tostring(awayScore.Text)
+                        end
+                        local qLabel = scoreFrame:FindFirstChild("QuarterLabel")
+                        if qLabel then quarterStr = tostring(qLabel.Text) end
+                    end
+                end)
 
-                updateParagraph(HalloweenStatusParagraph, "Halloween Event Status", descStr)
-            end
-        end)
-
-        -- 3. Zombie Wave Status Tracker
-        pcall(function()
-            if ZombieWaveStatusParagraph then
-                local isWave = false
-                local secLeft = 0
-                local secLeftStr = "00:00"
-                local secUntil = 0
-                local secUntilStr = "00:00"
-                local nowTime = workspace:GetServerTimeNow()
-
-                if ZombieWaveService and typeof(ZombieWaveService.IsWaveActive) == "function" then
-                    isWave = ZombieWaveService.IsWaveActive()
-                    secLeft, secLeftStr = ZombieWaveService.GetWaveSecondsLeft()
-                    secUntil, secUntilStr = ZombieWaveService.GetSecondsUntilNextWave()
+                local statusDesc
+                if inMatch then
+                    statusDesc = string.format(
+                        "• Match Status: %s (%s | %s)\n• Opponent: %s (Seed: %d)\n• Rotation Refresh: %s\n• Seed Win Status: %s",
+                        matchStatusStr, quarterStr, scoreStr, teamName, seed, rotTimeStr, wonStr
+                    )
                 else
-                    local endsAt = ReplicatedStorage:GetAttribute("ZombieWaveEndsAt")
-                    if endsAt and nowTime < endsAt then
-                        isWave = true
-                        secLeft = math.max(0, math.ceil(endsAt - nowTime))
-                        secLeftStr = string.format("%02d:%02d", math.floor(secLeft / 60), secLeft % 60)
-                    end
+                    statusDesc = string.format(
+                        "• Match Status: %s\n• Current Opponent: %s (Seed: %d)\n• Next Rotation in: %s\n• Seed Win Status: %s",
+                        matchStatusStr, teamName, seed, rotTimeStr, wonStr
+                    )
                 end
 
-                local activeZombies = getActiveZombies()
-                local kingCount = 0
-                for _, z in ipairs(activeZombies) do
-                    if z.Name == "SpawnedKingZombie" or z:GetAttribute("IsKing") == true then
-                        kingCount = kingCount + 1
-                    end
-                end
-
-                local elapsed = os.clock() - scriptStartTime
-                local lockoutStr = elapsed >= 120 and "Eligible to Claim (2m+ passed)" or string.format("Lockout: %ds remaining", math.max(0, math.ceil(120 - elapsed)))
-
-                local waveStr = isWave and string.format("⚡ WAVE ACTIVE! (%s remaining)", tostring(secLeftStr))
-                    or string.format("⏳ Inactive (Next Wave in %s)", tostring(secUntilStr))
-
-                local zombieDesc = string.format("• Wave Status: %s\n• Active Zombies in World: %d (King Zombies: %d)\n• Anti-Cheat Lockout: %s\n• Session Zombies Slayed: %d 💀",
-                    waveStr, #activeZombies, kingCount, lockoutStr, zombieSessionKills)
-
-                updateParagraph(ZombieWaveStatusParagraph, "Zombie Wave Event Status", zombieDesc)
+                updateParagraph(TournamentStatusParagraph, "🏆 Tournament Mode Status", statusDesc)
             end
         end)
 
@@ -5330,8 +4902,6 @@ end)
 -- DEDICATED VARIANT TOKEN & CANDY CORN REWARD CAPTURE ENGINE
 -- ============================================================================
 do
-local pendingCandyCorns = {}
-
 -- Function: Instantly snatch all active Variant Tokens matching multi-select filter
 local function snatchActiveVariantTokens()
     if not autoSnatchVariantTokens or not isAlive() then return end
@@ -5377,17 +4947,6 @@ if Remotes:FindFirstChild("VariantTokenSpawned") then
     end)
 end
 
--- Listener: ThrowCandyCorns
-if Remotes:FindFirstChild("ThrowCandyCorns") then
-    Remotes.ThrowCandyCorns.OnClientEvent:Connect(function(origin, candies)
-        if type(candies) == "table" then
-            for _, candy in ipairs(candies) do
-                table.insert(pendingCandyCorns, candy)
-            end
-        end
-    end)
-end
-
 -- 10. Item Rain Snatch Engine
 local function sweepItemRainDrops()
     if not autoCollectItemRain or not isAlive() then return end
@@ -5428,365 +4987,130 @@ task.spawn(function()
     end
 end)
 
--- Global interaction state to prevent thread conflicts
-local isInteractingHalloween = false
-local lastKnockServerTime = 0
+-- Helper: Handle in-match prompts, decisions, and rotation minigame
+local function handleTournamentMatch()
+    local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+    if not gui then return end
 
--- Function: Thoroughly sweep and collect ALL active candies and tokens near a target position
-local function sweepAllCandies(centerPos, maxRadius)
-    if not autoCollectCandyCorn or not isAlive() then return end
-    local hrp = getRoot()
-    if not hrp then return end
-    maxRadius = maxRadius or 50
-
+    -- 1. Solve RotationMinigame with 100% Perfect precision
     pcall(function()
-        local CandyCornClient = require(game.ReplicatedStorage.Client.Core.CandyCornClient)
-        if typeof(getupvalues) == "function" then
-            local ups = getupvalues(CandyCornClient.Throw)
-            local u87 = ups and ups[6]
-            if type(u87) == "table" then
-                for id, data in pairs(u87) do
-                    local pos = data.Position or (data.Model and data.Model:GetPivot().Position)
-                    if pos and (not centerPos or (pos - centerPos).Magnitude <= maxRadius) then
-                        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 1.2, 0))
-                        task.wait(0.12)
-                        if Remotes:FindFirstChild("CollectCandyCorn") then
-                            Remotes.CollectCandyCorn:FireServer(id)
-                        end
-                        task.wait(0.06)
+        local minigame = gui:FindFirstChild("RotationMinigame")
+        if minigame and minigame.Visible then
+            local perfectZone = minigame:FindFirstChild("PerfectZone")
+            local rotatingTick = minigame:FindFirstChild("RotatingTick")
+            if perfectZone and rotatingTick and tournamentPerfectKick then
+                -- Align tick rotation exactly with perfect zone center rotation
+                rotatingTick.Rotation = perfectZone.Rotation
+                task.wait(0.04)
+
+                -- Fire click or input signal to trigger Perfect evaluation
+                pcall(function()
+                    local clickButton = minigame:FindFirstChildWhichIsA("TextButton", true) or minigame:FindFirstChildWhichIsA("ImageButton", true)
+                    if clickButton then
+                        clickButton.MouseButton1Click:Fire()
+                    end
+                end)
+                task.wait(0.1)
+            end
+        end
+    end)
+
+    -- 2. Handle NextActionFrame prompts (Prioritize Shoot, then Pass)
+    pcall(function()
+        local nextAction = gui:FindFirstChild("NextActionFrame")
+        if nextAction and nextAction.Visible then
+            local bestBtn = nil
+            local shootBtn = nil
+            local passBtn = nil
+
+            for _, btn in ipairs(nextAction:GetDescendants()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    local text = (btn:FindFirstChildWhichIsA("TextLabel") and btn:FindFirstChildWhichIsA("TextLabel").Text) or btn.Text or ""
+                    local tLower = text:lower()
+                    if string.find(tLower, "shoot") or string.find(tLower, "goal") then
+                        shootBtn = btn
+                    elseif string.find(tLower, "pass") then
+                        passBtn = btn
+                    elseif not bestBtn then
+                        bestBtn = btn
+                    end
+                end
+            end
+
+            local targetBtn = shootBtn or passBtn or bestBtn
+            if targetBtn then
+                pcall(function()
+                    targetBtn.MouseButton1Click:Fire()
+                end)
+                task.wait(0.2)
+            end
+        end
+    end)
+
+    -- 3. Dismiss any post-match victory/reward/claim prompts
+    pcall(function()
+        local postMatch = gui:FindFirstChild("PostMatchFrame") or gui:FindFirstChild("VictoryFrame") or gui:FindFirstChild("RewardFrame")
+        if postMatch and postMatch.Visible then
+            for _, btn in ipairs(postMatch:GetDescendants()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    local tLower = (btn.Text or ""):lower()
+                    if string.find(tLower, "claim") or string.find(tLower, "continue") or string.find(tLower, "close") or string.find(tLower, "ok") then
+                        pcall(function() btn.MouseButton1Click:Fire() end)
+                        task.wait(0.2)
                     end
                 end
             end
         end
     end)
-
-    pcall(function()
-        local eff = workspace:FindFirstChild("Effects")
-        if eff then
-            local candyList = {}
-            for _, item in ipairs(eff:GetChildren()) do
-                if item:IsA("Model") and (item.Name == "CandyCorn" or string.find(item.Name, "Candy")) then
-                    local pos = item:GetPivot().Position
-                    local dist = centerPos and (pos - centerPos).Magnitude or 0
-                    if not centerPos or dist <= maxRadius then
-                        table.insert(candyList, { model = item, pos = pos, dist = dist })
-                    end
-                end
-            end
-
-            table.sort(candyList, function(a, b) return a.dist < b.dist end)
-
-            for _, entry in ipairs(candyList) do
-                if entry.model and entry.model.Parent and isAlive() then
-                    hrp.CFrame = CFrame.new(entry.pos + Vector3.new(0, 1.2, 0))
-                    task.wait(0.18)
-                end
-            end
-        end
-    end)
-
-    pcall(snatchActiveVariantTokens)
 end
 
--- Dedicated background thread for continuous Variant Token watch
+-- 11. Auto Tournament Match Runner Loop
 task.spawn(function()
+    local lastAttemptTick = 0
     while isAlive() do
-        if autoSnatchVariantTokens then
-            pcall(snatchActiveVariantTokens)
-        end
-        task.wait(0.5)
-    end
-end)
-
--- 11. Trick or Treat Worker Loop (84 Houses with 5.2s Cooldown Gating)
-local locallyKnockedHouses = {}
-
-local function getClosestAvailableHouse(currentPos)
-    -- 1. High Priority: Admin House (Boss House with 1-hour cooldown and massive Candy drop)
-    -- Only prioritized when it is ACTUALLY ready and off cooldown!
-    if prioritizeAdminHouse then
-        local adminStatus = getAdminHouseStatus()
-        if adminStatus.ready and not adminStatus.onCooldown and adminStatus.house then
-            local doorRig = adminStatus.house:FindFirstChild("Door_Rig")
-            local primaryPart = doorRig and (doorRig.PrimaryPart or doorRig:FindFirstChild("RootPart"))
-            if primaryPart then
-                return adminStatus.house, 0
-            end
-        end
-    end
-
-    -- 2. When Admin House is on cooldown (or if not prioritized), search all other 84 houses!
-    local allHouses = CollectionService:GetTagged("HouseSystemModel")
-    if #allHouses == 0 and workspace:FindFirstChild("Map") then
-        for _, c in ipairs(workspace.Map:GetChildren()) do
-            if string.find(c.Name, "HouseModel") then
-                table.insert(allHouses, c)
-            end
-        end
-    end
-
-    local bestHouse = nil
-    local bestDist = math.huge
-
-    for _, house in ipairs(allHouses) do
-        local isThisAdmin = (house.Name == "HouseModelAdmin" or string.find(house.Name:lower(), "admin") ~= nil)
-        local canCheckThis = (not isThisAdmin) or (not prioritizeAdminHouse)
-
-        if canCheckThis then
-            local onCooldown = false
-            if isThisAdmin then
-                local adminStatus = getAdminHouseStatus()
-                if adminStatus.onCooldown or not adminStatus.ready then
-                    onCooldown = true
-                end
-            else
-                if locallyKnockedHouses[house.Name] and (os.clock() - locallyKnockedHouses[house.Name]) < 305 then
-                    onCooldown = true
-                elseif HalloweenService and typeof(HalloweenService.IsHouseOnCooldown) == "function" then
-                    local ok, cd = pcall(HalloweenService.IsHouseOnCooldown, LocalPlayer, house.Name)
-                    if ok and cd == true then
-                        onCooldown = true
+        if autoTournament then
+            pcall(function()
+                local inMatch = TournamentGuiClient and TournamentGuiClient.IsInMatch()
+                if inMatch then
+                    handleTournamentMatch()
+                else
+                    -- Check if we should join
+                    local seed = (TournamentService and TournamentService.GetSeed and TournamentService.GetSeed()) or 0
+                    local hasWon = false
+                    if TournamentService and TournamentService.HasWonSeed then
+                        local ok, won = pcall(TournamentService.HasWonSeed, LocalPlayer, seed)
+                        if ok and won then hasWon = true end
                     end
-                end
-            end
 
-            if not onCooldown then
-                local doorRig = house:FindFirstChild("Door_Rig")
-                local primaryPart = doorRig and (doorRig.PrimaryPart or doorRig:FindFirstChild("RootPart"))
-                if primaryPart then
-                    local dist = (currentPos - primaryPart.Position).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestHouse = house
-                    end
-                end
-            end
-        end
-    end
+                    local shouldPlay = (not hasWon) or tournamentAutoReMatch
+                    local now = os.clock()
 
-    return bestHouse, bestDist
-end
-
-task.spawn(function()
-    local lastWasNight = false
-    while isAlive() do
-        if autoTrickOrTreat then
-            local isNight = isNightTime()
-            if isNight then
-                if not lastWasNight then
-                    lastWasNight = true
-                    locallyKnockedHouses = {}
-                    pcall(function()
-                        WindUI:Notify({
-                            Title = "Nightfall Started!",
-                            Content = "Starting optimized Trick-or-Treat route!",
-                            Duration = 3,
-                            Icon = "moon"
-                        })
-                    end)
-                end
-
-                local hrp = getRoot()
-                if hrp then
-                    local targetHouse, dist = getClosestAvailableHouse(hrp.Position)
-
-                    if targetHouse then
-                        local doorRig = targetHouse:FindFirstChild("Door_Rig")
-                        local primaryPart = doorRig and (doorRig.PrimaryPart or doorRig:FindFirstChild("RootPart"))
-
-                        if primaryPart then
-                            local playerAtt = primaryPart:FindFirstChild("PlayerAttachment")
-                            local ownerAtt = primaryPart:FindFirstChild("HouseOwnerAttachment")
-                            local doorPos = primaryPart.Position
-
-                            local standPos = playerAtt and playerAtt.WorldPosition or (doorPos + primaryPart.CFrame.LookVector * 3.5)
-                            local faceTarget = ownerAtt and ownerAtt.WorldPosition or doorPos
-                            local lookCFrame = CFrame.lookAt(standPos, Vector3.new(faceTarget.X, standPos.Y, faceTarget.Z))
-
-                            hrp.CFrame = lookCFrame
-                            task.wait(0.2)
-
-                            local now = workspace:GetServerTimeNow()
-                            local timeSinceLast = now - lastKnockServerTime
-                            if timeSinceLast < 5.3 and lastKnockServerTime > 0 then
-                                task.wait(5.3 - timeSinceLast)
-                            end
-
-                            isInteractingHalloween = true
-                            lastKnockServerTime = workspace:GetServerTimeNow()
-                            locallyKnockedHouses[targetHouse.Name] = os.clock()
-
-                            local isBoss = (targetHouse.Name == "HouseModelAdmin" or string.find(targetHouse.Name:lower(), "admin") ~= nil)
-                            if isBoss then
-                                lastAdminHouseKnockedTick = os.clock()
-                            end
-
-                            local prompt = doorRig:FindFirstChildWhichIsA("ProximityPrompt", true)
-                            if prompt and prompt.Enabled and typeof(fireproximityprompt) == "function" then
-                                pcall(function()
-                                    fireproximityprompt(prompt)
-                                end)
-                            end
-
-                            if isBoss and Remotes:FindFirstChild("TrickOrTreat") then
-                                pcall(function()
-                                    Remotes.TrickOrTreat:InvokeServer("HouseModelAdmin")
-                                end)
-                            end
-
-                            task.wait(isBoss and 4.0 or 3.5)
-
-                            sweepAllCandies(doorPos, isBoss and 65 or 45)
-
-                            if isBoss then
-                                WindUI:Notify({
-                                    Title = "Admin House Knocked! 🎃",
-                                    Content = "Collected massive candy burst from the giant Admin Pumpkin House!\nNow proceeding to other houses...",
-                                    Duration = 4,
-                                    Icon = "sparkles"
-                                })
-                            end
-
-                            isInteractingHalloween = false
-                        end
-                    else
-                        task.wait(3.0)
-                    end
-                end
-            else
-                if lastWasNight then
-                    lastWasNight = false
-                    pcall(function()
-                        local plot = getMyPlot()
-                        local base = plot and (plot:FindFirstChild("SpawnPart") or plot:FindFirstChild("Base"))
+                    if shouldPlay and (now - lastAttemptTick) > 8 then
+                        lastAttemptTick = now
+                        -- Teleport to tournament pitch if too far
                         local hrp = getRoot()
-                        if base and hrp then
-                            hrp.CFrame = CFrame.new(base.Position + Vector3.new(0, 4, 0))
-                        end
-                    end)
-                    pcall(function()
-                        WindUI:Notify({
-                            Title = "Daytime Break",
-                            Content = "Night ended! Returning to Base until next nightfall.",
-                            Duration = 3,
-                            Icon = "sun"
-                        })
-                    end)
-                end
-                task.wait(3.0)
-            end
-        else
-            task.wait(1.5)
-        end
-        task.wait(0.2)
-    end
-end)
-
--- 12. Conveyor Candy Bags Loop
-task.spawn(function()
-    while isAlive() do
-        if autoConveyorCandy then
-            pcall(function()
-                local plot = getMyPlot()
-                local conveyor = plot and plot:FindFirstChild("Systems") and plot.Systems:FindFirstChild("TycoonConveyor")
-                local candyPart = conveyor and conveyor:FindFirstChild("CandyPart")
-
-                if candyPart and Remotes:FindFirstChild("PickupCandyBag") then
-                    local amount = 0
-                    if HalloweenService and typeof(HalloweenService.GetPlotCandyBagAmount) == "function" then
-                        local ok, a = pcall(HalloweenService.GetPlotCandyBagAmount, LocalPlayer)
-                        if ok and typeof(a) == "number" then amount = a end
-                    else
-                        amount = 1
-                    end
-
-                    if amount > 0 then
-                        Remotes.PickupCandyBag:FireServer(candyPart)
-                        task.wait(0.3)
-                    end
-                end
-
-                if Remotes:FindFirstChild("SellCandyBag") then
-                    local bagsToSell = {}
-                    for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
-                        if t:IsA("Tool") and t:GetAttribute("InventoryType") == "CandyBag" then
-                            table.insert(bagsToSell, t:GetAttribute("InventoryKey"))
-                        end
-                    end
-                    if LocalPlayer.Character then
-                        for _, t in ipairs(LocalPlayer.Character:GetChildren()) do
-                            if t:IsA("Tool") and t:GetAttribute("InventoryType") == "CandyBag" then
-                                table.insert(bagsToSell, t:GetAttribute("InventoryKey"))
+                        local fieldObj = getTournamentField()
+                        if fieldObj and hrp then
+                            local fieldPos = fieldObj.Base.Position
+                            if (hrp.Position - fieldPos).Magnitude > 45 then
+                                hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
+                                task.wait(0.4)
                             end
                         end
-                    end
 
-                    for _, key in ipairs(bagsToSell) do
-                        if key then
-                            Remotes.SellCandyBag:FireServer(key)
-                            task.wait(0.2)
-                        end
+                        doStartTournamentMatch()
                     end
                 end
             end)
         end
-        task.wait(1.2)
+        task.wait(0.25)
     end
 end)
 
--- 13. Halloween Grave Digging Loop
+-- 12. Map Tokens Loop (GradeToken, TraitToken, Potions)
 task.spawn(function()
     while isAlive() do
-        if autoGraves and Remotes:FindFirstChild("StartGraveDig") and Remotes:FindFirstChild("FinishGraveDig") then
-            pcall(function()
-                local hw = workspace:FindFirstChild("Halloween")
-                local graves = hw and hw:FindFirstChild("Graves")
-                if graves then
-                    local activeGraves = {}
-                    for _, g in ipairs(graves:GetChildren()) do
-                        if g:GetAttribute("Spawned") == true and g:GetAttribute("DiggerUserId") == nil then
-                            table.insert(activeGraves, g)
-                        end
-                    end
-
-                    if #activeGraves > 0 then
-                        local hasUnit = ensurePlayerUnitHeld()
-                        if hasUnit then
-                            for _, targetGrave in ipairs(activeGraves) do
-                                if not autoGraves or not isAlive() then break end
-                                if targetGrave:GetAttribute("Spawned") == true and targetGrave:GetAttribute("DiggerUserId") == nil then
-                                    local hrp = getRoot()
-                                    if hrp then
-                                        hrp.CFrame = CFrame.new(targetGrave.Position + Vector3.new(0, 3, 0))
-                                        task.wait(0.3)
-
-                                        isInteractingHalloween = true
-                                        Remotes.StartGraveDig:FireServer(targetGrave)
-                                        task.wait(3.0)
-
-                                        Remotes.FinishGraveDig:InvokeServer(targetGrave)
-                                        task.wait(1.5)
-
-                                        sweepAllCandies(targetGrave.Position, 45)
-
-                                        isInteractingHalloween = false
-                                        task.wait(0.5)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-        task.wait(1.5)
-    end
-end)
-
--- 14. Map Tokens Loop (GradeToken, TraitToken, Potions)
-task.spawn(function()
-    while isAlive() do
-        if autoCollectMapTokens and not isInteractingHalloween then
+        if autoCollectMapTokens then
             pcall(function()
                 local hrp = getRoot()
                 if not hrp then return end
@@ -5807,7 +5131,7 @@ task.spawn(function()
                     if #nodesToCollect > 0 then
                         local originalCf = hrp.CFrame
                         for _, node in ipairs(nodesToCollect) do
-                            if not autoCollectMapTokens or not isAlive() or isInteractingHalloween then break end
+                            if not autoCollectMapTokens or not isAlive() then break end
                             hrp.CFrame = CFrame.new(node.Position + Vector3.new(0, 1.5, 0))
                             task.wait(0.12)
 
@@ -5844,7 +5168,7 @@ task.spawn(function()
                     if f then
                         local orig = hrp.CFrame
                         for _, it in ipairs(f:GetChildren()) do
-                            if not autoCollectMapTokens or not isAlive() or isInteractingHalloween then break end
+                            if not autoCollectMapTokens or not isAlive() then break end
                             local pos = it:IsA("BasePart") and it.Position or (it:IsA("Model") and it:GetPivot().Position)
                             if pos then
                                 hrp.CFrame = CFrame.new(pos + Vector3.new(0, 1.5, 0))
@@ -5870,48 +5194,7 @@ task.spawn(function()
                 end
             end)
         end
-
-        if autoCollectCandyCorn and not isInteractingHalloween then
-            pcall(function()
-                local eff = workspace:FindFirstChild("Effects")
-                if eff then
-                    for _, item in ipairs(eff:GetChildren()) do
-                        if isInteractingHalloween or not autoCollectCandyCorn then break end
-                        if item:IsA("Model") and (item.Name == "CandyCorn" or string.find(item.Name, "Candy")) then
-                            local hrp = getRoot()
-                            if hrp then
-                                local pos = item:GetPivot().Position
-                                hrp.CFrame = CFrame.new(pos + Vector3.new(0, 1.2, 0))
-                                task.wait(0.18)
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-
-        task.wait(0.8)
-    end
-end)
-
--- 15. Halloween Shop Auto Purchase Loop (Multi-Select Items)
-task.spawn(function()
-    while isAlive() do
-        if autoBuyHalloweenShop and Remotes:FindFirstChild("HalloweenShopPurchase") then
-            pcall(function()
-                local currentCandy = getCandyAmount()
-                for _, rawChoice in ipairs(selectedHalloweenShopItems) do
-                    local rawItem = string.match(rawChoice, "^([%w_]+)") or rawChoice
-                    local cost = HalloweenShopCostMap[rawItem] or 0
-                    if currentCandy >= cost and cost > 0 then
-                        Remotes.HalloweenShopPurchase:FireServer(rawItem)
-                        task.wait(1.5)
-                        currentCandy = getCandyAmount()
-                    end
-                end
-            end)
-        end
-        task.wait(2.5)
+        task.wait(2.0)
     end
 end)
 
@@ -6005,42 +5288,6 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- 18. Zombie Wave Auto Slaying Loop
-task.spawn(function()
-    while isAlive() do
-        if autoKillZombies and Remotes:FindFirstChild("KillSpawnedZombie") then
-            pcall(function()
-                local zombies = getActiveZombies()
-                if #zombies > 0 then
-                    local origCFrame = nil
-                    local hrp = getRoot()
-                    if hrp then origCFrame = hrp.CFrame end
-
-                    isInteractingHalloween = true
-                    for _, z in ipairs(zombies) do
-                        if not autoKillZombies or not isAlive() then break end
-                        if z and z.Parent then
-                            killTargetZombie(z)
-                            task.wait(0.2)
-                        end
-                    end
-                    isInteractingHalloween = false
-
-                    -- If no active zombies remain, return smoothly to origin base/conveyor
-                    local remaining = getActiveZombies()
-                    if #remaining == 0 and origCFrame then
-                        local returnHrp = getRoot()
-                        if returnHrp then
-                            returnHrp.CFrame = origCFrame
-                        end
-                    end
-                end
-            end)
-        end
-        task.wait(1.0)
-    end
-end)
-
 -- 19. Anti-AFK
 LocalPlayer.Idled:Connect(function()
     if antiAfk then
@@ -6063,7 +5310,7 @@ end)
 -- 18. Auto Obby Background Loop
 task.spawn(function()
     while isAlive() do
-        if autoObby and not isInteractingHalloween then
+        if autoObby then
             pcall(doCompleteObby)
         end
         task.wait(12)
