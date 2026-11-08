@@ -2936,19 +2936,15 @@ local function isAnyBossAliveInArena(arenaName)
 end
 
 local function getReturnField()
+    -- Priority: When boss is defeated, return directly to Lv.99 MAX field (Field13) as requested
+    if Config.ReturnToProgressionAfterBoss or Config.AutoBoss then
+        return "Field13", "Lava Turtle Hill (Lv.99 MAX)"
+    end
     local pLevel = getPlayerLevel()
+    if pLevel >= 95 then
+        return "Field13", "Lava Turtle Hill (Lv.99 MAX)"
+    end
     local optField, optName = getOptimalZone(pLevel)
-    if Config.AutoProgression then
-        return optField, optName
-    end
-    if lastNormalFarmZone and lastNormalFarmZone ~= "" and not lastNormalFarmZone:find("Boss") then
-        for _, z in ipairs(LevelZones) do
-            if z.Field == lastNormalFarmZone then
-                return z.Field, z.Name
-            end
-        end
-        return lastNormalFarmZone, lastNormalFarmZone
-    end
     return optField, optName
 end
 
@@ -3044,20 +3040,44 @@ local BossZones = {
     { Name = "Volcano Turtle King", Zone = "Boss05", MinLevel = 98, MaxLevel = 999 },
 }
 
+local BossZoneMap = {
+    ["Volcano Turtle King"] = { Zone = "Boss05", Name = "Volcano Turtle King", Level = 99 },
+    ["Tempest Dragon King"] = { Zone = "Boss04", Name = "Tempest Dragon King", Level = 85 },
+    ["Obsidian Pharaoh"] = { Zone = "Boss03", Name = "Obsidian Pharaoh", Level = 63 },
+    ["Whitefang Sabertooth"] = { Zone = "Boss02", Name = "Whitefang Sabertooth", Level = 39 },
+    ["Gorilla King"] = { Zone = "Boss01", Name = "Gorilla King", Level = 18 },
+    ["Pumpkin Spider"] = { Zone = "Boss03", Name = "Pumpkin Spider", Level = 60 },
+    ["Ram King"] = { Zone = "Field08", Name = "Ram King", Level = 60 },
+    ["Leader Fang Hyena"] = { Zone = "Field04", Name = "Leader Fang Hyena", Level = 30 },
+    ["Leader Saber Tiger"] = { Zone = "Field06", Name = "Leader Saber Tiger", Level = 45 },
+    ["Leader Spiked Stone Golem"] = { Zone = "Field09", Name = "Leader Spiked Stone Golem", Level = 70 },
+    ["Leader Spiked Ice Golem"] = { Zone = "Field12", Name = "Leader Spiked Ice Golem", Level = 95 },
+}
+
 local function getTargetBossZone(level, selectedBoss)
+    level = tonumber(level) or getPlayerLevel()
     if selectedBoss and selectedBoss ~= "All Bosses" and selectedBoss ~= "Pack Leaders Only" then
-        for _, b in ipairs(BossZones) do
-            if b.Name == selectedBoss or selectedBoss:find(b.Name) then
-                return b.Zone, b.Name
+        if BossZoneMap[selectedBoss] then
+            return BossZoneMap[selectedBoss].Zone, BossZoneMap[selectedBoss].Name
+        end
+        for name, data in pairs(BossZoneMap) do
+            if selectedBoss:lower():find(name:lower()) or name:lower():find(selectedBoss:lower()) then
+                return data.Zone, data.Name
             end
         end
     end
-    for _, b in ipairs(BossZones) do
-        if level >= b.MinLevel and level <= b.MaxLevel then
-            return b.Zone, b.Name
-        end
+
+    if level >= 98 then
+        return "Boss05", "Volcano Turtle King"
+    elseif level >= 85 then
+        return "Boss04", "Tempest Dragon King"
+    elseif level >= 63 then
+        return "Boss03", "Obsidian Pharaoh"
+    elseif level >= 39 then
+        return "Boss02", "Whitefang Sabertooth"
+    else
+        return "Boss01", "Gorilla King"
     end
-    return "Boss03", "Obsidian Pharaoh"
 end
 
 local function executeBossInspection(silent)
@@ -3599,15 +3619,15 @@ local evaluateAndCastBestSkill = nil
 
 local function isSlotSelected(slotNum)
     local cfg = Config.SelectedSkillSlots
-    if not cfg then return true end
-    if type(cfg) ~= "table" then return true end
+    if not cfg or type(cfg) ~= "table" then return true end
 
     local hasAny = false
     for _ in pairs(cfg) do
         hasAny = true
         break
     end
-    if not hasAny then return false end
+    -- If empty, default to TRUE so all equipped hotbar skills are used
+    if not hasAny then return true end
 
     local slotStr = tostring(slotNum)
     for k, v in pairs(cfg) do
@@ -3619,7 +3639,7 @@ local function isSlotSelected(slotNum)
             if v == slotNum then return true end
         end
     end
-    return false
+    return true -- Default allow slot if not explicitly excluded
 end
 
 local function getHotbarSkillInSlot(slotNum)
@@ -3634,100 +3654,35 @@ local function getHotbarSkillInSlot(slotNum)
     return nil
 end
 
--- Suppress the game's native bot from automatically firing unwanted skills
-pcall(function()
-    LocalPlayer:SetAttribute("BotUseSkills", false)
-    LocalPlayer:SetAttribute("AutoSkill", false)
-    if trackConn then
-        trackConn(LocalPlayer:GetAttributeChangedSignal("BotUseSkills"):Connect(function()
-            if LocalPlayer:GetAttribute("BotUseSkills") == true then
-                LocalPlayer:SetAttribute("BotUseSkills", false)
-            end
-        end))
-        trackConn(LocalPlayer:GetAttributeChangedSignal("AutoSkill"):Connect(function()
-            if LocalPlayer:GetAttribute("AutoSkill") == true then
-                LocalPlayer:SetAttribute("AutoSkill", false)
-            end
-        end))
-    end
-end)
-
-local function updateHotbarCache()
-    table.clear(cachedHotbarSkills)
-    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
-    if not hotbarRaw or hotbarRaw == "" then return end
-    pcall(function()
-        local decoded = HttpService:JSONDecode(hotbarRaw)
-        if type(decoded) == "table" then
-            for i = 1, 8 do
-                local val = decoded[tostring(i)]
-                if type(val) == "string" and val:find("^skill:") then
-                    local sId = val:sub(7):lower()
-                    local sData = SkillDataModule and SkillDataModule.Skills and SkillDataModule.Skills[sId]
-                    local isBuff = (sData and (sData.Kind == "buff" or sData.Type == "buff" or sData.Buff ~= nil))
-                    if not isBuff then
-                        local buffNames = { meikyo = true, vanish = true, stealth = true, haste = true, blessing = true, increase_agi = true, endure = true }
-                        if buffNames[sId] then isBuff = true end
-                    end
-                    local kind = sData and sData.Kind or (isBuff and "buff" or "active")
-                    local range = sData and (sData.Range or sData.Radius or sData.Length) or 200
-                    cachedHotbarSkills[i] = {
-                        slotNum = i,
-                        id = sId,
-                        isBuff = isBuff,
-                        kind = kind,
-                        range = range,
-                    }
-                end
-            end
-        end
-    end)
-end
-
-pcall(function()
-    updateHotbarCache()
-    if trackConn then
-        trackConn(LocalPlayer:GetAttributeChangedSignal("HotbarJson"):Connect(updateHotbarCache))
-    end
-end)
-
-local function isBuffActive(buffId)
-    local raw = LocalPlayer:GetAttribute("BuffsJson")
-    if not raw or raw == "" then return false end
-    return raw:lower():find(buffId:lower()) ~= nil
-end
-
 local function isHotbarSlotReady(slotNum, sInfo)
     local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
     local pad = ap and ap:FindFirstChild("ActionPad")
     local slot = pad and pad:FindFirstChild("Slot" .. slotNum)
-    if not slot then return false end
 
-    -- 1. Real UI cooldown inspection (text & shade frame)
-    local cdLabel = slot:FindFirstChild("Cooldown")
-    if cdLabel and cdLabel.Visible and cdLabel.Text ~= "" then
-        return false
-    end
-    local shade = slot:FindFirstChild("CooldownShade")
-    if shade and shade.Visible then
-        return false
-    end
-
-    -- 2. Real SP Requirement
-    local currentSp = LocalPlayer:GetAttribute("SP") or 999
-    local itemCount = slot:FindFirstChild("ItemCount")
-    if itemCount and itemCount.Text ~= "" then
-        local spCost = tonumber(itemCount.Text:match("%d+"))
-        if spCost and currentSp < spCost then
+    -- 1. Check UI Cooldown Label if active
+    if slot then
+        local cdLabel = slot:FindFirstChild("Cooldown")
+        if cdLabel and cdLabel.Text ~= "" and cdLabel.Text ~= "0" then
+            local cdNum = tonumber(cdLabel.Text)
+            if cdNum and cdNum > 0.05 then
+                return false
+            end
+        end
+        local shade = slot:FindFirstChild("CooldownShade")
+        if shade and shade.Visible and shade.Size.Y.Scale > 0.1 then
             return false
         end
-    elseif currentSp < 4 then
+    end
+
+    -- 2. SP Requirement (Lenient)
+    local currentSp = LocalPlayer:GetAttribute("SP") or 999
+    if currentSp < 3 then
         return false
     end
 
-    -- 3. Safety micro-gap between repeated casts of same skill
+    -- 3. Safety micro-gap between repeated casts of same skill (Reduced for lightning fast casting!)
     local now = os.clock()
-    if (now - (skillLastCast[sInfo.id] or 0)) < 0.08 then
+    if (now - (skillLastCast[sInfo.id] or 0)) < 0.035 then
         return false
     end
 
@@ -3738,9 +3693,10 @@ local function executeSmartSkill(slotNum, sInfo, target)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
+
     local now = os.clock()
 
-    -- Aim towards target immediately for line/cone/targeted attacks
+    -- Face target immediately
     if target and target.Parent then
         local tHrp = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
         if tHrp then
@@ -3748,20 +3704,29 @@ local function executeSmartSkill(slotNum, sInfo, target)
         end
     end
 
-    -- 1. Remote Fire to server
+    -- 1. Remote Fire to server (Primary execution)
     if UseSkill then
         pcall(function()
             UseSkill:FireServer(sInfo.id, sInfo.isBuff and nil or target)
         end)
     end
 
-    -- 2. Trigger Client Slot Button (plays native animations and sounds)
+    -- 2. Trigger Client Slot Button (Fires all click/touch connections for instant responsiveness)
     pcall(function()
         local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
         local pad = ap and ap:FindFirstChild("ActionPad")
         local slotBtn = pad and pad:FindFirstChild("Slot" .. slotNum)
-        if slotBtn and getconnections then
+        if slotBtn and typeof(getconnections) == "function" then
+            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Click)) do
+                pcall(function() conn:Fire() end)
+            end
             for _, conn in ipairs(getconnections(slotBtn.MouseButton1Down)) do
+                pcall(function() conn:Fire() end)
+            end
+            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Up)) do
+                pcall(function() conn:Fire() end)
+            end
+            for _, conn in ipairs(getconnections(slotBtn.Activated)) do
                 pcall(function() conn:Fire() end)
             end
         end
@@ -3776,7 +3741,7 @@ evaluateAndCastBestSkill = function(target)
     if not Config.AutoUseSkills then return false end
     if isEnteringDungeon or isWaitingForParty then return false end
     local now = os.clock()
-    if (now - lastGlobalSkillCast) < 0.06 then return false end
+    if (now - lastGlobalSkillCast) < 0.025 then return false end
 
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -3786,39 +3751,27 @@ evaluateAndCastBestSkill = function(target)
     local distToTarget = targetPos and (hrp.Position - targetPos).Magnitude or math.huge
 
     local bestBuff = nil
-    local bestBurst = nil
-    local bestCounter = nil
-    local bestSpam = nil
-    local bestOther = nil
+    local bestAttack = nil
 
-    for slotNum = 1, 7 do
+    for slotNum = 1, 8 do
         if isSlotSelected(slotNum) then
             local sInfo = cachedHotbarSkills[slotNum]
             if sInfo and isHotbarSlotReady(slotNum, sInfo) then
                 if sInfo.isBuff then
-                    -- Priority 1: Self Buffs (cast if missing)
-                    if not isBuffActive(sInfo.id) and not bestBuff then
+                    -- Buffs: cast if not cast within last 12 seconds
+                    if (now - (skillLastCast[sInfo.id] or 0)) > 12 then
                         bestBuff = sInfo
                     end
                 elseif target and isMonsterAlive(target) and distToTarget <= (sInfo.range or 200) then
-                    -- Priority 2: AoE / Burst
-                    if sInfo.kind == "aoe_self" or sInfo.kind == "aoe_target" or sInfo.id == "obororanbu" or sInfo.id == "magnum_break" or sInfo.id == "arrowshower" or sInfo.id == "bigkaboom" or sInfo.id == "thunderstorm" or sInfo.id == "cartstrike" then
-                        if not bestBurst then bestBurst = sInfo end
-                    -- Priority 3: Counter / Defensive
-                    elseif sInfo.kind == "counter" or sInfo.id == "issen" then
-                        if not bestCounter then bestCounter = sInfo end
-                    -- Priority 4: Primary Spammer / Direct Hits (IAIGIRI etc.)
-                    elseif sInfo.kind == "line" or sInfo.id == "iaigiri" or sInfo.id == "bash" or sInfo.id == "double_strafe" or sInfo.id:find("bolt") or sInfo.id == "twinfang" or sInfo.id == "venomknife" then
-                        if not bestSpam then bestSpam = sInfo end
-                    else
-                        if not bestOther then bestOther = sInfo end
-                    end
+                    -- Attack skill ready!
+                    bestAttack = sInfo
+                    break -- Execute immediate ready attack skill without stalling
                 end
             end
         end
     end
 
-    local chosen = bestBuff or bestBurst or bestCounter or bestSpam or bestOther
+    local chosen = bestBuff or bestAttack
     if chosen then
         return executeSmartSkill(chosen.slotNum, chosen, chosen.isBuff and nil or target)
     end
@@ -4087,6 +4040,12 @@ local function getTargetMonster()
                     if distFromZoneCenter > 270 then
                         inZone = false
                     end
+                end
+
+                local isBoss = isBossMonster(monster)
+                -- Bosses and Boss Arenas are ALWAYS in zone!
+                if isBoss or inBoss then
+                    inZone = true
                 end
 
                 if inZone then
@@ -5088,20 +5047,34 @@ for _, mob in ipairs(CollectionService:GetTagged("Monster")) do
     task.spawn(hookMonsterEvasion, mob)
 end
 do
-    local monstersFolder = workspace:FindFirstChild("Monsters")
-if monstersFolder then
-    for _, mob in ipairs(monstersFolder:GetChildren()) do
-        if mob:IsA("Model") then
-            task.spawn(hookMonsterEvasion, mob)
-    end
-end
-    end
-    trackConn(monstersFolder.ChildAdded:Connect(function(mob)
-        if not isScriptAlive() then return end
-        if mob:IsA("Model") then
-            task.spawn(hookMonsterEvasion, mob)
+    local function hookFolder(folder)
+        if not folder then return end
+        for _, mob in ipairs(folder:GetChildren()) do
+            if mob:IsA("Model") then
+                task.spawn(hookMonsterEvasion, mob)
+            end
         end
-    end))
+        if trackConn then
+            trackConn(folder.ChildAdded:Connect(function(mob)
+                if not isScriptAlive() then return end
+                if mob:IsA("Model") then
+                    task.spawn(hookMonsterEvasion, mob)
+                end
+            end))
+        end
+    end
+
+    local monstersFolder = workspace:FindFirstChild("Monsters")
+    if monstersFolder then hookFolder(monstersFolder) end
+    local activeMonsters = workspace:FindFirstChild("ActiveMonsters")
+    if activeMonsters then hookFolder(activeMonsters) end
+    if trackConn then
+        trackConn(workspace.ChildAdded:Connect(function(child)
+            if child.Name == "Monsters" or child.Name == "ActiveMonsters" then
+                hookFolder(child)
+            end
+        end))
+    end
 end
 trackConn(CollectionService:GetInstanceAddedSignal("Monster"):Connect(hookMonsterEvasion))
 
@@ -9563,7 +9536,7 @@ end)
 -- 5. Dedicated High-Speed Smart Skill & Buff Engine Loop (Runs independently of basic attack)
 task.spawn(function()
     while isScriptAlive() do
-        task.wait(0.035) -- ~28 FPS responsive skill evaluation
+        task.wait(0.02) -- ~50 FPS responsive skill evaluation
         if Config.AutoUseSkills and canScriptMoveOrWarp() and not isEnteringDungeon and not isWaitingForParty then
             local inDungeon = isInsideDungeon()
             local activeCombat = inDungeon and (Config.AutoDungeon or Config.AutoFarm) or Config.AutoFarm
@@ -9638,9 +9611,9 @@ task.spawn(function()
         end
 
         -- 5. Periodic World Boss Arena Inspection (Warp to Boss Room)
-        if (Config.AutoWarpToBoss or Config.BossOnly) and Config.AutoBoss and not isEnteringDungeon and not isWaitingForParty then
+        if Config.AutoBoss and not isEnteringDungeon and not isWaitingForParty then
             local now = os.clock()
-            local interval = Config.BossOnly and 12 or (Config.BossCheckInterval or 75)
+            local interval = 12 -- Check boss arena every 12s for ultra-responsive boss hunting
             if (now - lastBossWarpCheckTime) >= interval then
                 lastBossWarpCheckTime = now
                 pcall(function()
