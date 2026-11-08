@@ -109,7 +109,7 @@ if not scriptFileName then
 end
 
 -- Guard against duplicate executions across autoexec and teleport queue
-if getgenv and getgenv()._GloryBoundRunning and getgenv()._GB_Window and scriptFileName == "glorybound.luau" and (os.clock() - (getgenv()._GB_LastStartTime or 0)) < 6 then
+if getgenv and getgenv()._GloryBoundRunning and getgenv()._GB_Window and scriptFileName == "glorybound.luau" and not getgenv()._GB_ForceReload then
     print("[Song Hub] 🛡️ GloryBound is already running with active UI. Skipping duplicate execution.")
     if getgenv then getgenv()._SongHubLoading = false end
     return
