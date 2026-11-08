@@ -6,7 +6,17 @@
 --   3. ⚽ Blue Lock Farm (Universe: 10700618962 / Place: 132767904294856)
 --   4. 🍗 Throw Food For Animals (Universe: 10766972131 / Place: 120219252362013)
 --   5. 🏎️ Raycity RB (Universe: 10772794231 / Place: 117419079466193)
+--   6. ⚔️ GloryBound (Universe: 10768652372 / Place: 137629355240872)
 -- ==============================================================================
+
+if getgenv then
+    if getgenv()._SongHubLoading and (os.clock() - (getgenv()._SongHubLastLoad or 0)) < 6 then
+        print("[Song Hub] 🛡️ Loader is already loading. Skipping duplicate call.")
+        return
+    end
+    getgenv()._SongHubLoading = true
+    getgenv()._SongHubLastLoad = os.clock()
+end
 
 if not game:IsLoaded() then
     pcall(function() game.Loaded:Wait() end)
@@ -99,8 +109,9 @@ if not scriptFileName then
 end
 
 -- Guard against duplicate executions across autoexec and teleport queue
-if getgenv and getgenv()._GloryBoundRunning and scriptFileName == "glorybound.luau" and (os.clock() - (getgenv()._GB_LastStartTime or 0)) < 6 then
+if getgenv and getgenv()._GloryBoundRunning and scriptFileName == "glorybound.luau" and (os.clock() - (getgenv()._GB_LastStartTime or 0)) < 15 then
     print("[Song Hub] 🛡️ GloryBound is already running. Skipping duplicate execution.")
+    if getgenv then getgenv()._SongHubLoading = false end
     return
 end
 
@@ -150,10 +161,13 @@ if scriptCode then
     local fn, err = loadstring(scriptCode)
     if fn then
         print("[Song Hub] ✅ Successfully compiled " .. gameTitle .. "! Launching UI...")
+        if getgenv then getgenv()._SongHubLoading = false end
         task.spawn(fn)
     else
+        if getgenv then getgenv()._SongHubLoading = false end
         warn("[Song Hub] ❌ Compile error in " .. scriptFileName .. ": " .. tostring(err))
     end
 else
+    if getgenv then getgenv()._SongHubLoading = false end
     warn("[Song Hub] ❌ Could not download script from GitHub! Please check your connection.")
 end
