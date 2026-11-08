@@ -721,9 +721,9 @@ local function getActiveQuestDestination()
     local subQuestNpc = nil
     local returnNpc = nil
     for _, txt in ipairs(questTexts) do
+        local firstLine = (typeof(txt) == "string" and string.split(txt, "\n")[1]) or txt
         -- Check for incomplete subquest like "ภารกิจ - มาดามอันตราย  0/1"
-        local taskName, curr, maxVal = txt:match("([^
-%d%/]+)%s*(%d+)%s*/%s*(%d+)")
+        local taskName, curr, maxVal = firstLine:match("([^%d%/]+)%s*(%d+)%s*/%s*(%d+)")
         if taskName and curr and maxVal then
             local cNum = tonumber(curr) or 0
             local mNum = tonumber(maxVal) or 1
@@ -736,12 +736,9 @@ local function getActiveQuestDestination()
             end
         end
 
-        local retName = txt:match("กลับไปหา%s*([^
-]+)")
-            or txt:match("ไปพบ%s*([^
-]+)")
-            or txt:match("คุยกับ%s*([^
-]+)")
+        local retName = firstLine:match("กลับไปหา%s*(.+)")
+            or firstLine:match("ไปพบ%s*(.+)")
+            or firstLine:match("คุยกับ%s*(.+)")
         if retName then
             local cleanRet = retName:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
             local npc = findQuestTargetNpc(cleanRet)
