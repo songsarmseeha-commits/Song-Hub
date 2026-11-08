@@ -345,12 +345,9 @@ local function launchGameScript(scriptFileName, gameTitle)
         getgenv()._UniversalLoaderLoading = false
     end
 
-    -- 🛡️ Anti-Hook / Anti-Dump & Security Environment Verification
+    -- 🛡️ HttpSpy Security Verification
     local isEnvSecure = true
     pcall(function()
-        if islclosure and islclosure(loadstring) then isEnvSecure = false end
-        if iscclosure and not iscclosure(loadstring) then isEnvSecure = false end
-        if islclosure and islclosure(game.HttpGet) then isEnvSecure = false end
         if getgenv then
             local g = getgenv()
             if g.SimpleSpyExecuted or g.Hydroxide or g.TurtleSpy or g.__HTTPSPY then
@@ -360,7 +357,7 @@ local function launchGameScript(scriptFileName, gameTitle)
     end)
 
     if not isEnvSecure then
-        warn("[Universal Hub] 🛡️ Security Check Failed: Tampered environment, debugger, or HttpSpy detected!")
+        warn("[Universal Hub] 🛡️ Security Check Failed: HttpSpy detected!")
         return
     end
 
@@ -419,11 +416,29 @@ local function launchGameScript(scriptFileName, gameTitle)
             code = nil -- 🛡️ Scrub plaintext code string from RAM immediately!
             if fn then
                 print("[Universal Hub] ✅ Securely loaded and compiled latest script into RAM.")
+                pcall(function()
+                    local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+                    WindUI:Notify({
+                        Title = "Song Hub 🚀",
+                        Content = "Launching " .. gameTitle .. "...",
+                        Duration = 2,
+                        Icon = "zap"
+                    })
+                end)
                 task.spawn(fn)
                 startLiveAutoUpdateChecker(scriptFileName, gameTitle, launchGameScript)
                 return
             else
                 warn("[Universal Hub] ⚠️ Compile error: " .. tostring(err))
+                pcall(function()
+                    local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+                    WindUI:Notify({
+                        Title = "Compile Error ⚠️",
+                        Content = tostring(err):sub(1, 120),
+                        Duration = 8,
+                        Icon = "alert-triangle"
+                    })
+                end)
             end
         end
     end
