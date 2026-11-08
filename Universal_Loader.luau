@@ -98,6 +98,12 @@ if not scriptFileName then
     return
 end
 
+-- Guard against duplicate executions across autoexec and teleport queue
+if getgenv and getgenv()._GloryBoundRunning and scriptFileName == "glorybound.luau" and (os.clock() - (getgenv()._GB_LastStartTime or 0)) < 6 then
+    print("[Song Hub] 🛡️ GloryBound is already running. Skipping duplicate execution.")
+    return
+end
+
 print(string.format("[Song Hub] 🔓 Keyless Direct Mode: Fetching %s directly from GitHub...", gameTitle))
 
 -- Always fetch freshest code directly from GitHub with cache buster
