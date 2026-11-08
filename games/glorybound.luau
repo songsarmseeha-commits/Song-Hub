@@ -124,6 +124,7 @@ local Config = {
     AutoRestOnHighFatigue = false,
 
     -- Full Auto & Combat System
+    MasterFullAuto = false,
     FullAutoArena = false,
 
     -- Combat & Target Lock
@@ -140,6 +141,8 @@ local Config = {
     AutoAbility = true,
     AutoBoonPick = true,
     AutoSkipCutscenes = true,
+    AutoReviveTeammates = true,
+    AutoRetryVote = true,
 
     -- Matchmaking & Trials
     AutoQueueArena = false,
@@ -154,6 +157,11 @@ local Config = {
     -- Progression & Automation
     AutoRebirth = true,
     AutoClaimDaily = true,
+    AutoUpgradeSkills = true,
+    AutoOpenChests = true,
+    AutoBuyChests = false,
+    AutoBuyChestTier = "Common",
+    KeepMinCash = 1000,
 
     -- Safety
     AntiAfk = true,
@@ -331,6 +339,45 @@ if getgenv then getgenv()._GB_Window = Window end
 -- 🏋️ TAB 1: GYM & TRAINING
 -- ==============================================================================
 local TabGym = Window:Tab({ Title = "Gym & Strength", Icon = "dumbbell" })
+
+TabGym:Paragraph({
+    Title = "⭐ Master Full Auto AFK (ฟาร์มครบวงจร 100%)",
+    Desc = "เปิดใช้งานโหมดบอทเล่นเองทุกอย่าง: ยกน้ำหนักยิม + จุติ + ล็อคเป้าตีมอน + สแปมสกิล + แพรี่ + เลือกการ์ด + อัปสกิล + เปิดกล่อง + รับรางวัลรายวัน",
+    Image = "flame"
+})
+
+TabGym:Toggle({
+    Title = "⭐ Master Full Auto AFK (เปิดบอทเล่นเองทุกอย่าง 100%)",
+    Desc = "เปิดใช้งานระบบออโต้ครบวงจรทุกระบบ AFK ได้ตลอด 24 ชั่วโมงโดยไม่ต้องกดอะไรเลย",
+    Value = Config.MasterFullAuto,
+    Callback = function(val)
+        Config.MasterFullAuto = val
+        Config.AutoTrain = val
+        Config.AutoRebirth = val
+        Config.FullAutoArena = val
+        Config.TargetLock = val
+        Config.KillAura = val
+        Config.AutoAbility = val
+        Config.AutoParry = val
+        Config.AutoDodge = val
+        Config.AutoDodgeLowHp = val
+        Config.AutoBoonPick = val
+        Config.AutoSkipCutscenes = val
+        Config.AutoReviveTeammates = val
+        Config.AutoRetryVote = val
+        Config.AutoUpgradeSkills = val
+        Config.AutoClaimDaily = val
+        Config.AutoOpenChests = val
+        if Config.AutoSave then SaveConfig(true) end
+        if val then
+            WindUI:Notify({ Title = "Master Full Auto Active! ⭐", Content = "All-in-One God Mode AFK is now running!", Duration = 3, Icon = "flame" })
+        else
+            WindUI:Notify({ Title = "Master Full Auto Off", Content = "Disabled all automated loops.", Duration = 2, Icon = "pause" })
+        end
+    end
+})
+
+TabGym:Divider()
 
 TabGym:Paragraph({
     Title = "🏋️ Auto Barbell & Strength Training",
@@ -570,6 +617,24 @@ TabCombat:Toggle({
     end
 })
 
+TabCombat:Toggle({
+    Title = "❤️ Auto Revive Teammates (ชุบชีวิตเพื่อน + รับชุบอัตโนมัติ)",
+    Desc = "กดรับข้อเสนอชุบชีวิตทันที และช่วยชุบเพื่อนร่วมทีมที่ล้มในอารีน่า",
+    Value = Config.AutoReviveTeammates,
+    Callback = function(val)
+        Config.AutoReviveTeammates = val
+    end
+})
+
+TabCombat:Toggle({
+    Title = "🔄 Auto Retry Match (โหวตเล่นซ้ำทันทีเมื่อจบแมตช์)",
+    Desc = "โหวต Yes เริ่มรอบใหม่ทันทีเมื่อจบแมตช์ เพื่อฟาร์มต่อเนื่องไม่ต้องกลับล็อบบี้",
+    Value = Config.AutoRetryVote,
+    Callback = function(val)
+        Config.AutoRetryVote = val
+    end
+})
+
 -- ==============================================================================
 -- 🏟️ TAB 3: ARENA MATCHMAKING
 -- ==============================================================================
@@ -592,13 +657,13 @@ TabArena:Toggle({
 
 TabArena:Button({
     Title = "⚔️ Enter Arena Now (เข้าอารีน่าทันที)",
-    Desc = "ส่งคำสั่ง QueueJoin เข้า ArenaPVE ทันที",
+    Desc = "ส่งคำสั่ง QueueJoin เข้า Arena ทันที",
     Icon = "play",
     Callback = function()
         pcall(function()
             local rep = game:GetService("ReplicatedStorage")
-            rep.Remotes.QueueJoin:FireServer("ArenaPVE")
-            WindUI:Notify({ Title = "Joined Queue", Content = "Queueing for ArenaPVE...", Duration = 3 })
+            rep.Remotes.QueueJoin:FireServer()
+            WindUI:Notify({ Title = "Joined Queue", Content = "Queueing for Arena...", Duration = 3 })
         end)
     end
 })
@@ -722,6 +787,12 @@ end
 -- ==============================================================================
 local TabProg = Window:Tab({ Title = "Progression", Icon = "award" })
 
+TabProg:Paragraph({
+    Title = "💎 Progression, Economy & Auto Upgrades",
+    Desc = "ระบบอัปเกรดตัวละครอัตโนมัติ: อัปสกิล, เปิดกล่องสมบัติ, รับรางวัลรายวัน และ Rebirth",
+    Image = "award"
+})
+
 TabProg:Toggle({
     Title = "🔄 Auto Rebirth (จุติตัวละครอัตโนมัติ)",
     Desc = "จุติที่ Shrine of Mars ทันทีที่ Strength เต็มขีดจำกัด (เช่น 50/50, 70/70) แล้วกลับมายกบาร์เบลต่ออัตโนมัติ",
@@ -740,12 +811,90 @@ TabProg:Button({
     end
 })
 
+TabProg:Divider()
+
 TabProg:Toggle({
-    Title = "🎁 Auto Claim Daily Rewards",
-    Desc = "กดรับรางวัลล็อกอินรายวันให้อัตโนมัติ",
+    Title = "🧠 Auto Upgrade Skills (อัปเกรดสกิลอัตโนมัติ)",
+    Desc = "เมื่อมีแต้ม Skill Points คงเหลือ บอทจะเลือกอัปเกรดสกิลที่ปลดล็อคให้อัตโนมัติ",
+    Value = Config.AutoUpgradeSkills,
+    Callback = function(val)
+        Config.AutoUpgradeSkills = val
+    end
+})
+
+TabProg:Button({
+    Title = "🧠 Upgrade All Skills Now (อัปสกิลทั้งหมดตอนนี้)",
+    Desc = "อัปเกรดสกิลทั้งหมดที่ซื้อได้ทันทีตามจำนวนแต้มที่มี",
+    Icon = "zap",
+    Callback = function()
+        task.spawn(autoUpgradeSkills)
+        WindUI:Notify({ Title = "Skills", Content = "Checking and upgrading available skills...", Duration = 2 })
+    end
+})
+
+TabProg:Divider()
+
+TabProg:Toggle({
+    Title = "📦 Auto Open Owned Chests (เปิดกล่องในตัวอัตโนมัติ)",
+    Desc = "เปิดกล่องสมบัติทั้งหมดที่มีอยู่ในกระเป๋าให้อัตโนมัติ",
+    Value = Config.AutoOpenChests,
+    Callback = function(val)
+        Config.AutoOpenChests = val
+    end
+})
+
+TabProg:Toggle({
+    Title = "🛒 Auto Buy & Open Chests (ซื้อกล่องสมบัติอัตโนมัติ)",
+    Desc = "ซื้อและเปิดกล่องสมบัติเมื่อมีเงินมากกว่าจำนวนเงินขั้นต่ำที่สำรองไว้",
+    Value = Config.AutoBuyChests,
+    Callback = function(val)
+        Config.AutoBuyChests = val
+    end
+})
+
+TabProg:Dropdown({
+    Title = "🎁 Select Chest Tier to Buy (เลือกระดับกล่องที่จะซื้อ)",
+    Desc = "ระดับกล่องที่ต้องการให้ซื้ออัตโนมัติ",
+    Values = { "Common (400 Cash)", "Rare (1200 Cash)", "Epic (3200 Cash)" },
+    Value = "Common (400 Cash)",
+    Callback = function(val)
+        if val:find("Rare") then
+            Config.AutoBuyChestTier = "Rare"
+        elseif val:find("Epic") then
+            Config.AutoBuyChestTier = "Epic"
+        else
+            Config.AutoBuyChestTier = "Common"
+        end
+    end
+})
+
+TabProg:Slider({
+    Title = "💰 Keep Minimum Cash (เงินขั้นต่ำที่ต้องสำรอง)",
+    Desc = "ระบบจะไม่ซื้อกล่องถ้าเงินต่ำกว่าค่านี้ เพื่อไม่ให้เงินหมดตัว",
+    Value = { Min = 0, Max = 10000, Default = Config.KeepMinCash },
+    Callback = function(val)
+        Config.KeepMinCash = val
+    end
+})
+
+TabProg:Divider()
+
+TabProg:Toggle({
+    Title = "🎁 Auto Claim Daily & Spin Wheel",
+    Desc = "กดรับรางวัลล็อกอินประจำวัน หมุนวงล้อสุ่ม และเคลมเควสประจำวันให้อัตโนมัติ",
     Value = Config.AutoClaimDaily,
     Callback = function(val)
         Config.AutoClaimDaily = val
+    end
+})
+
+TabProg:Button({
+    Title = "🎁 Claim Daily Rewards & Spin Wheel Now",
+    Desc = "กดเคลมของรางวัลรายวันและหมุนวงล้อทันที",
+    Icon = "gift",
+    Callback = function()
+        task.spawn(autoClaimDaily)
+        WindUI:Notify({ Title = "Daily Rewards", Content = "Claimed daily rewards and spun wheel!", Duration = 2 })
     end
 })
 
@@ -1079,16 +1228,20 @@ end
 task.spawn(function()
     while isAlive() do
         task.wait(1 / math.max(1, Config.TrainSpeedRps))
-        if Config.AutoTrain and not isRebirthing then
+        if (Config.AutoTrain or Config.MasterFullAuto) and not isRebirthing then
             pcall(function()
+                local lp = LocalPlayer
+                local zone = tostring(lp:GetAttribute("Zone") or "")
+                local inArena = lp:GetAttribute("InArena")
+                if inArena or (zone ~= "" and zone ~= "Lobby") then return end
+
                 -- Check if rebirth ready first!
-                if Config.AutoRebirth and checkRebirthReady() then
+                if (Config.AutoRebirth or Config.MasterFullAuto) and checkRebirthReady() then
                     performRebirth()
                     return
                 end
 
                 local rep = game:GetService("ReplicatedStorage")
-                local lp = LocalPlayer
                 local char = lp.Character
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
                 if not root then return end
@@ -1206,7 +1359,111 @@ local function autoPickBoon()
     end
 end
 
--- 1.5. MASTER TARGET LOCK & SNAP CONTROLLER
+-- 1.5. AUTO SKILL UPGRADE HELPER
+local function autoUpgradeSkills()
+    pcall(function()
+        local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
+        local state = cs.get and cs.get()
+        if not state or not state.SkillPoints or state.SkillPoints <= 0 then return end
+
+        local skillsDef = require(ReplicatedStorage.Shared.Defs.Skills)
+        local rep = game:GetService("ReplicatedStorage")
+        local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("SkillUpgrade")
+        if not remote then return end
+
+        for _, id in ipairs(skillsDef.IDS) do
+            local ok, can = pcall(skillsDef.canBuy, state.Skills, id, state.Level, state.SkillPoints)
+            if ok and can == true then
+                remote:FireServer(id)
+                task.wait(0.12)
+                state = cs.get and cs.get()
+                if not state or not state.SkillPoints or state.SkillPoints <= 0 then break end
+            end
+        end
+    end)
+end
+
+-- 1.6. AUTO CLAIM DAILY & SPIN WHEEL HELPER
+local function autoClaimDaily()
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("DailyAction")
+        if not remote then return end
+
+        remote:FireServer("claim")
+        remote:FireServer("spin")
+        for i = 1, 5 do
+            remote:FireServer("qclaim", i)
+        end
+    end)
+end
+
+-- 1.7. AUTO CHEST BUYER & OPENER HELPER
+local function autoOpenChests()
+    pcall(function()
+        local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
+        local state = cs.get and cs.get()
+        local rep = game:GetService("ReplicatedStorage")
+        if not rep:FindFirstChild("Remotes") then return end
+
+        -- 1. Open any owned chests in inventory
+        if state and state.OwnedChests and #state.OwnedChests > 0 and rep.Remotes:FindFirstChild("ChestOpen") then
+            for _, chest in ipairs(state.OwnedChests) do
+                local chestId = type(chest) == "table" and (chest.id or chest.Id or chest.uid) or chest
+                rep.Remotes.ChestOpen:FireServer(chestId)
+                task.wait(0.15)
+            end
+        end
+
+        -- 2. Auto Buy Chest if cash > KeepMinCash
+        if Config.AutoBuyChests and rep.Remotes:FindFirstChild("ChestBuy") then
+            local tier = Config.AutoBuyChestTier or "Common"
+            local minCash = Config.KeepMinCash or 1000
+            local price = (tier == "Epic" and 3200) or (tier == "Rare" and 1200) or 400
+            if state and state.Cash and (state.Cash - price) >= minCash then
+                rep.Remotes.ChestBuy:FireServer(tier)
+            end
+        end
+    end)
+end
+
+-- 1.8. AUTO RETRY VOTE HELPER
+local function autoRetryVote()
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("RetryVote")
+        if remote and LocalPlayer:GetAttribute("TrialRetryVoted") ~= true then
+            remote:FireServer("yes")
+        end
+    end)
+end
+
+-- 1.9. AUTO REVIVE TEAMMATES & SELF HELPER
+local function autoRevive()
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        if not rep:FindFirstChild("Remotes") then return end
+
+        -- Accept any incoming revive offer
+        if rep.Remotes:FindFirstChild("ReviveOfferAnswer") then
+            rep.Remotes.ReviveOfferAnswer:FireServer(true)
+        end
+
+        -- Proximity prompt revive for fallen teammates
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                local prompt = p.Character:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if prompt and prompt.ActionText and prompt.ActionText:lower():find("revive") then
+                    if fireproximityprompt then
+                        fireproximityprompt(prompt)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 1.10. MASTER TARGET LOCK & SNAP CONTROLLER
 task.spawn(function()
     while isAlive() do
         task.wait(0.03)
@@ -1375,18 +1632,26 @@ task.spawn(function()
     end
 end)
 
--- 5. AUTO SKIP BOSS CUTSCENES & BOON PICKER LOOP
+-- 5. AUTO SKIP BOSS CUTSCENES, BOON PICKER, REVIVE & RETRY VOTE LOOP
 task.spawn(function()
     while isAlive() do
-        task.wait(0.4)
+        task.wait(0.35)
         pcall(function()
             local rep = game:GetService("ReplicatedStorage")
-            if Config.AutoSkipCutscenes and rep.Remotes:FindFirstChild("BossCutsceneSkip") then
+            if (Config.AutoSkipCutscenes or Config.MasterFullAuto) and rep.Remotes:FindFirstChild("BossCutsceneSkip") then
                 rep.Remotes.BossCutsceneSkip:FireServer(1)
             end
 
-            if Config.AutoBoonPick or Config.FullAutoArena then
+            if Config.AutoBoonPick or Config.FullAutoArena or Config.MasterFullAuto then
                 autoPickBoon()
+            end
+
+            if Config.AutoRetryVote or Config.FullAutoArena or Config.MasterFullAuto then
+                autoRetryVote()
+            end
+
+            if Config.AutoReviveTeammates or Config.FullAutoArena or Config.MasterFullAuto then
+                autoRevive()
             end
         end)
     end
@@ -1396,29 +1661,39 @@ end)
 task.spawn(function()
     while isAlive() do
         task.wait(2)
-        if Config.AutoQueueArena then
+        if Config.AutoQueueArena or Config.MasterFullAuto then
             pcall(function()
                 local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
                 local inArena = LocalPlayer:GetAttribute("InArena")
                 if zone == "Lobby" and not inArena then
                     local rep = game:GetService("ReplicatedStorage")
-                    rep.Remotes.QueueJoin:FireServer("ArenaPVE")
+                    if rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("QueueJoin") then
+                        rep.Remotes.QueueJoin:FireServer()
+                    end
                 end
             end)
         end
     end
 end)
 
--- 7. AUTO REBIRTH & DAILY REWARDS
+-- 7. AUTO PROGRESSION & REBIRTH ENGINE (STRICT CONDITION GATED)
 task.spawn(function()
     while isAlive() do
         task.wait(2)
         pcall(function()
-            local rep = game:GetService("ReplicatedStorage")
-            if Config.AutoClaimDaily then
-                rep.Remotes.DailyAction:FireServer("Claim")
+            if Config.AutoClaimDaily or Config.MasterFullAuto then
+                autoClaimDaily()
             end
-            if Config.AutoRebirth and not isRebirthing and checkRebirthReady() then
+
+            if Config.AutoUpgradeSkills or Config.MasterFullAuto then
+                autoUpgradeSkills()
+            end
+
+            if Config.AutoOpenChests or Config.AutoBuyChests or Config.MasterFullAuto then
+                autoOpenChests()
+            end
+
+            if (Config.AutoRebirth or Config.MasterFullAuto) and not isRebirthing and checkRebirthReady() then
                 performRebirth()
             end
         end)
