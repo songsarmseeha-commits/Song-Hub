@@ -1497,37 +1497,86 @@ end
 local function autoRetryVote()
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
-        local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("RetryVote")
-        if remote and LocalPlayer:GetAttribute("TrialRetryVoted") ~= true then
-            remote:FireServer("yes")
+        local vu = game:GetService("VirtualUser")
+        local vim = game:GetService("VirtualInputManager")
+
+        -- 1. Fire server-side retry vote remote
+        if rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("RetryVote") then
+            rep.Remotes.RetryVote:FireServer("yes")
         end
 
-        -- Click Skip & Retry buttons on BattleReport GUI
+        -- 2. Click BattleReport buttons (Skip & Retry)
         local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
         local br = pg and pg:FindFirstChild("BattleReport")
         if br and br.Enabled then
-            for _, btn in ipairs(br:GetDescendants()) do
-                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                    local txt = (btn:IsA("TextButton") and btn.Text or btn.Name):lower()
-                    if txt:find("skip") or txt:find("retry") or txt:find("again") or txt:find("continue") then
-                        pcall(function()
-                            if firesignal then
-                                firesignal(btn.Activated)
-                                firesignal(btn.MouseButton1Click)
+            -- A. Click Skip button (Skips animation to footer buttons immediately)
+            local skipBtn = br:FindFirstChild("Skip", true)
+            if skipBtn and skipBtn:IsA("GuiButton") and skipBtn.Visible then
+                pcall(function()
+                    if firesignal then
+                        firesignal(skipBtn.Activated)
+                        firesignal(skipBtn.MouseButton1Click)
+                    end
+                end)
+                local sCenter = skipBtn.AbsolutePosition + (skipBtn.AbsoluteSize / 2)
+                pcall(function()
+                    vu:Button1Down(sCenter)
+                    task.wait(0.03)
+                    vu:Button1Up(sCenter)
+                end)
+            end
+
+            -- B. Target the Retry button directly (Root.Report.Stage.Footer.Retry)
+            local retryBtn = br:FindFirstChild("Retry", true)
+            if not retryBtn then
+                -- Fallback: check all buttons for name 'Retry' or child TextLabel with 'Retry'
+                for _, b in ipairs(br:GetDescendants()) do
+                    if b:IsA("GuiButton") and b.Visible then
+                        if b.Name:lower():find("retry") then
+                            retryBtn = b
+                            break
+                        end
+                        for _, lbl in ipairs(b:GetDescendants()) do
+                            if lbl:IsA("TextLabel") and lbl.Text and lbl.Text:lower():find("retry") then
+                                retryBtn = b
+                                break
                             end
-                        end)
-                        pcall(function()
-                            local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
-                            VirtualUser:Button1Down(center)
-                            task.wait(0.04)
-                            VirtualUser:Button1Up(center)
-                        end)
+                        end
+                        if retryBtn then break end
                     end
                 end
             end
+
+            if retryBtn and retryBtn:IsA("GuiButton") and retryBtn.Visible then
+                local center = retryBtn.AbsolutePosition + (retryBtn.AbsoluteSize / 2)
+
+                -- 1. firesignal
+                pcall(function()
+                    if firesignal then
+                        firesignal(retryBtn.Activated)
+                        firesignal(retryBtn.MouseButton1Click)
+                        firesignal(retryBtn.MouseButton1Down)
+                        firesignal(retryBtn.MouseButton1Up)
+                    end
+                end)
+
+                -- 2. VirtualUser click
+                pcall(function()
+                    vu:Button1Down(center)
+                    task.wait(0.04)
+                    vu:Button1Up(center)
+                end)
+
+                -- 3. VirtualInputManager event
+                pcall(function()
+                    vim:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
+                    task.wait(0.04)
+                    vim:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
+                end)
+            end
         end
 
-        -- Auto queue if returned to Lobby
+        -- 3. If in Lobby, automatically re-queue for Arena
         if (Config.AutoQueueArena or Config.FullAutoArena or Config.MasterFullAuto) and rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("QueueJoin") then
             local inArena = LocalPlayer:GetAttribute("InArena")
             local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
@@ -1829,6 +1878,31 @@ task.spawn(function()
                 end
             end)
         end
+    end
+end)
+
+-- 5. AUTO SKIP BOSS CUTSCENES, BOON PICKER, REVIVE & RETRY VOTE LOOP
+task.spawn(function()
+    while isAlive() do
+        task.wait(0.35)
+        pcall(function()
+            local rep = game:GetService("ReplicatedStorage")
+            if (Config.AutoSkipCutscenes or Config.MasterFullAuto or Config.FullAutoArena) and rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("BossCutsceneSkip") then
+                rep.Remotes.BossCutsceneSkip:FireServer(1)
+            end
+
+            if Config.AutoBoonPick or Config.FullAutoArena or Config.MasterFullAuto then
+                autoPickBoon()
+            end
+
+            if Config.AutoRetryVote or Config.FullAutoArena or Config.MasterFullAuto then
+                autoRetryVote()
+            end
+
+            if Config.AutoReviveTeammates or Config.FullAutoArena or Config.MasterFullAuto then
+                autoRevive()
+            end
+        end)
     end
 end)
 
