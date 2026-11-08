@@ -119,8 +119,92 @@ local Config = {
     AutoClaimDaily = true,
 
     -- Safety
-    AntiAfk = true
+    AntiAfk = true,
+
+    -- Auto Execute & Persistence
+    AutoExecuteOnTeleport = true,
+    AutoSave = true
 }
+
+-- ==============================================================================
+-- 💾 CONFIG PERSISTENCE & AUTO-EXECUTE ENGINE
+-- ==============================================================================
+local CONFIG_FILE = "GloryBound_Config.json"
+
+local function SaveConfig(silent)
+    pcall(function()
+        if writefile then
+            local payload = game:GetService("HttpService"):JSONEncode(Config)
+            writefile(CONFIG_FILE, payload)
+            if not silent and WindUI and WindUI.Notify then
+                WindUI:Notify({ Title = "Saved!", Content = "บันทึกการตั้งค่าเรียบร้อยแล้ว", Duration = 2, Icon = "save" })
+            end
+        end
+    end)
+end
+
+local function LoadConfig(silent)
+    local success = false
+    pcall(function()
+        if isfile and isfile(CONFIG_FILE) and readfile then
+            local raw = readfile(CONFIG_FILE)
+            local decoded = game:GetService("HttpService"):JSONDecode(raw)
+            if type(decoded) == "table" then
+                for k, v in pairs(decoded) do
+                    Config[k] = v
+                end
+                success = true
+                if not silent and WindUI and WindUI.Notify then
+                    WindUI:Notify({ Title = "Config Loaded", Content = "โหลดการตั้งค่าอัตโนมัติสำเร็จแล้ว!", Duration = 2, Icon = "folder-check" })
+                end
+            end
+        end
+    end)
+    return success
+end
+
+-- Auto load saved config on startup
+LoadConfig(true)
+
+-- ==================== AUTO EXECUTE ON TELEPORT ====================
+local hasRegisteredQueue = false
+local function registerQueueOnTeleport()
+    if not Config.AutoExecuteOnTeleport then return end
+    if hasRegisteredQueue then return end
+    local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if queue then
+        hasRegisteredQueue = true
+        local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
+        local execCode = [[
+            task.wait(2.0)
+            if getgenv and (getgenv()._GloryBoundRunning or getgenv()._UniversalLoaderLoading) then
+                return
+            end
+            local cb = "]] .. cb .. [["
+            local sOk, code = pcall(function()
+                return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
+            end)
+            if not sOk or not code or #code < 500 then
+                sOk, code = pcall(function()
+                    return game:HttpGet("https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb)
+                end)
+            end
+            if sOk and code and #code > 500 then
+                local fn = loadstring(code)
+                if fn then return fn() end
+            end
+        ]]
+        pcall(queue, execCode)
+    end
+end
+
+pcall(registerQueueOnTeleport)
+
+if LocalPlayer.OnTeleport then
+    LocalPlayer.OnTeleport:Connect(function(state)
+        pcall(registerQueueOnTeleport)
+    end)
+end
 
 local LOBBY_WAYPOINTS = {
     ["🏋️ Gym (Barbells)"] = Vector3.new(-69, 3.2, 18.2),
@@ -223,6 +307,7 @@ TabGym:Toggle({
     Value = Config.AutoTrain,
     Callback = function(val)
         Config.AutoTrain = val
+        if Config.AutoSave then SaveConfig(true) end
         if val then
             WindUI:Notify({ Title = "Auto Train Started! 🏋️", Content = "Training on barbell: " .. Config.SelectedBarbell, Duration = 3, Icon = "play" })
         else
@@ -251,6 +336,7 @@ TabGym:Dropdown({
     Value = Config.SelectedBarbell,
     Callback = function(val)
         Config.SelectedBarbell = val
+        if Config.AutoSave then SaveConfig(true) end
     end
 })
 
@@ -622,13 +708,52 @@ TabProg:Toggle({
 local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 TabSettings:Paragraph({
-    Title = "⚡ Auto Execute System (ระบบรันสคริปต์อัตโนมัติ)",
-    Desc = "ตั้งค่าให้ Song Hub โหลดและทำงานทันทีเมื่อเปิด Roblox หรือเปลี่ยนห้อง โดยไม่ต้องก็อปลิงก์มาวางใหม่",
+    Title = "⚡ Auto Execute & Teleport Queue",
+    Desc = "ระบบรันสคริปต์อัตโนมัติเมื่อเปลี่ยนห้อง/วาร์ปข้ามเซิร์ฟเวอร์ และบันทึกการตั้งค่าถาวร",
     Image = "zap"
 })
 
+TabSettings:Toggle({
+    Title = "⚡ Auto Execute on Teleport / Warp",
+    Desc = "รัน Song Hub อัตโนมัติทันทีเมื่อเปลี่ยนเซิร์ฟเวอร์หรือวาร์ปเข้าแมตช์",
+    Value = Config.AutoExecuteOnTeleport,
+    Callback = function(val)
+        Config.AutoExecuteOnTeleport = val
+        registerQueueOnTeleport()
+        if Config.AutoSave then SaveConfig(true) end
+    end
+})
+
+TabSettings:Toggle({
+    Title = "💾 Auto Save Settings",
+    Desc = "บันทึกการตั้งค่าทั้งหมดอัตโนมัติเมื่อมีการเปลี่ยนแปลง",
+    Value = Config.AutoSave,
+    Callback = function(val)
+        Config.AutoSave = val
+        SaveConfig(true)
+    end
+})
+
 TabSettings:Button({
-    Title = "💾 Install Auto-Execute (ติดตั้งไฟล์ลง autoexec อัตโนมัติ)",
+    Title = "💾 Save Settings Now (บันทึกการตั้งค่าเดี๋ยวนี้)",
+    Desc = "บันทึกการตั้งค่าปัจจุบันลงใน GloryBound_Config.json",
+    Icon = "save",
+    Callback = function()
+        SaveConfig(false)
+    end
+})
+
+TabSettings:Button({
+    Title = "📂 Load Settings Now (โหลดการตั้งค่า)",
+    Desc = "โหลดการตั้งค่าล่าสุดจากไฟล์เซฟ",
+    Icon = "folder-check",
+    Callback = function()
+        LoadConfig(false)
+    end
+})
+
+TabSettings:Button({
+    Title = "💾 Install Auto-Execute (ติดตั้งลงโฟลเดอร์ autoexec)",
     Desc = "สร้างไฟล์ SongHub.luau ในโฟลเดอร์ autoexec ของตัวรัน (Wave/Solara/Swift/Delta/etc.)",
     Icon = "download",
     Callback = function()
@@ -664,7 +789,7 @@ TabSettings:Button({
 
 TabSettings:Button({
     Title = "📋 Copy Loader Script (คัดลอกโค้ดสำหรับใส่ autoexec)",
-    Desc = "คัดลอกคำสั่ง loadstring เพื่อนำไปสร้างไฟล์ .lua/.luau ในโฟลเดอร์ autoexec ด้วยตนเอง",
+    Desc = "คัดลอกคำสั่ง loadstring เพื่อนำไปใส่ในโฟลเดอร์ autoexec ด้วยตนเอง",
     Icon = "clipboard",
     Callback = function()
         local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
@@ -681,6 +806,7 @@ TabSettings:Toggle({
     Value = Config.AntiAfk,
     Callback = function(val)
         Config.AntiAfk = val
+        if Config.AutoSave then SaveConfig(true) end
     end
 })
 
@@ -749,64 +875,41 @@ end
 -- ==============================================================================
 
 -- ==============================================================================
--- 🔄 AUTO REBIRTH SYSTEM & HELPERS
+-- 🔄 AUTO REBIRTH SYSTEM & HELPERS (STRICT CONDITION GATED)
 -- ==============================================================================
 local isRebirthing = false
+local lastRebirthTime = 0
 
 local function checkRebirthReady()
     local ready = false
-    -- Method 1: ClientState Controller
+    
+    -- Primary Check: ClientState (Game's official internal values)
     pcall(function()
         local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
         local state = cs and cs.get and cs.get()
         if state then
-            if state.RebirthReady == true then
+            local str = tonumber(state.Strength) or 0
+            local cap = tonumber(state.StrengthCap) or 999999
+            -- Rebirth is ONLY ready when Strength has reached or exceeded Cap!
+            if str >= cap and cap > 0 then
                 ready = true
-            elseif state.Strength and state.StrengthCap and tonumber(state.Strength) and tonumber(state.StrengthCap) then
-                if tonumber(state.Strength) >= tonumber(state.StrengthCap) then
-                    ready = true
-                end
             end
         end
     end)
     if ready then return true end
 
-    -- Method 2: Training HUD Text
+    -- Secondary Check: Training HUD Push Button (Only when actively working out)
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         local tr = pg and pg:FindFirstChild("Training")
-        if tr then
-            local push = tr:FindFirstChild("Push", true)
-            if push then
-                local lbl = push:FindFirstChild("Label", true)
-                if lbl and lbl.Text and lbl.Text:lower():find("rebirth") then
+        if tr and tr.Enabled then
+            local root = tr:FindFirstChild("Root", true)
+            if root and root.Visible then
+                local push = tr:FindFirstChild("Push", true)
+                local lbl = push and push:FindFirstChild("Label", true)
+                -- When capped, the game's TrainingController changes button text to 'Rebirth'
+                if lbl and lbl.Visible and lbl.Text and lbl.Text:lower() == "rebirth" then
                     ready = true
-                end
-            end
-            local status = tr:FindFirstChild("Status", true)
-            if status and status.Text and status.Text:lower():find("rebirth ready") then
-                ready = true
-            end
-            local val = tr:FindFirstChild("Value", true)
-            if val and val.Text then
-                local cur, maxVal = val.Text:match("(%d+)%s*/%s*(%d+)")
-                if cur and maxVal and tonumber(cur) and tonumber(maxVal) and tonumber(cur) >= tonumber(maxVal) then
-                    ready = true
-                end
-            end
-        end
-    end)
-    if ready then return true end
-
-    -- Method 3: LobbyHUD
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local lhud = pg and pg:FindFirstChild("LobbyHUD")
-        if lhud then
-            for _, desc in ipairs(lhud:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Text and desc.Text:lower():find("rebirth ready") then
-                    ready = true
-                    break
                 end
             end
         end
@@ -817,7 +920,11 @@ end
 
 local function performRebirth()
     if isRebirthing then return end
+    if tick() - lastRebirthTime < 6 then return end -- Strict 6-second cooldown guard
+    if not checkRebirthReady() then return end -- Guard: Never trigger if strength is not ready!
+
     isRebirthing = true
+    lastRebirthTime = tick()
 
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
@@ -834,7 +941,7 @@ local function performRebirth()
 
         WindUI:Notify({ 
             Title = "Auto Rebirth 🔄", 
-            Content = "Strength is Max! Travelling to Shrine of Mars...", 
+            Content = "Strength Max reached! Warping to Shrine of Mars...", 
             Duration = 3, 
             Icon = "refresh-cw" 
         })
