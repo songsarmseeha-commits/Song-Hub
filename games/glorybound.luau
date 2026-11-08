@@ -52,12 +52,13 @@ local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camer
 -- ==============================================================================
 local now = os.clock()
 if getgenv then
-    -- 1. If script is already running with an active window, prevent duplicate stacking
-    if getgenv()._GloryBoundRunning and getgenv()._GB_Window and (now - (getgenv()._GB_LastStartTime or 0)) < 6 then
-        print("[GloryBound Hub] 🛡️ Script is already running with active UI. Skipping duplicate launch.")
+    -- 1. Strict Singleton: If script is already running with an active window, NEVER stack duplicate windows
+    if getgenv()._GloryBoundRunning and getgenv()._GB_Window and not getgenv()._GB_ForceReload then
+        print("[GloryBound Hub] 🛡️ GloryBound Hub is already running with active UI. Skipping duplicate launch.")
         return
     end
 
+    getgenv()._GB_ForceReload = nil
     getgenv()._GB_LastStartTime = now
     getgenv()._GloryBoundRunning = true
     getgenv()._GloryBoundRunId = (tonumber(getgenv()._GloryBoundRunId) or 0) + 1
@@ -88,7 +89,8 @@ local function cleanAllWindUI()
 
         for _, root in ipairs(searchRoots) do
             for _, child in ipairs(root:GetChildren()) do
-                if child.Name == "WindUI" or child.Name:find("WindUI") or child.Name == "GloryBoundHub" or child.Name == "SongHub" then
+                local cName = child.Name
+                if cName:find("WindUI") or cName:find("GloryBound") or cName:find("SongHub") then
                     pcall(function()
                         if child:FindFirstChild("Window") then
                             for _, w in ipairs(child.Window:GetChildren()) do
@@ -129,13 +131,13 @@ local Config = {
 
     -- Combat & Target Lock
     KillAura = false,
-    AttackRadius = 300,
+    AttackRadius = 350,
     TargetLock = false,
-    LockMode = "Behind", -- "Behind", "Above", "Face", "Front"
-    LockDistance = 3.5,
-    AutoParry = false,
-    AutoDodge = false,
-    DodgeInterval = 1.8,
+    LockMode = "WalkTo", -- "WalkTo (เดินไปตีมอนสเตอร์)", "Behind", "Above", "Face", "Front"
+    LockDistance = 5.5,
+    AutoParry = true,
+    AutoDodge = true,
+    DodgeInterval = 1.6,
     AutoDodgeLowHp = true,
     DodgeHpThreshold = 35,
     AutoAbility = true,
@@ -501,12 +503,14 @@ TabCombat:Toggle({
 })
 
 TabCombat:Dropdown({
-    Title = "🎯 Lock Position Mode (ตำแหน่งล็อคเกาะมอน)",
-    Desc = "เลือกมุมที่ต้องการให้ตัวละครล็อคติดตัวมอนสเตอร์ (แนะนำ: เกาะหลังมอน ไม่โดนมอนฟัน)",
-    Values = { "Behind (เกาะหลัง - แนะนำ)", "Above (ลอยเหนือหัว)", "Face Target (หันหน้าเข้าหา)", "Front (ประชิดหน้า)" },
-    Value = "Behind (เกาะหลัง - แนะนำ)",
+    Title = "🎯 Combat Movement & Lock Mode (ระบบเดินตี / ล็อคมอน)",
+    Desc = "เลือกรูปแบบการต่อสู้: เดินไปตีมอนสเตอร์เองตามธรรมชาติ หรือวาร์ปเกาะหลัง/เหนือหัว",
+    Values = { "WalkTo (เดินไปตีมอนสเตอร์ - แนะนำ)", "Behind (วาร์ปเกาะหลัง)", "Above (ลอยเหนือหัว)", "Face Target (หันหน้าเข้าหา)", "Front (ประชิดหน้า)" },
+    Value = "WalkTo (เดินไปตีมอนสเตอร์ - แนะนำ)",
     Callback = function(val)
-        if val:find("Behind") then
+        if val:find("WalkTo") then
+            Config.LockMode = "WalkTo"
+        elseif val:find("Behind") then
             Config.LockMode = "Behind"
         elseif val:find("Above") then
             Config.LockMode = "Above"
@@ -1114,41 +1118,55 @@ local isRebirthing = false
 local lastRebirthTime = 0
 
 local function checkRebirthReady()
-    local ready = false
-    
-    -- Primary Check: ClientState (Game's official internal values)
+    local str = nil
+    local cap = nil
+
+    -- 1. Primary Check: ClientState (Game's official internal source of truth)
     pcall(function()
         local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
         local state = cs and cs.get and cs.get()
         if state then
-            local str = tonumber(state.Strength) or 0
-            local cap = tonumber(state.StrengthCap) or 999999
-            -- Rebirth is ONLY ready when Strength has reached or exceeded Cap!
-            if str >= cap and cap > 0 then
-                ready = true
-            end
+            if state.Strength ~= nil then str = tonumber(state.Strength) end
+            if state.StrengthCap ~= nil then cap = tonumber(state.StrengthCap) end
         end
     end)
-    if ready then return true end
 
-    -- Secondary Check: Training HUD Push Button (Only when actively working out)
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local tr = pg and pg:FindFirstChild("Training")
-        if tr and tr.Enabled then
-            local root = tr:FindFirstChild("Root", true)
-            if root and root.Visible then
-                local push = tr:FindFirstChild("Push", true)
-                local lbl = push and push:FindFirstChild("Label", true)
-                -- When capped, the game's TrainingController changes button text to 'Rebirth'
-                if lbl and lbl.Visible and lbl.Text and lbl.Text:lower() == "rebirth" then
-                    ready = true
+    -- 2. Fallback: Defs.Rebirth capFor(currentRebirth)
+    if not cap or cap <= 0 then
+        pcall(function()
+            local rebDef = require(ReplicatedStorage.Shared.Defs.Rebirth)
+            local currentRebirth = tonumber(LocalPlayer:GetAttribute("Rebirth")) or 0
+            if rebDef and rebDef.capFor then
+                cap = tonumber(rebDef.capFor(currentRebirth))
+            end
+        end)
+    end
+
+    -- 3. Fallback: LobbyHUD Strength Text (e.g. "2 / 330")
+    if (not str or not cap) then
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local chip = pg and pg:FindFirstChild("LobbyHUD", true) and pg.LobbyHUD:FindFirstChild("Chips", true)
+            local sRow = chip and chip:FindFirstChild("Strength", true)
+            local lbl = sRow and sRow:FindFirstChild("Text", true)
+            if lbl and lbl.Text and lbl.Text:find("/") then
+                local sStr, sCap = lbl.Text:match("(%d+[%d%,]*)%s*/%s*(%d+[%d%,]*)")
+                if sStr and sCap then
+                    sStr = sStr:gsub(",", "")
+                    sCap = sCap:gsub(",", "")
+                    str = str or tonumber(sStr)
+                    cap = cap or tonumber(sCap)
                 end
             end
-        end
-    end)
+        end)
+    end
 
-    return ready
+    -- STRICT GUARD: If strength is less than cap, NEVER trigger rebirth!
+    if str and cap and cap > 0 then
+        return str >= cap
+    end
+
+    return false
 end
 
 local function performRebirth()
@@ -1276,108 +1294,137 @@ task.spawn(function()
 end)
 
 -- 1.4. AUTO BOON & UPGRADE PICKER HELPER
+local lastBoonPickTime = 0
 local function autoPickBoon()
-    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return end
+    local now = tick()
+    if now - lastBoonPickTime < 1.0 then return end
 
-    local cardButtons = {}
-    for _, desc in ipairs(pg:GetDescendants()) do
-        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-            local name = desc.Name
-            local pName = desc.Parent and desc.Parent.Name or ""
-            if name:match("^Card%d+$") or pName:match("^Slot%d+$") or name:lower():find("card") then
-                if desc.Visible and desc.AbsoluteSize.X > 40 then
-                    table.insert(cardButtons, desc)
-                end
+    pcall(function()
+        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local boonChoice = pg and pg:FindFirstChild("BoonChoice")
+        local isBoonOpen = false
+
+        pcall(function()
+            local bc = require(LocalPlayer.PlayerScripts.Controllers.BoonController)
+            if bc and bc.isOpen and bc.isOpen() then
+                isBoonOpen = true
             end
-        end
-    end
+        end)
+        if boonChoice and boonChoice.Enabled then isBoonOpen = true end
+        if not isBoonOpen then return end
 
-    if #cardButtons > 0 then
-        local chosenBtn = cardButtons[1]
+        lastBoonPickTime = now
+        local vim = game:GetService("VirtualInputManager")
+        local rep = game:GetService("ReplicatedStorage")
+        local boonRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("BoonPick")
+
+        -- Card scoring: Legendary (100) > Epic (80) > Rare (60) > Common (40)
+        local cardScores = { [1] = 40, [2] = 40, [3] = 40 }
+        local cardIds = {}
         local highestScore = -1
+        local bestCardIndex = 1
 
-        for _, btn in ipairs(cardButtons) do
-            local score = 10
-            local container = btn.Parent or btn
-            for _, lbl in ipairs(container:GetDescendants()) do
-                if lbl:IsA("TextLabel") and lbl.Text then
+        if boonChoice then
+            local screenW = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.X) or 1920
+            for _, lbl in ipairs(boonChoice:GetDescendants()) do
+                if lbl:IsA("TextLabel") and lbl.Text and #lbl.Text > 1 then
                     local t = lbl.Text:lower()
+                    local x = lbl.AbsolutePosition.X
+                    local cardIdx = 1
+                    if x > screenW * 0.60 then
+                        cardIdx = 3
+                    elseif x > screenW * 0.38 then
+                        cardIdx = 2
+                    else
+                        cardIdx = 1
+                    end
+
                     if t:find("legendary") or t:find("mythic") then
-                        score = math.max(score, 100)
-                    elseif t:find("epic") or t:find("twin fates") or t:find("bloodthirst") or t:find("hercules") or t:find("hourglass") then
-                        score = math.max(score, 80)
-                    elseif t:find("rare") or t:find("lupa") or t:find("apollo") or t:find("vulcan") or t:find("keen edge") or t:find("crowd") then
-                        score = math.max(score, 50)
+                        cardScores[cardIdx] = math.max(cardScores[cardIdx], 100)
+                    elseif t:find("epic") or t:find("twin fates") or t:find("bloodthirst") or t:find("hercules") or t:find("nemesis") then
+                        cardScores[cardIdx] = math.max(cardScores[cardIdx], 80)
+                    elseif t:find("rare") or t:find("lupa") or t:find("apollo") or t:find("vulcan") or t:find("minerva") then
+                        cardScores[cardIdx] = math.max(cardScores[cardIdx], 60)
                     elseif t:find("fury") or t:find("damage") or t:find("mars") or t:find("mercury") or t:find("diana") then
-                        score = math.max(score, 30)
+                        cardScores[cardIdx] = math.max(cardScores[cardIdx], 45)
+                    end
+
+                    local raw = t:gsub("%s+", ""):gsub("[^%w]", "")
+                    if raw == "furyofmars" or raw == "lupashunger" or raw == "mercuryssandals" or raw == "dianaseye"
+                        or raw == "apolloslight" or raw == "vulcansbrand" or raw == "minervasaegis" or raw == "junosgrace"
+                        or raw == "twinfates" or raw == "crowdsfavor" or raw == "bloodthirst" or raw == "medicus"
+                        or raw == "windstep" or raw == "keenedge" or raw == "testudo" or raw == "herculesclub"
+                        or raw == "saturnshourglass" or raw == "nemesisverdict" then
+                        cardIds[cardIdx] = raw
                     end
                 end
-            end
-            if score > highestScore then
-                highestScore = score
-                chosenBtn = btn
             end
         end
 
-        pcall(function()
-            if firesignal then
-                firesignal(chosenBtn.Activated)
-                firesignal(chosenBtn.MouseButton1Click)
-                firesignal(chosenBtn.MouseButton1Down)
-                firesignal(chosenBtn.MouseButton1Up)
+        for idx = 1, 3 do
+            if cardScores[idx] > highestScore then
+                highestScore = cardScores[idx]
+                bestCardIndex = idx
             end
+        end
+
+        -- 1. Native key press simulation (1, 2, or 3)
+        local key = (bestCardIndex == 1 and Enum.KeyCode.One) or (bestCardIndex == 2 and Enum.KeyCode.Two) or Enum.KeyCode.Three
+        pcall(function()
+            vim:SendKeyEvent(true, key, false, game)
+            task.wait(0.05)
+            vim:SendKeyEvent(false, key, false, game)
         end)
 
-        pcall(function()
-            local center = chosenBtn.AbsolutePosition + (chosenBtn.AbsoluteSize / 2)
-            VirtualUser:Button1Down(center)
-            task.wait(0.04)
-            VirtualUser:Button1Up(center)
-        end)
-
-        pcall(function()
-            local rep = game:GetService("ReplicatedStorage")
-            local boonRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("BoonPick")
-            if boonRemote then
-                local container = chosenBtn.Parent or chosenBtn
-                for _, lbl in ipairs(container:GetDescendants()) do
-                    if lbl:IsA("TextLabel") and lbl.Text and #lbl.Text > 2 then
-                        local raw = lbl.Text:lower():gsub("%s+", ""):gsub("[^%w]", "")
-                        if raw == "furyofmars" or raw == "lupashunger" or raw == "mercuryssandals" or raw == "dianaseye"
-                            or raw == "apolloslight" or raw == "vulcansbrand" or raw == "minervasaegis" or raw == "junosgrace"
-                            or raw == "twinfates" or raw == "crowdsfavor" or raw == "bloodthirst" or raw == "medicus"
-                            or raw == "windstep" or raw == "keenedge" or raw == "testudo" or raw == "herculesclub"
-                            or raw == "saturnshourglass" then
-                            boonRemote:FireServer(raw)
-                            break
-                        end
-                    end
-                end
-            end
-        end)
-    end
+        -- 2. Direct server remote confirmation
+        local chosenBoonId = cardIds[bestCardIndex]
+        if boonRemote and chosenBoonId then
+            pcall(function() boonRemote:FireServer(chosenBoonId) end)
+        end
+    end)
 end
 
 -- 1.5. AUTO SKILL UPGRADE HELPER
 local function autoUpgradeSkills()
     pcall(function()
         local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
-        local state = cs.get and cs.get()
-        if not state or not state.SkillPoints or state.SkillPoints <= 0 then return end
+        local state = cs and cs.get and cs.get()
+        local sp = state and tonumber(state.SkillPoints) or 0
+        if sp <= 0 then return end
 
-        local skillsDef = require(ReplicatedStorage.Shared.Defs.Skills)
         local rep = game:GetService("ReplicatedStorage")
+        local skillsDef = require(rep.Shared.Defs.Skills)
         local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("SkillUpgrade")
-        if not remote then return end
+        if not remote or not skillsDef or not skillsDef.IDS or not skillsDef.canBuy then return end
 
-        for _, id in ipairs(skillsDef.IDS) do
-            local ok, can = pcall(skillsDef.canBuy, state.Skills, id, state.Level, state.SkillPoints)
+        local playerSkills = state.Skills or {}
+        local playerLevel = state.Level or 1
+
+        local priorityList = {
+            "SharpEdge", "Relentless", "DeepWounds", "GiantSlayer", "WrathOfMars", "Sunder", "Executioner",
+            "IronSkin", "Vigor", "Unyielding", "ShieldWall", "Hardened", "PhantomStep", "LightStep",
+            "LongStride", "Blessed", "InnerFire", "GoldenTouch", "MidasTouch", "SwiftSandals"
+        }
+
+        for _, id in ipairs(priorityList) do
+            local ok, can = pcall(skillsDef.canBuy, playerSkills, id, playerLevel, sp)
             if ok and can == true then
                 remote:FireServer(id)
-                task.wait(0.12)
+                task.wait(0.15)
                 state = cs.get and cs.get()
-                if not state or not state.SkillPoints or state.SkillPoints <= 0 then break end
+                sp = state and tonumber(state.SkillPoints) or 0
+                if sp <= 0 then return end
+            end
+        end
+
+        for _, id in ipairs(skillsDef.IDS) do
+            local ok, can = pcall(skillsDef.canBuy, playerSkills, id, playerLevel, sp)
+            if ok and can == true then
+                remote:FireServer(id)
+                task.wait(0.15)
+                state = cs.get and cs.get()
+                sp = state and tonumber(state.SkillPoints) or 0
+                if sp <= 0 then return end
             end
         end
     end)
@@ -1435,6 +1482,40 @@ local function autoRetryVote()
         if remote and LocalPlayer:GetAttribute("TrialRetryVoted") ~= true then
             remote:FireServer("yes")
         end
+
+        -- Click Skip & Retry buttons on BattleReport GUI
+        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local br = pg and pg:FindFirstChild("BattleReport")
+        if br and br.Enabled then
+            for _, btn in ipairs(br:GetDescendants()) do
+                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                    local txt = (btn:IsA("TextButton") and btn.Text or btn.Name):lower()
+                    if txt:find("skip") or txt:find("retry") or txt:find("again") or txt:find("continue") then
+                        pcall(function()
+                            if firesignal then
+                                firesignal(btn.Activated)
+                                firesignal(btn.MouseButton1Click)
+                            end
+                        end)
+                        pcall(function()
+                            local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+                            VirtualUser:Button1Down(center)
+                            task.wait(0.04)
+                            VirtualUser:Button1Up(center)
+                        end)
+                    end
+                end
+            end
+        end
+
+        -- Auto queue if returned to Lobby
+        if (Config.AutoQueueArena or Config.FullAutoArena or Config.MasterFullAuto) and rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("QueueJoin") then
+            local inArena = LocalPlayer:GetAttribute("InArena")
+            local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
+            if not inArena or zone == "Lobby" then
+                rep.Remotes.QueueJoin:FireServer()
+            end
+        end
     end)
 end
 
@@ -1463,42 +1544,78 @@ local function autoRevive()
     end)
 end
 
--- 1.10. MASTER TARGET LOCK & SNAP CONTROLLER
+-- 1.10. MASTER TARGET LOCK & COMBAT MOVEMENT CONTROLLER (WALKTO & WARP)
+local lastPathStuckCheck = 0
+local lastPlayerPos = nil
+
 task.spawn(function()
     while isAlive() do
         task.wait(0.03)
-        if Config.TargetLock or Config.FullAutoArena then
+        if Config.TargetLock or Config.FullAutoArena or Config.KillAura then
             pcall(function()
                 local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-                if not root then return end
+                if not hum or not root or hum.Health <= 0 then return end
 
-                local target, dist = getClosestEnemy(Config.AttackRadius)
+                local target, dist = getClosestEnemy(Config.AttackRadius or 350)
                 if target and target.Parent then
-                    local hum = target.Parent:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health > 0 then
-                        local lockDist = Config.LockDistance or 3.5
-                        local targetPos = target.Position
-                        local targetLook = target.CFrame.LookVector
-                        local newCFrame = nil
-
-                        if Config.LockMode == "Behind" then
-                            local behindPos = targetPos - (targetLook * lockDist)
-                            newCFrame = CFrame.lookAt(behindPos, targetPos)
-                        elseif Config.LockMode == "Above" then
-                            local abovePos = targetPos + Vector3.new(0, math.max(4.5, lockDist), 0)
-                            newCFrame = CFrame.lookAt(abovePos, targetPos)
-                        elseif Config.LockMode == "Front" then
-                            local frontPos = targetPos + (targetLook * lockDist)
-                            newCFrame = CFrame.lookAt(frontPos, targetPos)
-                        else -- "Face"
-                            newCFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+                    local eHum = target.Parent:FindFirstChildOfClass("Humanoid")
+                    if not eHum or eHum.Health > 0 then
+                        -- Auto Equip Weapon from Backpack if unequipped
+                        local currentTool = char:FindFirstChildWhichIsA("Tool")
+                        if not currentTool then
+                            local bp = LocalPlayer:FindFirstChild("Backpack")
+                            local tool = bp and bp:FindFirstChildWhichIsA("Tool")
+                            if tool then
+                                hum:EquipTool(tool)
+                                currentTool = tool
+                            end
                         end
 
-                        if newCFrame then
-                            root.CFrame = newCFrame
+                        local toolName = currentTool and currentTool.Name:lower() or ""
+                        local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
+                        local desiredDist = isRanged and 28 or (Config.LockDistance or 5.5)
+                        local targetPos = target.Position
+                        local targetLook = target.CFrame.LookVector
+
+                        -- Always look directly towards the target
+                        root.CFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+
+                        if Config.LockMode == "WalkTo" then
+                            -- Natural Walking Movement
+                            if dist > (desiredDist + 1.2) then
+                                local moveDir = (targetPos - root.Position)
+                                hum:MoveTo(targetPos)
+                                if moveDir.Magnitude > 0.5 then
+                                    hum:Move(moveDir.Unit, false)
+                                end
+
+                                -- Anti-stuck glide if far away or path blocked
+                                local now = tick()
+                                if dist > 70 or (lastPlayerPos and (root.Position - lastPlayerPos).Magnitude < 1 and (now - lastPathStuckCheck) > 2.5) then
+                                    lastPathStuckCheck = now
+                                    local glidePos = targetPos - (moveDir.Unit * desiredDist) + Vector3.new(0, 1.2, 0)
+                                    root.CFrame = CFrame.lookAt(glidePos, targetPos)
+                                    root.AssemblyLinearVelocity = Vector3.zero
+                                end
+                                lastPlayerPos = root.Position
+                            else
+                                -- Within striking distance: stop moving
+                                hum:Move(Vector3.zero, false)
+                            end
+                        elseif Config.LockMode == "Behind" then
+                            local behindPos = targetPos - (targetLook * desiredDist)
+                            root.CFrame = CFrame.lookAt(behindPos, targetPos)
                             root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
+                        elseif Config.LockMode == "Above" then
+                            local abovePos = targetPos + Vector3.new(0, math.max(4.5, desiredDist), 0)
+                            root.CFrame = CFrame.lookAt(abovePos, targetPos)
+                            root.AssemblyLinearVelocity = Vector3.zero
+                        elseif Config.LockMode == "Front" then
+                            local frontPos = targetPos + (targetLook * desiredDist)
+                            root.CFrame = CFrame.lookAt(frontPos, targetPos)
+                            root.AssemblyLinearVelocity = Vector3.zero
                         end
                     end
                 end
@@ -1511,50 +1628,52 @@ end)
 task.spawn(function()
     local combo = 1
     while isAlive() do
-        task.wait(0.12)
-        if Config.KillAura or Config.FullAutoArena then
+        task.wait(0.11)
+        if Config.KillAura or Config.FullAutoArena or Config.TargetLock then
             pcall(function()
                 local rep = game:GetService("ReplicatedStorage")
                 local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-                if not root then return end
+                if not hum or not root or hum.Health <= 0 then return end
 
-                local target, dist = getClosestEnemy(Config.AttackRadius or 300)
+                local target, dist = getClosestEnemy(Config.AttackRadius or 350)
                 if target and target.Parent then
-                    local hum = target.Parent:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health > 0 then
-                        -- Aim camera at target
-                        pcall(function()
-                            if workspace.CurrentCamera then
-                                workspace.CurrentCamera.CFrame = CFrame.lookAt(workspace.CurrentCamera.CFrame.Position, target.Position)
-                            end
-                        end)
+                    local eHum = target.Parent:FindFirstChildOfClass("Humanoid")
+                    if not eHum or eHum.Health > 0 then
+                        local currentTool = char:FindFirstChildWhichIsA("Tool")
+                        local toolName = currentTool and currentTool.Name:lower() or ""
+                        local isRanged = toolName:find("bow") or toolName:find("arrow") or toolName:find("staff")
+                        local maxStrikeDist = isRanged and 45 or 8.5
 
-                        -- Face enemy if target lock is not actively positioning
-                        if not Config.TargetLock then
+                        -- Only strike if within effective weapon reach!
+                        if dist <= maxStrikeDist then
+                            -- Aim camera at target
                             pcall(function()
-                                root.CFrame = CFrame.lookAt(root.Position, Vector3.new(target.Position.X, root.Position.Y, target.Position.Z))
+                                if workspace.CurrentCamera then
+                                    workspace.CurrentCamera.CFrame = CFrame.lookAt(workspace.CurrentCamera.CFrame.Position, target.Position)
+                                end
                             end)
-                        end
 
-                        -- Attack Method 1: RemoteEvent Attack + Release
-                        rep.Remotes.Attack:FireServer(combo, target.Position, false)
-                        task.wait(0.04)
-                        rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
-                        combo = (combo % 3) + 1
+                            -- Attack Method 1: RemoteEvent Attack + Release
+                            rep.Remotes.Attack:FireServer(combo, target.Position, false)
+                            task.wait(0.04)
+                            rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
+                            combo = (combo % 3) + 1
 
-                        -- Attack Method 2: Virtual Click (Fires Bow drawing/release & standard attacks)
-                        pcall(function()
-                            local cam = workspace.CurrentCamera
-                            local center = cam and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or Vector2.zero
-                            VirtualUser:Button1Down(center, cam and cam.CFrame or CFrame.identity)
-                            task.wait(0.08)
-                            VirtualUser:Button1Up(center, cam and cam.CFrame or CFrame.identity)
-                        end)
+                            -- Attack Method 2: Virtual Click (Fires Bow drawing/release & standard attacks)
+                            pcall(function()
+                                local cam = workspace.CurrentCamera
+                                local center = cam and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or Vector2.zero
+                                VirtualUser:Button1Down(center, cam and cam.CFrame or CFrame.identity)
+                                task.wait(0.06)
+                                VirtualUser:Button1Up(center, cam and cam.CFrame or CFrame.identity)
+                            end)
 
-                        -- Cast Ability if enabled
-                        if Config.AutoAbility then
-                            rep.Remotes.AbilityCast:FireServer(target.Position)
+                            -- Cast Ability if enabled
+                            if Config.AutoAbility then
+                                rep.Remotes.AbilityCast:FireServer(target.Position)
+                            end
                         end
                     end
                 end
@@ -1563,40 +1682,16 @@ task.spawn(function()
     end
 end)
 
--- 3. GOD BLOCK / AUTO PARRY LOOP
-task.spawn(function()
-    while isAlive() do
-        task.wait(0.08)
-        if Config.AutoParry then
-            pcall(function()
-                local rep = game:GetService("ReplicatedStorage")
-                local char = LocalPlayer.Character
-                local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-                if not root then return end
-
-                local target, dist = getClosestEnemy(16)
-                if target and dist < 14 then
-                    -- Tap block in parry window
-                    rep.Remotes.Block:FireServer(true, 0)
-                    task.wait(0.18)
-                    rep.Remotes.Block:FireServer(false, 0.18)
-                end
-            end)
-        end
-    end
-end)
-
--- 4. ADVANCED AUTO DODGE & TACTICAL FLANK CONTROLLER
+-- 3 & 4. 100% ADVANCED AUTO DODGE & GOD PARRY ENGINE (ENEMY WINDUP DETECTION)
 local lastCombatDodge = 0
+local lastParryTime = 0
+
 task.spawn(function()
     while isAlive() do
-        task.wait(0.1)
-        if Config.AutoDodge or Config.AutoDodgeLowHp then
+        task.wait(0.04)
+        if Config.AutoDodge or Config.AutoParry or Config.AutoDodgeLowHp or Config.FullAutoArena then
             pcall(function()
                 local rep = game:GetService("ReplicatedStorage")
-                local dashRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("Dash")
-                if not dashRemote then return end
-
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
@@ -1606,24 +1701,49 @@ task.spawn(function()
                 local hpPct = (hum.Health / math.max(1, hum.MaxHealth)) * 100
 
                 -- A. Emergency Low HP Retreat Dash
-                if Config.AutoDodgeLowHp and hpPct <= Config.DodgeHpThreshold then
-                    if now - lastCombatDodge > 1.2 then
+                if (Config.AutoDodgeLowHp or Config.FullAutoArena) and hpPct <= (Config.DodgeHpThreshold or 35) then
+                    if now - lastCombatDodge > 1.1 then
                         lastCombatDodge = now
-                        local target = getClosestEnemy(30)
+                        local target = getClosestEnemy(35)
                         local escapeDir = target and (root.Position - target.Position).Unit or (-root.CFrame.LookVector)
-                        dashRemote:FireServer(escapeDir)
+                        if rep.Remotes:FindFirstChild("Dash") then
+                            rep.Remotes.Dash:FireServer(escapeDir)
+                        end
                         return
                     end
                 end
 
-                -- B. Tactical Combat Dodge (Sideways / Flank to dodge forward cleave)
-                if Config.AutoDodge then
-                    local target, dist = getClosestEnemy(16)
-                    if target and dist and dist < 14 then
-                        if now - lastCombatDodge > (Config.DodgeInterval or 1.8) then
+                -- B. Dynamic Reactive Windup Dodge & Parry
+                local target, dist = getClosestEnemy(18)
+                if target and dist and dist <= 16 and target.Parent then
+                    local targetModel = target.Parent
+                    local windup = targetModel:GetAttribute("WindupEnd")
+                    local isWindingUp = (windup and type(windup) == "number" and (windup > now or (now - windup) < 0.25))
+
+                    if isWindingUp then
+                        -- 1. Auto Parry (God Block)
+                        if (Config.AutoParry or Config.FullAutoArena) and (now - lastParryTime > 0.5) then
+                            lastParryTime = now
+                            if rep.Remotes:FindFirstChild("Block") then
+                                rep.Remotes.Block:FireServer(true, 0)
+                                task.delay(0.18, function()
+                                    pcall(function() rep.Remotes.Block:FireServer(false, 0.18) end)
+                                end)
+                            end
+                        -- 2. Auto Dodge (I-Frame flank dash)
+                        elseif (Config.AutoDodge or Config.FullAutoArena) and (now - lastCombatDodge > 1.2) then
                             lastCombatDodge = now
-                            local flankDir = (math.random() > 0.5 and target.CFrame.RightVector or -target.CFrame.RightVector).Unit
-                            dashRemote:FireServer(flankDir)
+                            local flankDir = (math.random() > 0.5 and root.CFrame.RightVector or -root.CFrame.RightVector).Unit
+                            if rep.Remotes:FindFirstChild("Dash") then
+                                rep.Remotes.Dash:FireServer(flankDir)
+                            end
+                        end
+                    elseif (Config.AutoDodge or Config.FullAutoArena) and (now - lastCombatDodge > (Config.DodgeInterval or 1.6)) and dist <= 12 then
+                        -- Periodic tactical flank dash
+                        lastCombatDodge = now
+                        local flankDir = (math.random() > 0.5 and root.CFrame.RightVector or -root.CFrame.RightVector).Unit
+                        if rep.Remotes:FindFirstChild("Dash") then
+                            rep.Remotes.Dash:FireServer(flankDir)
                         end
                     end
                 end
