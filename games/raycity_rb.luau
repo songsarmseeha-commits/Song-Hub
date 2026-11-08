@@ -60,18 +60,16 @@ local function isAlive()
     return true
 end
 
--- Clean up any previous WindUI ScreenGuis cleanly
+-- Clean up only previous WindUI ScreenGuis cleanly (NEVER touch PlayerGui or game UI)
 pcall(function()
     local roots = {
         (typeof(gethui) == "function" and gethui()) or nil,
-        game:GetService("CoreGui"),
-        game:GetService("CoreGui"):FindFirstChild("RobloxGui"),
-        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        game:GetService("CoreGui")
     }
     for _, root in ipairs(roots) do
         if root then
             for _, child in ipairs(root:GetChildren()) do
-                if string.find(child.Name, "WindUI") or string.find(child.Name, "Raycity") then
+                if child.Name == "WindUI" or child.Name == "RaycityHub" or child.Name == "WindUI-RaycityHub" or child.Name == "SongHub" then
                     pcall(function() child:Destroy() end)
                 end
             end
@@ -561,13 +559,13 @@ local function getMyCar()
         return rcd.car
     end
     local car = workspace:FindFirstChild("MyCar")
-    if car and (car:FindFirstChild("Root") or car.PrimaryPart) then
+    if car and (car:FindFirstChild("Root") or car.PrimaryPart or car:FindFirstChild("Body") or car:FindFirstChildWhichIsA("BasePart")) then
         return car
     end
-    local char = LocalPlayer.Character
-    if char then
+    local lpChar = LocalPlayer and LocalPlayer.Character
+    if lpChar then
         for _, d in ipairs(workspace:GetDescendants()) do
-            if (d:IsA("VehicleSeat") or d:IsA("Seat")) and d.Occupant and d.Occupant.Parent == char then
+            if (d:IsA("VehicleSeat") or d:IsA("Seat")) and d.Occupant and d.Occupant.Parent == lpChar then
                 return d.Parent
             end
         end
@@ -578,12 +576,12 @@ end
 local function getCarRoot()
     local rcd = getRCDrive()
     if rcd and rcd.car then
-        local r = rcd.car:FindFirstChild("Root") or rcd.car.PrimaryPart
+        local r = rcd.car:FindFirstChild("Root") or rcd.car.PrimaryPart or rcd.car:FindFirstChild("Body") or rcd.car:FindFirstChildWhichIsA("BasePart")
         if r then return r end
     end
     local car = getMyCar()
     if car then
-        return car:FindFirstChild("Root") or car.PrimaryPart
+        return car:FindFirstChild("Root") or car.PrimaryPart or car:FindFirstChild("Body") or car:FindFirstChildWhichIsA("BasePart")
     end
     return nil
 end
@@ -820,6 +818,8 @@ local function pressReturnKey()
         if ntp and ntp.Enabled then
             local tap = ntp:FindFirstChild("MobileTap", true)
             if tap then fireGuiClick(tap) end
+            local btn = ntp:FindFirstChildWhichIsA("GuiButton", true)
+            if btn and btn.Visible then fireGuiClick(btn) end
         end
 
         -- 2. Enter button in RBRCGameGuide (Guide Mission prompt)
@@ -835,11 +835,11 @@ local function pressReturnKey()
                 if d:IsA("GuiButton") and (d.Visible or (d.Parent and d.Parent:IsA("GuiObject") and d.Parent.Visible)) then
                     local name = d.Name:lower()
                     local text = (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text or (d:IsA("TextButton") and d.Text or "")):lower()
-                    if name == "next" or name:find("ต่อไป") or text:find("ต่อไป") or text:find("enter") then
+                    if name == "next" or name:find("ต่อไป") or text:find("ต่อไป") or text:find("enter") or name:find("enter") then
                         fireGuiClick(d)
-                    elseif name == "yes" or name == "accept" or name:find("ตกลง") or text:find("รับ") or text:find("ตกลง") then
+                    elseif name == "yes" or name == "accept" or name:find("ตกลง") or text:find("รับ") or text:find("ตกลง") or text:find("accept") then
                         fireGuiClick(d)
-                    elseif name == "close" or name == "confirm" or name == "ok" or text:find("ปิด") or text:find("รางวัล") then
+                    elseif name == "close" or name == "confirm" or name == "ok" or text:find("ปิด") or text:find("รางวัล") or text:find("confirm") or text:find("claim") or text:find("complete") then
                         fireGuiClick(d)
                     end
                 end
@@ -957,6 +957,18 @@ local function findQuestTargetNpc(targetName)
     local cleanName = targetName:gsub("^%s+", ""):gsub("%s+$", ""):lower()
     local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
     if not npcsFolder then return nil end
+
+    -- Special Shortcut for Tutorial / Welcome Newbie NPC (Npc_939900)
+    if cleanName:find("welcome") or cleanName:find("newbie") or cleanName:find("greeting") or cleanName:find("solve") then
+        local wNpc = npcsFolder:FindFirstChild("Npc_939900")
+        if wNpc then return wNpc end
+    end
+
+    -- Direct numerical ID check
+    local directNum = cleanName:match("(%d+)")
+    if directNum and npcsFolder:FindFirstChild("Npc_" .. directNum) then
+        return npcsFolder:FindFirstChild("Npc_" .. directNum)
+    end
 
     local rep = game:GetService("ReplicatedStorage")
     local npcNames = nil
@@ -1109,29 +1121,74 @@ local function getActiveQuestDestination()
     if okNav and nav then
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
-            if okGl and gl and gl.target then
+            if okGl and gl and gl.target and typeof(gl.target) == "Vector3" then
                 return gl.target, nil, gl.points or navPoints, "guideline", nil
             end
         end
         if nav.getGuide then
             local okG, g = pcall(nav.getGuide)
-            if okG and g and g.destRoblox then
+            if okG and g and g.destRoblox and typeof(g.destRoblox) == "Vector3" then
                 return g.destRoblox, nil, navPoints, "guide", nil
             end
         end
     end
 
-    -- Priority 3: Parse active quest from all HUD / Quest UIs in PlayerGui
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local questTexts = {}
+    -- Priority 3: Road Guide Quads from workspace.RaycityNavigation
+    local rNav = workspace:FindFirstChild("RaycityNavigation")
+    if rNav then
+        local guideBucket = rNav:FindFirstChild("GuideBucket")
+        if guideBucket then
+            local quads = {}
+            for _, c in ipairs(guideBucket:GetChildren()) do
+                if c:IsA("BasePart") then
+                    table.insert(quads, c.Position)
+                end
+            end
+            if #quads > 0 then
+                if not navPoints then navPoints = quads end
+                local carRoot = getCarRoot()
+                if carRoot then
+                    local maxD = 0
+                    local targetQuad = quads[#quads]
+                    for _, pt in ipairs(quads) do
+                        local d = (pt - carRoot.Position).Magnitude
+                        if d > maxD then
+                            maxD = d
+                            targetQuad = pt
+                        end
+                    end
+                    if maxD > 20 then
+                        return targetQuad, guideBucket, navPoints, "guidebucket", nil
+                    end
+                end
+            end
+        end
+    end
+
+    -- Priority 4: Parse active quest from UI (English + Thai bilingual parser)
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    local candidateTexts = {}
     if pg then
-        for _, g in ipairs(pg:GetChildren()) do
-            if g:IsA("ScreenGui") and g.Enabled then
+        -- Check RBRCQuestFavorite first (Primary Quest Tracker widget on right of screen)
+        local qFav = pg:FindFirstChild("RBRCQuestFavorite")
+        if qFav and qFav.Enabled then
+            for _, d in ipairs(qFav:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible and d.Text ~= "" and d.Text ~= "Favorite Quest" then
+                    table.insert(candidateTexts, d.Text)
+                end
+            end
+        end
+
+        -- Check RaycityQuestUi, RBRCGameGuide, RaycityHud
+        for _, gName in ipairs({ "RaycityQuestUi", "RBRCGameGuide", "RaycityHud" }) do
+            local g = pg:FindFirstChild(gName)
+            if g and g.Enabled then
                 for _, d in ipairs(g:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
-                        local txt = d.Text
-                        if txt:find("ภารกิจ") or txt:find("กลับไปหา") or txt:find("ไปพบ") or txt:find("คุยกับ") or txt:find("%d+/%d+") or txt:find("ส่ง") then
-                            table.insert(questTexts, txt)
+                        local t = d.Text
+                        if t:lower():find("go back") or t:lower():find("talk to") or t:lower():find("meet") or t:lower():find("deliver")
+                            or t:find("กลับไปหา") or t:find("ไปพบ") or t:find("คุยกับ") or t:find("ส่ง") or t:find("ภารกิจ") then
+                            table.insert(candidateTexts, t)
                         end
                     end
                 end
@@ -1139,55 +1196,67 @@ local function getActiveQuestDestination()
         end
     end
 
-    local subQuestNpc = nil
-    local returnNpc = nil
-    for _, txt in ipairs(questTexts) do
-        local firstLine = (typeof(txt) == "string" and string.split(txt, "\n")[1]) or txt
-        -- Check for incomplete subquest like "ภารกิจ - มาดามอันตราย  0/1"
-        local taskName, curr, maxVal = firstLine:match("([^%d%/]+)%s*(%d+)%s*/%s*(%d+)")
-        if taskName and curr and maxVal then
-            local cNum = tonumber(curr) or 0
-            local mNum = tonumber(maxVal) or 1
-            if cNum < mNum then
-                local cleanTask = taskName:gsub("ภารกิจ", ""):gsub("%-", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                local npc = findQuestTargetNpc(cleanTask)
-                if npc then
-                    subQuestNpc = npc
+    -- Extract target NPC model from candidate texts
+    local targetNpcModel = nil
+    for _, txt in ipairs(candidateTexts) do
+        for _, rawLine in ipairs(string.split(txt, "\n")) do
+            local line = rawLine:gsub("^%s+", ""):gsub("%s+$", "")
+            if line ~= "" then
+                -- 1. Directional Prefix matching (English + Thai)
+                local extracted = line:match("[Gg]o back to%s*(.+)")
+                    or line:match("[Gg]o to%s*(.+)")
+                    or line:match("[Tt]alk to%s*(.+)")
+                    or line:match("[Rr]eturn to%s*(.+)")
+                    or line:match("[Mm]eet%s*(.+)")
+                    or line:match("[Vv]isit%s*(.+)")
+                    or line:match("[Dd]eliver to%s*(.+)")
+                    or line:match("กลับไปหา%s*(.+)")
+                    or line:match("ไปพบ%s*(.+)")
+                    or line:match("คุยกับ%s*(.+)")
+                    or line:match("ส่งของให้%s*(.+)")
+                    or line:match("ส่ง%s*(.+)")
+
+                if extracted then
+                    local clean = extracted:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("%.+$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    local npc = findQuestTargetNpc(clean)
+                    if npc then
+                        targetNpcModel = npc
+                        break
+                    end
                 end
-            end
-        end
 
-        local retName = firstLine:match("กลับไปหา%s*(.+)")
-            or firstLine:match("ไปพบ%s*(.+)")
-            or firstLine:match("คุยกับ%s*(.+)")
-        if retName then
-            local cleanRet = retName:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local npc = findQuestTargetNpc(cleanRet)
-            if npc then
-                returnNpc = npc
-            end
-        end
-    end
-
-    local targetNpcModel = subQuestNpc or returnNpc
-    if not targetNpcModel and pg then
-        local gg = pg:FindFirstChild("RBRCGameGuide")
-        if gg and gg.Enabled then
-            for _, d in ipairs(gg:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
-                    for matchName in d.Text:gmatch("%[(.-)%]") do
-                        if matchName and matchName ~= "" and not matchName:find("Lv") then
-                            local npc = findQuestTargetNpc(matchName)
-                            if npc then
-                                targetNpcModel = npc
-                                break
-                            end
+                -- 2. Bracket matching e.g. [Welcome Newbie] or [Madame Danger]
+                for matchName in line:gmatch("%[(.-)%]") do
+                    if matchName and matchName ~= "" and not matchName:find("Lv") then
+                        local npc = findQuestTargetNpc(matchName)
+                        if npc then
+                            targetNpcModel = npc
+                            break
                         end
                     end
                 end
                 if targetNpcModel then break end
+
+                -- 3. Subquest format: "ภารกิจ - มาดามอันตราย 0/1" or "Missions - Solve the Problem"
+                local taskName = line:match("ภารกิจ%s*%-%s*([^%d%/]+)") or line:match("[Mm]issions?%s*%-%s*([^%d%/]+)")
+                if taskName then
+                    local cleanTask = taskName:gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    local npc = findQuestTargetNpc(cleanTask)
+                    if npc then
+                        targetNpcModel = npc
+                        break
+                    end
+                end
+
+                -- 4. Direct NPC name lookup fallback
+                local directNpc = findQuestTargetNpc(line)
+                if directNpc then
+                    targetNpcModel = directNpc
+                    break
+                end
             end
         end
+        if targetNpcModel then break end
     end
 
     if targetNpcModel then
@@ -1204,7 +1273,7 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Priority 4: Existing workspace quest markers
+    -- Priority 5: Existing workspace quest markers
     local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers") or workspace:FindFirstChild("RBRCQuestGuide")
     if qMarkers then
         for _, m in ipairs(qMarkers:GetChildren()) do
