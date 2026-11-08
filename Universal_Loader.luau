@@ -7,6 +7,7 @@
 --   4. 🍗 Throw Food For Animals (Universe: 10766972131 / Place: 120219252362013)
 --   5. 🏎️ Raycity RB (Universe: 10772794231 / Place: 117419079466193)
 --   6. ⚔️ GloryBound (Universe: 10768652372 / Place: 137629355240872)
+--   7. 📖 Era dos Grimórios (Universe: 10770749098 / Place: 120299741604934)
 -- ==============================================================================
 
 if getgenv then
@@ -45,6 +46,13 @@ local function detectGame()
         task.wait(0.2)
         pId = game.PlaceId
         uId = game.GameId
+    end
+
+    -- 0. Era dos Grimórios 📖 (Check first)
+    if uId == 10770749098 or pId == 120299741604934
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Magics"))
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Events") and game:GetService("ReplicatedStorage").Rep_Core.Events:FindFirstChild("GrimoireSpinsV2")) then
+        return "Era dos Grimórios 📖", "games/era_dos_grimorios.luau"
     end
 
     -- 1. GloryBound ⚔️ (Check first or by unique remotes)
