@@ -52,9 +52,9 @@ local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camer
 -- ==============================================================================
 local now = os.clock()
 if getgenv then
-    -- 1. If script is already running or started recently (< 15s), block duplicate launch!
-    if getgenv()._GloryBoundRunning and (now - (getgenv()._GB_LastStartTime or 0)) < 15 then
-        print("[GloryBound Hub] 🛡️ Script is already running. Skipping duplicate launch.")
+    -- 1. If script is already running with an active window, prevent duplicate stacking
+    if getgenv()._GloryBoundRunning and getgenv()._GB_Window and (now - (getgenv()._GB_LastStartTime or 0)) < 6 then
+        print("[GloryBound Hub] 🛡️ Script is already running with active UI. Skipping duplicate launch.")
         return
     end
 
