@@ -162,6 +162,9 @@ local Config = {
     AutoClaimDaily = true,
     AutoUpgradeSkills = true,
     AutoOpenChests = true,
+    AutoEquipBest = true,
+    AutoForge = false,
+    TargetForgeItem = "bow_vulcanus",
     AutoBuyChests = false,
     AutoBuyChestTier = "Common",
     KeepMinCash = 1000,
@@ -371,6 +374,7 @@ TabGym:Toggle({
         Config.AutoUpgradeSkills = val
         Config.AutoClaimDaily = val
         Config.AutoOpenChests = val
+        Config.AutoEquipBest = val
         if Config.AutoSave then SaveConfig(true) end
         if val then
             WindUI:Notify({ Title = "Master Full Auto Active! ⭐", Content = "All-in-One God Mode AFK is now running!", Duration = 3, Icon = "flame" })
@@ -859,10 +863,20 @@ TabProg:Divider()
 
 TabProg:Toggle({
     Title = "📦 Auto Open Owned Chests (เปิดกล่องในตัวอัตโนมัติ)",
-    Desc = "เปิดกล่องสมบัติทั้งหมดที่มีอยู่ในกระเป๋าให้อัตโนมัติ",
+    Desc = "เปิดกล่องสมบัติทั้งหมดที่มีอยู่ในกระเป๋าให้อัตโนมัติ (Common, Rare, Epic, Legendary)",
     Value = Config.AutoOpenChests,
     Callback = function(val)
         Config.AutoOpenChests = val
+    end
+})
+
+TabProg:Button({
+    Title = "📦 Open All Owned Chests Now (เปิดกล่องทั้งหมดทันที)",
+    Desc = "เปิดกล่องสมบัติทุกกล่องในกระเป๋าทันทีในคลิกเดียว",
+    Icon = "box",
+    Callback = function()
+        task.spawn(autoOpenChests)
+        WindUI:Notify({ Title = "Chests", Content = "Opening all owned chests...", Duration = 2 })
     end
 })
 
@@ -903,8 +917,120 @@ TabProg:Slider({
 TabProg:Divider()
 
 TabProg:Toggle({
-    Title = "🎁 Auto Claim Daily & Spin Wheel",
-    Desc = "กดรับรางวัลล็อกอินประจำวัน หมุนวงล้อสุ่ม และเคลมเควสประจำวันให้อัตโนมัติ",
+    Title = "🛡️ Auto Equip Best Gear & Weapon (ใส่อุปกรณ์ที่ดีที่สุดอัตโนมัติ)",
+    Desc = "สแกนชุดเกราะและอาวุธทั้งหมดในตัว แล้วสวมใส่อุปกรณ์ระดับสูงสุดและสเตตัสดีที่สุดให้อัตโนมัติ (Mythic > Legendary > Epic > Rare)",
+    Value = Config.AutoEquipBest,
+    Callback = function(val)
+        Config.AutoEquipBest = val
+    end
+})
+
+TabProg:Button({
+    Title = "🛡️ Equip Best Gear Now (สวมใส่อุปกรณ์ที่ดีที่สุดทันที)",
+    Desc = "กดสแกนและเปลี่ยนชุดเกราะกับอาวุธเป็นชิ้นที่ดีที่สุดทันทีในคลิกเดียว",
+    Icon = "shield",
+    Callback = function()
+        task.spawn(autoEquipBest)
+        WindUI:Notify({ Title = "Equip Best", Content = "Equipping highest tier gear & weapons...", Duration = 2 })
+    end
+})
+
+TabProg:Divider()
+
+TabProg:Toggle({
+    Title = "🔨 Auto Forge Weapon / Armor (สร้างอาวุธ/เกราะอัตโนมัติ)",
+    Desc = "เมื่อมี Forge Embers ครบ บอทจะทำการ Forge อาวุธหรือชิ้นส่วนที่เลือกให้อัตโนมัติ",
+    Value = Config.AutoForge,
+    Callback = function(val)
+        Config.AutoForge = val
+    end
+})
+
+TabProg:Dropdown({
+    Title = "🎯 Select Target Weapon / Piece to Forge (เลือกอาวุธ/เกราะที่จะสร้าง)",
+    Desc = "เลือกอาวุธหรือชุดเกราะที่ต้องการสร้างด้วย Forge Embers",
+    Values = {
+        "🏹 Vulcan's Forge Bow (Archer - Legendary)",
+        "⚔️ Vulcan's Forgeblade (Gladiator - Legendary)",
+        "🔱 Vulcan's Pike (Lancer - Legendary)",
+        "🪓 Vulcan's Edge (Berserker - Legendary)",
+        "🏹 Bow of Apollo (Archer - Legendary)",
+        "⚔️ Gladius of Triumph (Gladiator - Legendary)",
+        "🔱 Triumphal Lancea (Lancer - Legendary)",
+        "🪓 Wings of Victoria (Berserker - Legendary)",
+        "🏹 Bow of Tartarus (Archer - Mythic)",
+        "⚔️ Daemon Gladius (Gladiator - Mythic)",
+        "🔱 Phlegethon Hasta (Lancer - Mythic)",
+        "🪓 Doom of Orcus (Berserker - Mythic)",
+        "👑 Sun Crown (Helmet - Mythic)",
+        "🛡️ Solar Cuirass (Chestplate - Mythic)",
+        "🥊 Solar Gauntlets (Gloves - Mythic)",
+        "👢 Solar Greaves (Legs - Mythic)",
+        "👑 Underworld Helm (Helmet - Mythic)",
+        "🛡️ Hellfire Cuirass (Chestplate - Mythic)",
+        "🥊 Smith's Gauntlets (Gloves - Legendary)"
+    },
+    Value = "🏹 Vulcan's Forge Bow (Archer - Legendary)",
+    Callback = function(val)
+        if val:find("Forge Bow") then
+            Config.TargetForgeItem = "bow_vulcanus"
+        elseif val:find("Forgeblade") then
+            Config.TargetForgeItem = "gladius_vulcanus"
+        elseif val:find("Forge Pike") or val:find("Vulcan's Pike") then
+            Config.TargetForgeItem = "spear_vulcanus"
+        elseif val:find("Forge Edge") or val:find("Vulcan's Edge") then
+            Config.TargetForgeItem = "axe_vulcanus"
+        elseif val:find("Bow of Apollo") then
+            Config.TargetForgeItem = "bow_apollo"
+        elseif val:find("Gladius of Triumph") then
+            Config.TargetForgeItem = "gladius_triumph"
+        elseif val:find("Triumphal Lancea") then
+            Config.TargetForgeItem = "spear_lancea"
+        elseif val:find("Wings of Victoria") then
+            Config.TargetForgeItem = "axe_victoria"
+        elseif val:find("Bow of Tartarus") then
+            Config.TargetForgeItem = "bow_tartarus"
+        elseif val:find("Daemon Gladius") then
+            Config.TargetForgeItem = "gladius_daemon"
+        elseif val:find("Phlegethon Hasta") then
+            Config.TargetForgeItem = "spear_phlegethon"
+        elseif val:find("Doom of Orcus") then
+            Config.TargetForgeItem = "axe_orcus"
+        elseif val:find("Sun Crown") then
+            Config.TargetForgeItem = "sol_invictus_helmet"
+        elseif val:find("Solar Cuirass") then
+            Config.TargetForgeItem = "sol_invictus_chest"
+        elseif val:find("Solar Gauntlets") then
+            Config.TargetForgeItem = "sol_invictus_gloves"
+        elseif val:find("Solar Greaves") then
+            Config.TargetForgeItem = "sol_invictus_legs"
+        elseif val:find("Underworld Helm") then
+            Config.TargetForgeItem = "dis_pater_helmet"
+        elseif val:find("Hellfire Cuirass") then
+            Config.TargetForgeItem = "dis_pater_chest"
+        elseif val:find("Smith's Gauntlets") then
+            Config.TargetForgeItem = "vulcanus_gloves"
+        else
+            Config.TargetForgeItem = "bow_vulcanus"
+        end
+    end
+})
+
+TabProg:Button({
+    Title = "🔨 Forge Target Item Now (กดสร้างทันที)",
+    Desc = "คราฟต์ไอเทมที่เลือกทันทีหากมี Forge Embers เพียงพอ",
+    Icon = "hammer",
+    Callback = function()
+        task.spawn(autoForge)
+        WindUI:Notify({ Title = "Forge", Content = "Attempting to forge target item...", Duration = 2 })
+    end
+})
+
+TabProg:Divider()
+
+TabProg:Toggle({
+    Title = "🎁 Auto Claim Rewards (เคลมรางวัลและหมุนวงล้อออโต้)",
+    Desc = "กดรับรางวัลล็อกอินประจำวัน หมุนวงล้อสุ่ม เคลมเควส และรับรางวัลความสำเร็จให้อัตโนมัติ",
     Value = Config.AutoClaimDaily,
     Callback = function(val)
         Config.AutoClaimDaily = val
@@ -912,8 +1038,8 @@ TabProg:Toggle({
 })
 
 TabProg:Button({
-    Title = "🎁 Claim Daily Rewards & Spin Wheel Now",
-    Desc = "กดเคลมของรางวัลรายวันและหมุนวงล้อทันที",
+    Title = "🎁 Claim All Rewards & Spin Wheel Now (เคลมทุกรางวัลทันที)",
+    Desc = "กดเคลมของรางวัลรายวัน เควส หมุนวงล้อ และโค้ดทันที",
     Icon = "gift",
     Callback = function()
         task.spawn(autoClaimDaily)
@@ -1449,17 +1575,32 @@ local function autoUpgradeSkills()
     end)
 end
 
--- 1.6. AUTO CLAIM DAILY & SPIN WHEEL HELPER
+-- 1.6. AUTO CLAIM ALL REWARDS HELPER (Daily + Wheel + Quests + Milestones + Codes)
 local function autoClaimDaily()
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
         local remote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("DailyAction")
         if not remote then return end
 
+        -- 1. Claim Daily Login & Spin Wheel
         remote:FireServer("claim")
         remote:FireServer("spin")
+
+        -- 2. Claim all Daily Quests
         for i = 1, 5 do
             remote:FireServer("qclaim", i)
+        end
+
+        -- 3. Auto redeem active codes
+        local promoCodes = { "RELEASE", "GLORY", "ARENA", "10KLIKES", "5KLIKES", "UPDATE1", "CHAMPION" }
+        for _, code in ipairs(promoCodes) do
+            remote:FireServer("code", code)
+            task.wait(0.04)
+        end
+
+        -- 4. Check unlocks & milestone rewards
+        if rep.Remotes:FindFirstChild("UnlockCheck") then
+            rep.Remotes.UnlockCheck:FireServer()
         end
     end)
 end
@@ -1472,12 +1613,21 @@ local function autoOpenChests()
         local rep = game:GetService("ReplicatedStorage")
         if not rep:FindFirstChild("Remotes") then return end
 
-        -- 1. Open any owned chests in inventory
-        if state and state.OwnedChests and #state.OwnedChests > 0 and rep.Remotes:FindFirstChild("ChestOpen") then
-            for _, chest in ipairs(state.OwnedChests) do
-                local chestId = type(chest) == "table" and (chest.id or chest.Id or chest.uid) or chest
-                rep.Remotes.ChestOpen:FireServer(chestId)
-                task.wait(0.15)
+        -- 1. Open any owned chests in inventory (state.OwnedChests is [uid] = tier)
+        if state and state.OwnedChests and rep.Remotes:FindFirstChild("ChestOpen") then
+            local toOpen = {}
+            for uid, tier in pairs(state.OwnedChests) do
+                table.insert(toOpen, uid)
+            end
+            for _, uid in ipairs(toOpen) do
+                if not (Config.AutoOpenChests or Config.MasterFullAuto) then break end
+                rep.Remotes.ChestOpen:FireServer(uid)
+                task.wait(0.2)
+                -- Auto close / skip chest reveal cutscene
+                pcall(function()
+                    local cc = require(LocalPlayer.PlayerScripts.Controllers.ChestController)
+                    if cc and cc.devCloseReveal then cc.devCloseReveal() end
+                end)
             end
         end
 
@@ -1489,6 +1639,116 @@ local function autoOpenChests()
             if state and state.Cash and (state.Cash - price) >= minCash then
                 rep.Remotes.ChestBuy:FireServer(tier)
             end
+        end
+    end)
+end
+
+-- 1.7.1. AUTO EQUIP BEST GEAR & WEAPON HELPER
+local function autoEquipBest()
+    pcall(function()
+        local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
+        local state = cs.get and cs.get()
+        local rep = game:GetService("ReplicatedStorage")
+        if not state or not rep:FindFirstChild("Remotes") then return end
+
+        local inArena = LocalPlayer:GetAttribute("InArena")
+        local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
+        -- Changing equipment is permitted in Lobby
+        if inArena and zone ~= "Lobby" then return end
+
+        local aDefs = rep:FindFirstChild("Shared") and rep.Shared:FindFirstChild("Defs") and rep.Shared.Defs:FindFirstChild("Armor") and require(rep.Shared.Defs.Armor)
+        local wDefs = rep:FindFirstChild("Shared") and rep.Shared:FindFirstChild("Defs") and rep.Shared.Defs:FindFirstChild("Weapons") and require(rep.Shared.Defs.Weapons)
+
+        local rarityScore = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6 }
+
+        -- 1. EQUIP BEST ARMOR PIECES
+        if state.OwnedArmor and aDefs and rep.Remotes:FindFirstChild("ArmorEquip") then
+            local bestBySlot = {}
+            for uid, armorId in pairs(state.OwnedArmor) do
+                local def = aDefs.byId and aDefs.byId[armorId] or (aDefs.get and aDefs.get(armorId))
+                if def and def.slot then
+                    local rScore = rarityScore[def.rarity or "Common"] or 1
+                    local vit = tonumber(def.vitality) or 0
+                    local hp = tonumber(def.hp) or 0
+                    local defVal = tonumber(def.defense) or 0
+                    local totalScore = (rScore * 1000) + (vit * 10) + hp + defVal
+
+                    if not bestBySlot[def.slot] or totalScore > bestBySlot[def.slot].score then
+                        bestBySlot[def.slot] = {
+                            uid = uid,
+                            armorId = armorId,
+                            score = totalScore,
+                            name = def.displayName or def.name or armorId
+                        }
+                    end
+                end
+            end
+
+            local equipped = state.EquippedArmor or {}
+            for slot, bestItem in pairs(bestBySlot) do
+                if equipped[slot] ~= bestItem.uid then
+                    if cs.fire then
+                        cs.fire("ArmorEquip", bestItem.uid)
+                    end
+                    rep.Remotes.ArmorEquip:FireServer(bestItem.uid)
+                    task.wait(0.15)
+                end
+            end
+        end
+
+        -- 2. EQUIP BEST WEAPON MATCHING ACTIVE KIT
+        if state.OwnedWeapons and wDefs and rep.Remotes:FindFirstChild("WeaponEquip") then
+            local currentKit = state.Kit or "Archer"
+            local bestWeaponId = nil
+            local bestScore = -1
+
+            for wId, owned in pairs(state.OwnedWeapons) do
+                if owned then
+                    local def = wDefs.byId and wDefs.byId[wId] or (wDefs.get and wDefs.get(wId))
+                    if def and (def.kit == currentKit or not def.kit) then
+                        local rScore = rarityScore[def.rarity or "Common"] or 1
+                        local dmg = tonumber(def.damage or def.baseDamage or 0) or 0
+                        local score = (rScore * 1000) + dmg
+                        if score > bestScore then
+                            bestScore = score
+                            bestWeaponId = wId
+                        end
+                    end
+                end
+            end
+
+            if bestWeaponId and state.SelectedWeapon ~= bestWeaponId then
+                if cs.fire then
+                    cs.fire("WeaponEquip", bestWeaponId)
+                end
+                rep.Remotes.WeaponEquip:FireServer(bestWeaponId)
+                task.wait(0.15)
+            end
+        end
+    end)
+end
+
+-- 1.7.2. AUTO FORGE TARGET WEAPON / GEAR HELPER
+local function autoForge()
+    pcall(function()
+        local cs = require(LocalPlayer.PlayerScripts.Controllers.ClientState)
+        local state = cs.get and cs.get()
+        local rep = game:GetService("ReplicatedStorage")
+        if not state or not rep:FindFirstChild("Remotes") then return end
+
+        local inArena = LocalPlayer:GetAttribute("InArena")
+        local zone = tostring(LocalPlayer:GetAttribute("Zone") or "")
+        if inArena and zone ~= "Lobby" then return end
+
+        local targetItem = Config.TargetForgeItem or "bow_vulcanus"
+        local embers = state.Forge and state.Forge.Embers or 0
+
+        if embers >= 4 and rep.Remotes:FindFirstChild("ArmorerAction") then
+            if cs.fire then
+                cs.fire("ArmorerAction", "forge", targetItem)
+            end
+            rep.Remotes.ArmorerAction:FireServer("forge", targetItem)
+            task.wait(0.5)
         end
     end)
 end
@@ -1921,6 +2181,14 @@ task.spawn(function()
 
             if Config.AutoOpenChests or Config.AutoBuyChests or Config.MasterFullAuto then
                 autoOpenChests()
+            end
+
+            if Config.AutoEquipBest or Config.MasterFullAuto then
+                autoEquipBest()
+            end
+
+            if Config.AutoForge then
+                autoForge()
             end
 
             if (Config.AutoRebirth or Config.MasterFullAuto) and not isRebirthing and checkRebirthReady() then
