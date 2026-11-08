@@ -48,12 +48,6 @@ local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camer
 -- ==============================================================================
 local now = os.clock()
 if getgenv then
-    if getgenv()._GrimorioRunning and getgenv()._Grimorio_Window and not getgenv()._Grimorio_ForceReload then
-        print("[Era dos Grimórios Hub] 🛡️ Script is already running with active UI. Skipping duplicate launch.")
-        return
-    end
-
-    getgenv()._Grimorio_ForceReload = nil
     getgenv()._Grimorio_LastStartTime = now
     getgenv()._GrimorioRunning = true
     getgenv()._GrimorioRunId = (tonumber(getgenv()._GrimorioRunId) or 0) + 1
@@ -1125,3 +1119,4 @@ pcall(function()
 end)
 
 print("[Era dos Grimórios Hub] ✨ Successfully loaded [BETA] Era dos Grimórios Automation Hub!")
+
