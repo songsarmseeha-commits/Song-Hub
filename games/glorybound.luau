@@ -86,17 +86,22 @@ local Config = {
     TrainSpeedRps = 2.5,
     AutoRestOnHighFatigue = false,
 
-    -- Combat & Arena
+    -- Full Auto & Combat System
+    FullAutoArena = false,
+
+    -- Combat & Target Lock
     KillAura = false,
     AttackRadius = 75,
     TargetLock = false,
     LockMode = "Behind", -- "Behind", "Above", "Face", "Front"
     LockDistance = 3.5,
     AutoParry = false,
+    AutoDodge = false,
+    DodgeInterval = 1.8,
+    AutoDodgeLowHp = true,
+    DodgeHpThreshold = 35,
     AutoAbility = false,
-    AutoDodgeLowHp = false,
-    DodgeHpThreshold = 30,
-    AutoBoonPick = false,
+    AutoBoonPick = true,
     AutoSkipCutscenes = true,
 
     -- Matchmaking & Trials
@@ -268,10 +273,39 @@ TabGym:Button({
 local TabCombat = Window:Tab({ Title = "Combat & Aura", Icon = "swords" })
 
 TabCombat:Paragraph({
-    Title = "⚔️ Arena Combat Engine",
-    Desc = "โจมตีศัตรูในระยะรอบตัวอัตโนมัติ (Kill Aura), สแปมสกิล, และระบบบล็อกสะท้อนการโจมตี (Perfect Parry) ดาเมจสวนกลับ 100%",
-    Image = "shield"
+    Title = "⚔️ Full Auto Arena Combat Engine",
+    Desc = "ระบบต่อสู้และฟาร์มอารีน่าแบบอัตโนมัติครบวงจร (100% Hands-Free AFK): ล็อคเป้าเกาะหลังมอน + ฟันคอมโบ + สแปมสกิล + แดชหลบหลีก + แพรี่สะท้อน + เลือกการ์ดอัปเกรดอัตโนมัติ",
+    Image = "swords"
 })
+
+TabCombat:Toggle({
+    Title = "⭐ Full Auto Arena God Mode (ฟาร์มอารีน่าอัตโนมัติ 100%)",
+    Desc = "เปิดระบบออโต้ครบวงจร: ล็อคเป้าเกาะหลังมอน + ฟันคอมโบ + สแปมสกิล + แดชหลบ + แพรี่ + เลือกการ์ดอัปเกรด + วนลูปจบครบในตัว",
+    Value = Config.FullAutoArena,
+    Callback = function(val)
+        Config.FullAutoArena = val
+        if val then
+            Config.TargetLock = true
+            Config.KillAura = true
+            Config.AutoDodge = true
+            Config.AutoDodgeLowHp = true
+            Config.AutoParry = true
+            Config.AutoAbility = true
+            Config.AutoBoonPick = true
+            Config.AutoSkipCutscenes = true
+            Config.AutoQueueArena = true
+            WindUI:Notify({ Title = "Full Auto Arena Active! ⚔️", Content = "God Mode Auto Farm running 100% AFK!", Duration = 3, Icon = "flame" })
+        else
+            Config.TargetLock = false
+            Config.KillAura = false
+            Config.AutoDodge = false
+            Config.AutoQueueArena = false
+            WindUI:Notify({ Title = "Full Auto Paused", Content = "Stopped auto combat loop.", Duration = 2, Icon = "pause" })
+        end
+    end
+})
+
+TabCombat:Divider()
 
 TabCombat:Toggle({
     Title = "🎯 Master Target Lock (ล็อคเกาะติดมอนสเตอร์)",
@@ -312,7 +346,7 @@ TabCombat:Slider({
 TabCombat:Divider()
 
 TabCombat:Toggle({
-    Title = "⚔️ Master Kill Aura (ออโต้ฟัน/ยิงศัตรูรอบตัว)",
+    Title = "⚔️ Master Kill Aura (ออโต้ฟันคอมโบ 1-2-3)",
     Desc = "โจมตีมอนสเตอร์และศัตรูทั้งหมดในระยะโดยไม่ต้องคลิกเอง (ใช้คู่กับ Target Lock ได้ดีที่สุด)",
     Value = Config.KillAura,
     Callback = function(val)
@@ -330,8 +364,35 @@ TabCombat:Slider({
 })
 
 TabCombat:Toggle({
+    Title = "💨 Auto Combat Dodge (แดชหลบหลีกการโจมตี)",
+    Desc = "พุ่งแดชหลบหลีกด้านข้าง/หลังมอนสเตอร์ระหว่างต่อสู้ เพื่อหลบวงฟันของมอนสเตอร์",
+    Value = Config.AutoDodge,
+    Callback = function(val)
+        Config.AutoDodge = val
+    end
+})
+
+TabCombat:Slider({
+    Title = "⏱️ Dodge Interval (ความถี่ในการแดชหลบ วินาที)",
+    Desc = "ระยะเวลาระหว่างการแดชหลบแต่ละครั้ง",
+    Value = { Min = 1, Max = 4, Default = Config.DodgeInterval },
+    Callback = function(val)
+        Config.DodgeInterval = val
+    end
+})
+
+TabCombat:Toggle({
+    Title = "🏃 Emergency Dodge on Low HP (แดชหนีเมื่อเลือดต่ำ)",
+    Desc = "แดชพุ่งหนีออกจากวงล้อมศัตรูทันทีเมื่อเลือดต่ำกว่า 35%",
+    Value = Config.AutoDodgeLowHp,
+    Callback = function(val)
+        Config.AutoDodgeLowHp = val
+    end
+})
+
+TabCombat:Toggle({
     Title = "🛡️ Auto Perfect Parry / God Block (แพรี่สะท้อนดาเมจ)",
-    Desc = "จับจังหวะศัตรูโจมตีและบล็อกแพรี่ (Parry Window) สะท้อนดาเมจและทำให้ศัตรูมึนงง (Stagger)",
+    Desc = "จับจังหวะศัตรูโจมตีและบล็อคแพรี่ (Parry Window) สะท้อนดาเมจและทำให้ศัตรูมึนงง (Stagger)",
     Value = Config.AutoParry,
     Callback = function(val)
         Config.AutoParry = val
@@ -347,20 +408,11 @@ TabCombat:Toggle({
     end
 })
 
-TabCombat:Toggle({
-    Title = "🏃 Emergency Dash Away on Low HP (< 30%)",
-    Desc = "แดชพุ่งหนีออกจากวงล้อมศัตรูทันทีเมื่อเลือดต่ำกว่า 30%",
-    Value = Config.AutoDodgeLowHp,
-    Callback = function(val)
-        Config.AutoDodgeLowHp = val
-    end
-})
-
 TabCombat:Divider()
 
 TabCombat:Toggle({
-    Title = "🌟 Auto Pick Roguelike Boons (เลือกการ์ดบัฟออโต้)",
-    Desc = "เลือกการ์ดอัปเกรดความสามารถระหว่างผ่านรอบในอารีน่าให้อัตโนมัติ",
+    Title = "🎴 Auto Pick Boons & Upgrades (เลือกการ์ดอัปเกรดออโต้)",
+    Desc = "เลือกการ์ดอัปเกรดระหว่างผ่านรอบในอารีน่าให้อัตโนมัติ (เลือกการ์ดหายากสุด Legendary > Epic > Rare > Damage)",
     Value = Config.AutoBoonPick,
     Callback = function(val)
         Config.AutoBoonPick = val
@@ -678,6 +730,86 @@ task.spawn(function()
     end
 end)
 
+-- 1.4. AUTO BOON & UPGRADE PICKER HELPER
+local function autoPickBoon()
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    local bc = pg and pg:FindFirstChild("BoonChoice")
+    if not bc or not bc.Enabled then return end
+
+    local cardButtons = {}
+    for _, desc in ipairs(bc:GetDescendants()) do
+        if desc:IsA("TextButton") and desc.Name:match("^Card%d") then
+            table.insert(cardButtons, desc)
+        end
+    end
+
+    if #cardButtons == 0 then
+        for _, desc in ipairs(bc:GetDescendants()) do
+            if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible and desc.Name:lower():find("card") then
+                table.insert(cardButtons, desc)
+            end
+        end
+    end
+
+    if #cardButtons > 0 then
+        local chosenBtn = cardButtons[2] or cardButtons[1]
+        local highestScore = -1
+
+        for _, btn in ipairs(cardButtons) do
+            local score = 10
+            local slot = btn.Parent
+            if slot then
+                for _, lbl in ipairs(slot:GetDescendants()) do
+                    if lbl:IsA("TextLabel") and lbl.Text then
+                        local t = lbl.Text:lower()
+                        if t:find("legendary") or t:find("mythic") then
+                            score = math.max(score, 100)
+                        elseif t:find("epic") then
+                            score = math.max(score, 60)
+                        elseif t:find("rare") or t:find("lupa") or t:find("heal") then
+                            score = math.max(score, 40)
+                        elseif t:find("fury") or t:find("damage") or t:find("mars") then
+                            score = math.max(score, 25)
+                        end
+                    end
+                end
+            end
+            if score > highestScore then
+                highestScore = score
+                chosenBtn = btn
+            end
+        end
+
+        pcall(function()
+            if firesignal then
+                firesignal(chosenBtn.Activated)
+                firesignal(chosenBtn.MouseButton1Click)
+                firesignal(chosenBtn.MouseButton1Down)
+                firesignal(chosenBtn.MouseButton1Up)
+            end
+        end)
+
+        pcall(function()
+            local rep = game:GetService("ReplicatedStorage")
+            local boonRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("BoonPick")
+            if boonRemote then
+                local slot = chosenBtn.Parent
+                if slot then
+                    for _, lbl in ipairs(slot:GetDescendants()) do
+                        if lbl:IsA("TextLabel") and lbl.Text and #lbl.Text > 3 then
+                            local raw = lbl.Text:lower():gsub("%s+", "_"):gsub("[^%w_]", "")
+                            if raw:find("mars") or raw:find("lupa") or raw:find("mercury")
+                                or raw:find("fury") or raw:find("edge") or raw:find("brand") then
+                                boonRemote:FireServer(raw)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
 -- 1.5. MASTER TARGET LOCK & SNAP CONTROLLER
 task.spawn(function()
     while isAlive() do
@@ -785,23 +917,45 @@ task.spawn(function()
     end
 end)
 
--- 4. EMERGENCY DODGE ON LOW HP
+-- 4. ADVANCED AUTO DODGE & TACTICAL FLANK CONTROLLER
+local lastCombatDodge = 0
 task.spawn(function()
     while isAlive() do
-        task.wait(0.5)
-        if Config.AutoDodgeLowHp then
+        task.wait(0.1)
+        if Config.AutoDodge or Config.AutoDodgeLowHp then
             pcall(function()
+                local rep = game:GetService("ReplicatedStorage")
+                local dashRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("Dash")
+                if not dashRemote then return end
+
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-                if hum and root and hum.MaxHealth > 0 then
-                    local hpPct = (hum.Health / hum.MaxHealth) * 100
-                    if hpPct <= Config.DodgeHpThreshold then
-                        local rep = game:GetService("ReplicatedStorage")
-                        local target = getClosestEnemy(25)
+                if not hum or not root or hum.Health <= 0 then return end
+
+                local now = tick()
+                local hpPct = (hum.Health / math.max(1, hum.MaxHealth)) * 100
+
+                -- A. Emergency Low HP Retreat Dash
+                if Config.AutoDodgeLowHp and hpPct <= Config.DodgeHpThreshold then
+                    if now - lastCombatDodge > 1.2 then
+                        lastCombatDodge = now
+                        local target = getClosestEnemy(30)
                         local escapeDir = target and (root.Position - target.Position).Unit or (-root.CFrame.LookVector)
-                        rep.Remotes.Dash:FireServer(escapeDir)
-                        task.wait(1.5)
+                        dashRemote:FireServer(escapeDir)
+                        return
+                    end
+                end
+
+                -- B. Tactical Combat Dodge (Sideways / Flank to dodge forward cleave)
+                if Config.AutoDodge then
+                    local target, dist = getClosestEnemy(16)
+                    if target and dist and dist < 14 then
+                        if now - lastCombatDodge > (Config.DodgeInterval or 1.8) then
+                            lastCombatDodge = now
+                            local flankDir = (math.random() > 0.5 and target.CFrame.RightVector or -target.CFrame.RightVector).Unit
+                            dashRemote:FireServer(flankDir)
+                        end
                     end
                 end
             end)
@@ -809,29 +963,18 @@ task.spawn(function()
     end
 end)
 
--- 5. AUTO SKIP BOSS CUTSCENES & BOON PICKER
+-- 5. AUTO SKIP BOSS CUTSCENES & BOON PICKER LOOP
 task.spawn(function()
     while isAlive() do
-        task.wait(0.6)
+        task.wait(0.4)
         pcall(function()
             local rep = game:GetService("ReplicatedStorage")
-            if Config.AutoSkipCutscenes then
+            if Config.AutoSkipCutscenes and rep.Remotes:FindFirstChild("BossCutsceneSkip") then
                 rep.Remotes.BossCutsceneSkip:FireServer(1)
             end
 
-            -- Auto Boon Pick
-            if Config.AutoBoonPick then
-                local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-                local panels = pg and pg:FindFirstChild("Panels")
-                if panels then
-                    for _, d in ipairs(panels:GetDescendants()) do
-                        if d:IsA("GuiButton") and d.Visible and d.Name:lower():find("boon") then
-                            if firesignal then
-                                firesignal(d.Activated)
-                            end
-                        end
-                    end
-                end
+            if Config.AutoBoonPick or Config.FullAutoArena then
+                autoPickBoon()
             end
         end)
     end
