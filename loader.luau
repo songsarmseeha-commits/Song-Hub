@@ -52,7 +52,7 @@ local function detectGame()
     if uId == 10770749098 or pId == 120299741604934
         or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Magics"))
         or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Events") and game:GetService("ReplicatedStorage").Rep_Core.Events:FindFirstChild("GrimoireSpinsV2")) then
-        return "Era dos Grimórios 📖", "games/era_dos_grimorios.luau"
+        return "Era dos Grimórios 📖", "era_dos_grimorios.luau"
     end
 
     -- 1. GloryBound ⚔️ (Check first or by unique remotes)
@@ -99,6 +99,7 @@ local function detectGame()
     local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(pId) end)
     if ok and info and info.Name then
         local t = info.Name:lower()
+        if t:find("grimorio") or t:find("grimoire") or t:find("clover") then return "Era dos Grimórios 📖", "era_dos_grimorios.luau" end
         if t:find("glorybound") or t:find("gladiator") or t:find("trials") then return "GloryBound ⚔️", "glorybound.luau" end
         if t:find("anime galaxies") then return "Anime Galaxies ✨", "anime_galaxies.luau" end
         if t:find("hunting together") then return "Hunting Together 🎃", "hunting_together.luau" end
@@ -116,8 +117,10 @@ if not scriptFileName then
     return
 end
 
+local cleanFileName = scriptFileName:gsub("^games/", ""):gsub("^/", "")
+
 -- Guard against duplicate executions across autoexec and teleport queue
-if getgenv and getgenv()._GloryBoundRunning and getgenv()._GB_Window and scriptFileName == "glorybound.luau" and not getgenv()._GB_ForceReload then
+if getgenv and getgenv()._GloryBoundRunning and getgenv()._GB_Window and cleanFileName == "glorybound.luau" and not getgenv()._GB_ForceReload then
     print("[Song Hub] 🛡️ GloryBound is already running with active UI. Skipping duplicate execution.")
     if getgenv then getgenv()._SongHubLoading = false end
     return
@@ -128,8 +131,8 @@ print(string.format("[Song Hub] 🔓 Keyless Direct Mode: Fetching %s directly f
 -- Always fetch freshest code directly from GitHub with cache buster
 local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
 local urls = {
-    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. scriptFileName .. "?v=" .. cacheBuster,
-    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. scriptFileName .. "?v=" .. cacheBuster
+    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. cleanFileName .. "?v=" .. cacheBuster,
+    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. cleanFileName .. "?v=" .. cacheBuster
 }
 
 local scriptCode = nil
@@ -143,8 +146,8 @@ end
 
 if not scriptCode then
     warn("[Song Hub] ⚠️ Failed to download from GitHub! Checking local backup...")
-    if isfile and isfile("games/" .. scriptFileName) then
-        local ok, localCode = pcall(readfile, "games/" .. scriptFileName)
+    if isfile and isfile("games/" .. cleanFileName) then
+        local ok, localCode = pcall(readfile, "games/" .. cleanFileName)
         if ok and type(localCode) == "string" and #localCode > 500 then
             scriptCode = localCode
         end
@@ -162,7 +165,7 @@ if scriptCode then
     -- Cache locally for offline resilience
     pcall(function()
         if writefile then
-            pcall(writefile, "games/" .. scriptFileName, scriptCode)
+            pcall(writefile, "games/" .. cleanFileName, scriptCode)
         end
     end)
 
