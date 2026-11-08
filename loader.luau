@@ -129,6 +129,13 @@ if not scriptCode then
 end
 
 if scriptCode then
+    -- Auto-install into autoexec folder so it runs automatically on rejoin
+    pcall(function()
+        if writefile then
+            if makefolder then pcall(makefolder, "autoexec") end
+            writefile("autoexec/SongHub.luau", 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()')
+        end
+    end)
     -- Cache locally for offline resilience
     pcall(function()
         if writefile then
