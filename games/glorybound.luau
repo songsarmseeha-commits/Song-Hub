@@ -88,7 +88,10 @@ local Config = {
 
     -- Combat & Arena
     KillAura = false,
-    AttackRadius = 35,
+    AttackRadius = 75,
+    TargetLock = false,
+    LockMode = "Behind", -- "Behind", "Above", "Face", "Front"
+    LockDistance = 3.5,
     AutoParry = false,
     AutoAbility = false,
     AutoDodgeLowHp = false,
@@ -271,8 +274,46 @@ TabCombat:Paragraph({
 })
 
 TabCombat:Toggle({
+    Title = "🎯 Master Target Lock (ล็อคเกาะติดมอนสเตอร์)",
+    Desc = "วาร์ปเกาะติดและหันหน้าล็อคมอนสเตอร์ที่ใกล้ที่สุดอัตโนมัติ ช่วยให้โจมตีโดน 100% ไม่พลาดเป้า",
+    Value = Config.TargetLock,
+    Callback = function(val)
+        Config.TargetLock = val
+    end
+})
+
+TabCombat:Dropdown({
+    Title = "🎯 Lock Position Mode (ตำแหน่งล็อคเกาะมอน)",
+    Desc = "เลือกมุมที่ต้องการให้ตัวละครล็อคติดตัวมอนสเตอร์ (แนะนำ: เกาะหลังมอน ไม่โดนมอนฟัน)",
+    Values = { "Behind (เกาะหลัง - แนะนำ)", "Above (ลอยเหนือหัว)", "Face Target (หันหน้าเข้าหา)", "Front (ประชิดหน้า)" },
+    Value = "Behind (เกาะหลัง - แนะนำ)",
+    Callback = function(val)
+        if val:find("Behind") then
+            Config.LockMode = "Behind"
+        elseif val:find("Above") then
+            Config.LockMode = "Above"
+        elseif val:find("Face") then
+            Config.LockMode = "Face"
+        elseif val:find("Front") then
+            Config.LockMode = "Front"
+        end
+    end
+})
+
+TabCombat:Slider({
+    Title = "📏 Lock Distance (ระยะห่างล็อค Studs)",
+    Desc = "ระยะห่างระหว่างตัวละครกับมอนสเตอร์",
+    Value = { Min = 2, Max = 15, Default = Config.LockDistance },
+    Callback = function(val)
+        Config.LockDistance = val
+    end
+})
+
+TabCombat:Divider()
+
+TabCombat:Toggle({
     Title = "⚔️ Master Kill Aura (ออโต้ฟัน/ยิงศัตรูรอบตัว)",
-    Desc = "โจมตีมอนสเตอร์และศัตรูทั้งหมดในระยะโดยไม่ต้องคลิกเอง",
+    Desc = "โจมตีมอนสเตอร์และศัตรูทั้งหมดในระยะโดยไม่ต้องคลิกเอง (ใช้คู่กับ Target Lock ได้ดีที่สุด)",
     Value = Config.KillAura,
     Callback = function(val)
         Config.KillAura = val
@@ -280,9 +321,9 @@ TabCombat:Toggle({
 })
 
 TabCombat:Slider({
-    Title = "📡 Kill Aura Radius (ระยะการโจมตี Studs)",
-    Desc = "ระยะในการตรวจจับและฟาดฟันศัตรู",
-    Value = { Min = 15, Max = 60, Default = Config.AttackRadius },
+    Title = "📡 Combat & Search Radius (ระยะตรวจจับ Studs)",
+    Desc = "ระยะในการค้นหาและล็อคเป้าศัตรู",
+    Value = { Min = 15, Max = 150, Default = Config.AttackRadius },
     Callback = function(val)
         Config.AttackRadius = val
     end
@@ -637,6 +678,50 @@ task.spawn(function()
     end
 end)
 
+-- 1.5. MASTER TARGET LOCK & SNAP CONTROLLER
+task.spawn(function()
+    while isAlive() do
+        task.wait(0.03)
+        if Config.TargetLock then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+                if not root then return end
+
+                local target, dist = getClosestEnemy(Config.AttackRadius)
+                if target and target.Parent then
+                    local hum = target.Parent:FindFirstChildOfClass("Humanoid")
+                    if not hum or hum.Health > 0 then
+                        local lockDist = Config.LockDistance or 3.5
+                        local targetPos = target.Position
+                        local targetLook = target.CFrame.LookVector
+                        local newCFrame = nil
+
+                        if Config.LockMode == "Behind" then
+                            local behindPos = targetPos - (targetLook * lockDist)
+                            newCFrame = CFrame.lookAt(behindPos, targetPos)
+                        elseif Config.LockMode == "Above" then
+                            local abovePos = targetPos + Vector3.new(0, math.max(4.5, lockDist), 0)
+                            newCFrame = CFrame.lookAt(abovePos, targetPos)
+                        elseif Config.LockMode == "Front" then
+                            local frontPos = targetPos + (targetLook * lockDist)
+                            newCFrame = CFrame.lookAt(frontPos, targetPos)
+                        else -- "Face"
+                            newCFrame = CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+                        end
+
+                        if newCFrame then
+                            root.CFrame = newCFrame
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
 -- 2. MASTER COMBAT KILL AURA LOOP
 task.spawn(function()
     local combo = 1
@@ -650,16 +735,26 @@ task.spawn(function()
                 if not root then return end
 
                 local target, dist = getClosestEnemy(Config.AttackRadius)
-                if target then
-                    -- Attack target
-                    rep.Remotes.Attack:FireServer(combo, target.Position, false)
-                    task.wait(0.04)
-                    rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
-                    combo = (combo % 3) + 1
+                if target and target.Parent then
+                    local hum = target.Parent:FindFirstChildOfClass("Humanoid")
+                    if not hum or hum.Health > 0 then
+                        -- Face enemy if target lock is not actively positioning
+                        if not Config.TargetLock then
+                            pcall(function()
+                                root.CFrame = CFrame.lookAt(root.Position, Vector3.new(target.Position.X, root.Position.Y, target.Position.Z))
+                            end)
+                        end
 
-                    -- Cast Ability if enabled
-                    if Config.AutoAbility then
-                        rep.Remotes.AbilityCast:FireServer(target.Position)
+                        -- Attack target
+                        rep.Remotes.Attack:FireServer(combo, target.Position, false)
+                        task.wait(0.04)
+                        rep.Remotes.AttackRelease:FireServer(combo, 1, target.Position)
+                        combo = (combo % 3) + 1
+
+                        -- Cast Ability if enabled
+                        if Config.AutoAbility then
+                            rep.Remotes.AbilityCast:FireServer(target.Position)
+                        end
                     end
                 end
             end)
@@ -821,3 +916,4 @@ pcall(function()
 end)
 
 print("[GloryBound Hub] ✨ Successfully loaded [TRIALS] GloryBound Automation Hub!")
+
