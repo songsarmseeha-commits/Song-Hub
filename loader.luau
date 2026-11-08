@@ -72,6 +72,13 @@ local function detectGame()
         return "Raycity RB 🏎️", "raycity_rb.luau"
     end
 
+    -- 6. GloryBound
+    if uId == 10768652372 or pId == 137629355240872
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("Shared") and game:GetService("ReplicatedStorage").Shared:FindFirstChild("Net") and game:GetService("ReplicatedStorage").Shared.Net:FindFirstChild("TrainRep"))
+        or (workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Gym")) then
+        return "GloryBound ⚔️", "glorybound.luau"
+    end
+
     -- Fallback: MarketplaceService Title
     local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(pId) end)
     if ok and info and info.Name then
@@ -81,6 +88,7 @@ local function detectGame()
         if t:find("blue lock") then return "Blue Lock Farm ⚽", "blue_lock_farm.luau" end
         if t:find("throw food") then return "Throw Food For Animals 🍗", "throw_food.luau" end
         if t:find("raycity") then return "Raycity RB 🏎️", "raycity_rb.luau" end
+        if t:find("glorybound") or t:find("gladiator") or t:find("trials") then return "GloryBound ⚔️", "glorybound.luau" end
     end
 
     return nil, nil
