@@ -287,7 +287,7 @@ local function setClientCurrentTarget(tgt)
         LocalPlayer:SetAttribute("TargetLocked", tgt ~= nil)
         if tgt ~= nil then
             LocalPlayer:SetAttribute("AutoOn", true)
-            LocalPlayer:SetAttribute("BotUseSkills", false)
+            LocalPlayer:SetAttribute("BotUseSkills", Config.AutoUseSkills == true)
         else
             if not Config.AutoFarm and not (Config.AutoDungeon and isInsideDungeon()) then
                 LocalPlayer:SetAttribute("AutoOn", false)
@@ -433,8 +433,8 @@ Config = {
     KillAura = false,
     KillAuraRadius = 20,
     MaxTargetDistance = 70,     -- Keep search strictly within active field
-    AutoUseSkills = false,       -- ปิดไว้เป็นค่าเริ่มต้น
-    AutoUseBuffs = false,        -- ปิดไว้เป็นค่าเริ่มต้น
+    AutoUseSkills = true,        -- เปิดใช้งานสกิลต่อสู้อัตโนมัติเป็นค่าเริ่มต้น
+    AutoUseBuffs = true,         -- เปิดใช้งานสกิลบัฟอัตโนมัติเป็นค่าเริ่มต้น
     SelectedSkillSlots = { "ช่อง 1 (Slot 1)", "ช่อง 2 (Slot 2)", "ช่อง 3 (Slot 3)", "ช่อง 4 (Slot 4)", "ช่อง 5 (Slot 5)", "ช่อง 6 (Slot 6)", "ช่อง 7 (Slot 7)" },
     ServerHopAuto = false,
     ServerHopInterval = 15, -- minutes
@@ -3611,11 +3611,36 @@ task.spawn(function()
 end)
 
 -- ==================== SMART SKILLS & COMBAT ENGINE ====================
-local skillLastCast = {}
-local cachedHotbarSkills = {}
-local lastGlobalSkillCast = 0
-local lastCombatLootScan = 0
+local SkillState = {
+    skillLastCast = {},
+    cachedHotbarSkills = {},
+    lastGlobalSkillCast = 0,
+    lastCombatLootScan = 0,
+    lastHotbarUpdate = 0,
+    nativeSlotTrigger = nil,
+}
 local evaluateAndCastBestSkill = nil
+
+local function getNativeSlotTrigger()
+    if SkillState.nativeSlotTrigger then return SkillState.nativeSlotTrigger end
+    pcall(function()
+        local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
+        local pad = ap and ap:FindFirstChild("ActionPad")
+        local slot1 = pad and pad:FindFirstChild("Slot1")
+        if slot1 and typeof(getconnections) == "function" then
+            for _, conn in ipairs(getconnections(slot1.MouseButton1Click)) do
+                if conn.Function and typeof(debug.getupvalues) == "function" then
+                    local ups = debug.getupvalues(conn.Function)
+                    if type(ups[2]) == "function" then
+                        SkillState.nativeSlotTrigger = ups[2]
+                        return
+                    end
+                end
+            end
+        end
+    end)
+    return SkillState.nativeSlotTrigger
+end
 
 local function isSlotSelected(slotNum)
     local cfg = Config.SelectedSkillSlots
@@ -3639,10 +3664,76 @@ local function isSlotSelected(slotNum)
             if v == slotNum then return true end
         end
     end
-    return true -- Default allow slot if not explicitly excluded
+    return false
 end
 
+local function updateHotbarCache()
+    local now = os.clock()
+    if (now - SkillState.lastHotbarUpdate) < 0.3 then return end
+    SkillState.lastHotbarUpdate = now
+
+    local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
+    local hotbar = nil
+    if hotbarRaw and hotbarRaw ~= "" then
+        pcall(function() hotbar = HttpService:JSONDecode(hotbarRaw) end)
+    end
+
+    local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
+    local pad = ap and ap:FindFirstChild("ActionPad")
+
+    local buffNames = {
+        meikyo = true, vanish = true, stealth = true, haste = true,
+        blessing = true, increase_agi = true, endure = true, catbrew = true,
+        divineprotection = true, holyguard = true, overthrust = true,
+        spiritinstinct = true, zanshin = true, ironbody = true
+    }
+
+    for slotNum = 1, 8 do
+        local sId = nil
+        if hotbar then
+            local item = hotbar[tostring(slotNum)]
+            if type(item) == "string" and item:find("^skill:") then
+                sId = item:sub(7):lower()
+            end
+        end
+
+        if sId then
+            SkillState.cachedHotbarSkills[slotNum] = {
+                slotNum = slotNum,
+                id = sId,
+                isBuff = buffNames[sId] == true,
+                range = 200
+            }
+        else
+            local slotBtn = pad and pad:FindFirstChild("Slot" .. slotNum)
+            if slotBtn and slotBtn.Visible then
+                SkillState.cachedHotbarSkills[slotNum] = {
+                    slotNum = slotNum,
+                    id = "slot_" .. slotNum,
+                    isBuff = false,
+                    range = 200,
+                    isGeneric = true
+                }
+            else
+                SkillState.cachedHotbarSkills[slotNum] = nil
+            end
+        end
+    end
+end
+
+-- Initialize cache immediately and listen for changes
+task.spawn(updateHotbarCache)
+pcall(function()
+    if trackConn then
+        trackConn(LocalPlayer:GetAttributeChangedSignal("HotbarJson"):Connect(function()
+            updateHotbarCache()
+        end))
+    end
+end)
+
 local function getHotbarSkillInSlot(slotNum)
+    local sInfo = SkillState.cachedHotbarSkills[slotNum]
+    if sInfo then return sInfo.id end
     local hotbarRaw = LocalPlayer:GetAttribute("HotbarJson")
     if not hotbarRaw or hotbarRaw == "" then return nil end
     local ok, hotbar = pcall(function() return HttpService:JSONDecode(hotbarRaw) end)
@@ -3661,15 +3752,15 @@ local function isHotbarSlotReady(slotNum, sInfo)
 
     -- 1. Check UI Cooldown Label if active
     if slot then
-        local cdLabel = slot:FindFirstChild("Cooldown")
-        if cdLabel and cdLabel.Text ~= "" and cdLabel.Text ~= "0" then
-            local cdNum = tonumber(cdLabel.Text)
+        local cdLabel = slot:FindFirstChild("Cooldown", true)
+        if cdLabel and cdLabel.Visible and cdLabel.Text ~= "" and cdLabel.Text ~= "0" and cdLabel.Text ~= "0.0" then
+            local cdNum = tonumber((cdLabel.Text:gsub("[^%d%.]", "")))
             if cdNum and cdNum > 0.05 then
                 return false
             end
         end
-        local shade = slot:FindFirstChild("CooldownShade")
-        if shade and shade.Visible and shade.Size.Y.Scale > 0.1 then
+        local shade = slot:FindFirstChild("CooldownShade", true)
+        if shade and shade.Visible and shade.Size.Y.Scale > 0.08 then
             return false
         end
     end
@@ -3680,16 +3771,17 @@ local function isHotbarSlotReady(slotNum, sInfo)
         return false
     end
 
-    -- 3. Safety micro-gap between repeated casts of same skill (Reduced for lightning fast casting!)
+    -- 3. Safety micro-gap between repeated casts of same skill
     local now = os.clock()
-    if (now - (skillLastCast[sInfo.id] or 0)) < 0.035 then
+    local sKey = (sInfo and sInfo.id) or tostring(slotNum)
+    if (now - (SkillState.skillLastCast[sKey] or 0)) < 0.035 then
         return false
     end
 
     return true
 end
 
-local function executeSmartSkill(slotNum, sInfo, target)
+local function executeSmartSkill(slotNum, sInfo, target, castTrigger)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
@@ -3704,14 +3796,24 @@ local function executeSmartSkill(slotNum, sInfo, target)
         end
     end
 
-    -- 1. Remote Fire to server (Primary execution)
-    if UseSkill then
+    local success = false
+
+    -- Method 1: Native game slot trigger (100% accurate, triggers native cooldown + visual effects + animations)
+    local trigger = castTrigger or getNativeSlotTrigger()
+    if trigger then
+        local ok = pcall(function() trigger(slotNum) end)
+        if ok then success = true end
+    end
+
+    -- Method 2: Remote Fire to server
+    if UseSkill and sInfo and sInfo.id and not sInfo.isGeneric then
         pcall(function()
             UseSkill:FireServer(sInfo.id, sInfo.isBuff and nil or target)
         end)
+        success = true
     end
 
-    -- 2. Trigger Client Slot Button (Fires all click/touch connections for instant responsiveness)
+    -- Method 3: Trigger Client Slot Button connections
     pcall(function()
         local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
         local pad = ap and ap:FindFirstChild("ActionPad")
@@ -3723,67 +3825,73 @@ local function executeSmartSkill(slotNum, sInfo, target)
             for _, conn in ipairs(getconnections(slotBtn.MouseButton1Down)) do
                 pcall(function() conn:Fire() end)
             end
-            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Up)) do
-                pcall(function() conn:Fire() end)
-            end
-            for _, conn in ipairs(getconnections(slotBtn.Activated)) do
-                pcall(function() conn:Fire() end)
-            end
         end
     end)
 
-    skillLastCast[sInfo.id] = now
-    lastGlobalSkillCast = now
-    return true
+    local sKey = (sInfo and sInfo.id) or tostring(slotNum)
+    SkillState.skillLastCast[sKey] = now
+    SkillState.lastGlobalSkillCast = now
+    return success
 end
 
 evaluateAndCastBestSkill = function(target)
     if not Config.AutoUseSkills then return false end
     if isEnteringDungeon or isWaitingForParty then return false end
     local now = os.clock()
-    if (now - lastGlobalSkillCast) < 0.025 then return false end
+    if (now - SkillState.lastGlobalSkillCast) < 0.02 then return false end
 
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
+    updateHotbarCache()
+
     local targetPos = target and (target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart) and (target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart).Position
-    local distToTarget = targetPos and (hrp.Position - targetPos).Magnitude or math.huge
+    local distToTarget = targetPos and (hrp.Position - targetPos).Magnitude or 10
 
-    local bestBuff = nil
-    local bestAttack = nil
+    local castTrigger = getNativeSlotTrigger()
+    local anyCast = false
 
-    for slotNum = 1, 8 do
-        if isSlotSelected(slotNum) then
-            local sInfo = cachedHotbarSkills[slotNum]
-            if sInfo and isHotbarSlotReady(slotNum, sInfo) then
-                if sInfo.isBuff then
-                    -- Buffs: cast if not cast within last 12 seconds
-                    if (now - (skillLastCast[sInfo.id] or 0)) > 12 then
-                        bestBuff = sInfo
+    -- 1. Auto Buffs Check (Slot by slot, casts if buff skill and off cooldown)
+    if Config.AutoUseBuffs then
+        for slotNum = 1, 8 do
+            if isSlotSelected(slotNum) then
+                local sInfo = SkillState.cachedHotbarSkills[slotNum]
+                if sInfo and sInfo.isBuff and isHotbarSlotReady(slotNum, sInfo) then
+                    if (now - (SkillState.skillLastCast[sInfo.id] or 0)) > 8 then
+                        executeSmartSkill(slotNum, sInfo, nil, castTrigger)
+                        anyCast = true
+                        break
                     end
-                elseif target and isMonsterAlive(target) and distToTarget <= (sInfo.range or 200) then
-                    -- Attack skill ready!
-                    bestAttack = sInfo
-                    break -- Execute immediate ready attack skill without stalling
                 end
             end
         end
     end
 
-    local chosen = bestBuff or bestAttack
-    if chosen then
-        return executeSmartSkill(chosen.slotNum, chosen, chosen.isBuff and nil or target)
+    -- 2. Attack Skills Check (Fires the first ready attack skill immediately)
+    if target and isMonsterAlive(target) and distToTarget <= 200 then
+        for slotNum = 1, 8 do
+            if isSlotSelected(slotNum) then
+                local sInfo = SkillState.cachedHotbarSkills[slotNum]
+                if sInfo and not sInfo.isBuff and isHotbarSlotReady(slotNum, sInfo) then
+                    executeSmartSkill(slotNum, sInfo, target, castTrigger)
+                    anyCast = true
+                    break
+                end
+            end
+        end
     end
-    return false
+
+    return anyCast
 end
 
 local function castSmartSkill(skillId, target)
     if not skillId or skillId == "" then return false end
-    for slotNum, sInfo in pairs(cachedHotbarSkills) do
+    local trigger = getNativeSlotTrigger()
+    for slotNum, sInfo in pairs(SkillState.cachedHotbarSkills) do
         if sInfo.id == skillId:lower() then
             if isHotbarSlotReady(slotNum, sInfo) then
-                return executeSmartSkill(slotNum, sInfo, target)
+                return executeSmartSkill(slotNum, sInfo, target, trigger)
             end
             return false
         end
@@ -8673,39 +8781,41 @@ StreamerTab:Button({
 })
 
 -- ==================== TAB 9: TELEPORT ====================
-TeleportTab:Section({ Title = "Fast Travel Map", Opened = true })
+do
+    TeleportTab:Section({ Title = "Fast Travel Map", Opened = true })
 
-local mapWarpList = {
-    "Town",
-    "Field01", "Field02", "Field03", "Field04", "Field05",
-    "Field06", "Field07", "Field08", "Field09", "Field10",
-    "Field11", "Field12", "Field13", "Field14", "Field15",
-}
+    local mapWarpList = {
+        "Town",
+        "Field01", "Field02", "Field03", "Field04", "Field05",
+        "Field06", "Field07", "Field08", "Field09", "Field10",
+        "Field11", "Field12", "Field13", "Field14", "Field15",
+    }
 
-local selectedWarp = "Town"
-TeleportTab:Dropdown({
-    Title = "Select Destination",
-    Values = mapWarpList,
-    Value = "Town",
-    Callback = function(val) selectedWarp = val end,
-})
+    local selectedWarp = "Town"
+    TeleportTab:Dropdown({
+        Title = "Select Destination",
+        Values = mapWarpList,
+        Value = "Town",
+        Callback = function(val) selectedWarp = val end,
+    })
 
-TeleportTab:Button({
-    Title = "Warp to Selected Area",
-    Callback = function()
-        pcall(function()
-            RemotesLazy.WarpTo:FireServer(selectedWarp)
-            WindUI:Notify({ Title = "Teleport", Content = "วาร์ปไป: " .. selectedWarp, Duration = 2, Icon = "send" })
-        end)
-    end,
-})
+    TeleportTab:Button({
+        Title = "Warp to Selected Area",
+        Callback = function()
+            pcall(function()
+                RemotesLazy.WarpTo:FireServer(selectedWarp)
+                WindUI:Notify({ Title = "Teleport", Content = "วาร์ปไป: " .. selectedWarp, Duration = 2, Icon = "send" })
+            end)
+        end,
+    })
 
-TeleportTab:Button({
-    Title = "Quick Return to Town",
-    Callback = function()
-        pcall(function() RemotesLazy.WarpTo:FireServer("Town") end)
-    end,
-})
+    TeleportTab:Button({
+        Title = "Quick Return to Town",
+        Callback = function()
+            pcall(function() RemotesLazy.WarpTo:FireServer("Town") end)
+        end,
+    })
+end
 
 -- ==================== LOW-PLAYER SERVER HOP UI ====================
 TeleportTab:Section({ Title = "🌐 Low-Player Server Hop (ระบบย้ายเซิร์ฟเวอร์คนน้อย)", Opened = true })
@@ -9287,8 +9397,8 @@ task.spawn(function()
                 -- Stealth magnet & remote instant pickup for nearby drops during combat (throttled to keep attack 100% fluid)
                 local nowClock = os.clock()
                 local dropsFolder = workspace:FindFirstChild("Drops")
-                if Config.AutoLoot and Config.LootPriority and dropsFolder and (nowClock - lastCombatLootScan) >= 0.5 then
-                    lastCombatLootScan = nowClock
+                if Config.AutoLoot and Config.LootPriority and dropsFolder and (nowClock - SkillState.lastCombatLootScan) >= 0.5 then
+                    SkillState.lastCombatLootScan = nowClock
                     local maxCombatLootDist = tonumber(Config.LootRadius) or 120
                     local nowServer = workspace:GetServerTimeNow()
                     for _, d in ipairs(dropsFolder:GetChildren()) do
