@@ -52,43 +52,58 @@ local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camer
 -- ==============================================================================
 local now = os.clock()
 if getgenv then
-    -- 1. If script is already running with an active UI, block duplicate launch!
-    if getgenv()._GloryBoundRunning == true and getgenv()._GB_Window and (now - (getgenv()._GB_LastStartTime or 0)) < 6 then
-        print("[GloryBound Hub] 🛡️ Script is already running with active UI. Skipping duplicate launch.")
+    -- 1. If script is already running or started recently (< 15s), block duplicate launch!
+    if getgenv()._GloryBoundRunning and (now - (getgenv()._GB_LastStartTime or 0)) < 15 then
+        print("[GloryBound Hub] 🛡️ Script is already running. Skipping duplicate launch.")
         return
     end
 
     getgenv()._GB_LastStartTime = now
     getgenv()._GloryBoundRunning = true
     getgenv()._GloryBoundRunId = (tonumber(getgenv()._GloryBoundRunId) or 0) + 1
+end
 
-    -- 2. Destroy any existing UI instances to prevent overlapping windows
+-- 2. Destroy any existing UI instances (including CoreGui.RobloxGui.WindUI) to prevent overlapping windows
+local function cleanAllWindUI()
     pcall(function()
-        if getgenv()._GB_Window and getgenv()._GB_Window.Destroy then
-            getgenv()._GB_Window:Destroy()
+        if getgenv and getgenv()._GB_Window and getgenv()._GB_Window.Destroy then
+            pcall(function() getgenv()._GB_Window:Destroy() end)
+            getgenv()._GB_Window = nil
         end
     end)
     pcall(function()
-        local roots = {
-            (typeof(gethui) == "function" and gethui()) or nil,
-            game:GetService("CoreGui")
-        }
-        for _, root in ipairs(roots) do
-            if root then
-                for _, child in ipairs(root:GetChildren()) do
-                    if child.Name == "WindUI" or child.Name == "GloryBoundHub" or child.Name == "SongHub" or child.Name:find("WindUI") then
-                        pcall(function()
-                            if child:FindFirstChild("Window") then
-                                child.Window:ClearAllChildren()
+        local searchRoots = {}
+        if typeof(gethui) == "function" then
+            local h = gethui()
+            if h then table.insert(searchRoots, h) end
+        end
+        local cg = game:GetService("CoreGui")
+        table.insert(searchRoots, cg)
+        if cg:FindFirstChild("RobloxGui") then
+            table.insert(searchRoots, cg.RobloxGui)
+        end
+        if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+            table.insert(searchRoots, LocalPlayer.PlayerGui)
+        end
+
+        for _, root in ipairs(searchRoots) do
+            for _, child in ipairs(root:GetChildren()) do
+                if child.Name == "WindUI" or child.Name:find("WindUI") or child.Name == "GloryBoundHub" or child.Name == "SongHub" then
+                    pcall(function()
+                        if child:FindFirstChild("Window") then
+                            for _, w in ipairs(child.Window:GetChildren()) do
+                                pcall(function() w:Destroy() end)
                             end
-                            child:Destroy()
-                        end)
-                    end
+                        end
+                        child:Destroy()
+                    end)
                 end
             end
         end
     end)
 end
+
+cleanAllWindUI()
 
 local currentScriptRunId = (getgenv and getgenv()._GloryBoundRunId) or 1
 local function isAlive()
@@ -198,10 +213,11 @@ local function registerQueueOnTeleport()
         hasRegisteredQueue = true
         local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
         local execCode = [[
-            task.wait(2.0)
-            if getgenv and (getgenv()._GloryBoundRunning or getgenv()._UniversalLoaderLoading) then
+            task.wait(1.5)
+            if getgenv and (getgenv()._GloryBoundRunning or getgenv()._SongHubLoading or getgenv()._UniversalLoaderLoading) then
                 return
             end
+            getgenv()._SongHubLoading = true
             local cb = "]] .. cb .. [["
             local sOk, code = pcall(function()
                 return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
@@ -219,8 +235,6 @@ local function registerQueueOnTeleport()
         pcall(queue, execCode)
     end
 end
-
-pcall(registerQueueOnTeleport)
 
 if LocalPlayer.OnTeleport then
     LocalPlayer.OnTeleport:Connect(function(state)
@@ -485,7 +499,7 @@ TabCombat:Toggle({
 TabCombat:Slider({
     Title = "📡 Combat & Search Radius (ระยะตรวจจับ Studs)",
     Desc = "ระยะในการค้นหาและล็อคเป้าศัตรู",
-    Value = { Min = 15, Max = 150, Default = Config.AttackRadius },
+    Value = { Min = 15, Max = 500, Default = Config.AttackRadius },
     Callback = function(val)
         Config.AttackRadius = val
     end
@@ -882,17 +896,21 @@ teleportPlayer = function(targetPos)
 end
 
 local function getClosestEnemy(maxDist)
-    local activeEnemies = workspace:FindFirstChild("ActiveEnemies")
-    if not activeEnemies then return nil end
     local char = LocalPlayer.Character
     local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-    if not root then return nil end
+    if not root then return nil, nil end
 
     local closest, closestDist = nil, maxDist or 300
-    for _, e in ipairs(activeEnemies:GetChildren()) do
-        local hum = e:FindFirstChildOfClass("Humanoid")
-        local eRoot = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
-        if eRoot and (not hum or hum.Health > 0) then
+
+    local function checkCandidate(model)
+        if not model or not model:IsA("Model") or model == char then return end
+        if Players:GetPlayerFromCharacter(model) then return end
+
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health <= 0 then return end
+
+        local eRoot = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model:FindFirstChildWhichIsA("BasePart")
+        if eRoot then
             local d = (eRoot.Position - root.Position).Magnitude
             if d < closestDist then
                 closestDist = d
@@ -900,6 +918,39 @@ local function getClosestEnemy(maxDist)
             end
         end
     end
+
+    -- 1. ActiveEnemies folder
+    local activeEnemies = workspace:FindFirstChild("ActiveEnemies")
+    if activeEnemies then
+        for _, e in ipairs(activeEnemies:GetChildren()) do
+            checkCandidate(e)
+        end
+    end
+
+    -- 2. Workspace Arena
+    if not closest then
+        local arena = workspace:FindFirstChild("Arena")
+        if arena then
+            for _, desc in ipairs(arena:GetDescendants()) do
+                if desc:IsA("Model") and desc:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(desc) then
+                    checkCandidate(desc)
+                end
+            end
+        end
+    end
+
+    -- 3. Fallback scan of workspace models with Humanoid (excluding Lobby & Sanctum)
+    if not closest then
+        for _, c in ipairs(workspace:GetChildren()) do
+            if c:IsA("Model") and c ~= char and not Players:GetPlayerFromCharacter(c) and c:FindFirstChildOfClass("Humanoid") then
+                local n = c.Name:lower()
+                if not n:find("lobby") and not n:find("sanctum") and not n:find("npc") and not n:find("shrine") and not n:find("barbell") then
+                    checkCandidate(c)
+                end
+            end
+        end
+    end
+
     return closest, closestDist
 end
 
@@ -1074,44 +1125,39 @@ end)
 -- 1.4. AUTO BOON & UPGRADE PICKER HELPER
 local function autoPickBoon()
     local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-    local bc = pg and pg:FindFirstChild("BoonChoice")
-    if not bc or not bc.Enabled then return end
+    if not pg then return end
 
     local cardButtons = {}
-    for _, desc in ipairs(bc:GetDescendants()) do
-        if desc:IsA("TextButton") and desc.Name:match("^Card%d") then
-            table.insert(cardButtons, desc)
-        end
-    end
-
-    if #cardButtons == 0 then
-        for _, desc in ipairs(bc:GetDescendants()) do
-            if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible and desc.Name:lower():find("card") then
-                table.insert(cardButtons, desc)
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+            local name = desc.Name
+            local pName = desc.Parent and desc.Parent.Name or ""
+            if name:match("^Card%d+$") or pName:match("^Slot%d+$") or name:lower():find("card") then
+                if desc.Visible and desc.AbsoluteSize.X > 40 then
+                    table.insert(cardButtons, desc)
+                end
             end
         end
     end
 
     if #cardButtons > 0 then
-        local chosenBtn = cardButtons[2] or cardButtons[1]
+        local chosenBtn = cardButtons[1]
         local highestScore = -1
 
         for _, btn in ipairs(cardButtons) do
             local score = 10
-            local slot = btn.Parent
-            if slot then
-                for _, lbl in ipairs(slot:GetDescendants()) do
-                    if lbl:IsA("TextLabel") and lbl.Text then
-                        local t = lbl.Text:lower()
-                        if t:find("legendary") or t:find("mythic") then
-                            score = math.max(score, 100)
-                        elseif t:find("epic") then
-                            score = math.max(score, 60)
-                        elseif t:find("rare") or t:find("lupa") or t:find("heal") then
-                            score = math.max(score, 40)
-                        elseif t:find("fury") or t:find("damage") or t:find("mars") then
-                            score = math.max(score, 25)
-                        end
+            local container = btn.Parent or btn
+            for _, lbl in ipairs(container:GetDescendants()) do
+                if lbl:IsA("TextLabel") and lbl.Text then
+                    local t = lbl.Text:lower()
+                    if t:find("legendary") or t:find("mythic") then
+                        score = math.max(score, 100)
+                    elseif t:find("epic") or t:find("twin fates") or t:find("bloodthirst") or t:find("hercules") or t:find("hourglass") then
+                        score = math.max(score, 80)
+                    elseif t:find("rare") or t:find("lupa") or t:find("apollo") or t:find("vulcan") or t:find("keen edge") or t:find("crowd") then
+                        score = math.max(score, 50)
+                    elseif t:find("fury") or t:find("damage") or t:find("mars") or t:find("mercury") or t:find("diana") then
+                        score = math.max(score, 30)
                     end
                 end
             end
@@ -1131,18 +1177,27 @@ local function autoPickBoon()
         end)
 
         pcall(function()
+            local center = chosenBtn.AbsolutePosition + (chosenBtn.AbsoluteSize / 2)
+            VirtualUser:Button1Down(center)
+            task.wait(0.04)
+            VirtualUser:Button1Up(center)
+        end)
+
+        pcall(function()
             local rep = game:GetService("ReplicatedStorage")
             local boonRemote = rep:FindFirstChild("Remotes") and rep.Remotes:FindFirstChild("BoonPick")
             if boonRemote then
-                local slot = chosenBtn.Parent
-                if slot then
-                    for _, lbl in ipairs(slot:GetDescendants()) do
-                        if lbl:IsA("TextLabel") and lbl.Text and #lbl.Text > 3 then
-                            local raw = lbl.Text:lower():gsub("%s+", "_"):gsub("[^%w_]", "")
-                            if raw:find("mars") or raw:find("lupa") or raw:find("mercury")
-                                or raw:find("fury") or raw:find("edge") or raw:find("brand") then
-                                boonRemote:FireServer(raw)
-                            end
+                local container = chosenBtn.Parent or chosenBtn
+                for _, lbl in ipairs(container:GetDescendants()) do
+                    if lbl:IsA("TextLabel") and lbl.Text and #lbl.Text > 2 then
+                        local raw = lbl.Text:lower():gsub("%s+", ""):gsub("[^%w]", "")
+                        if raw == "furyofmars" or raw == "lupashunger" or raw == "mercuryssandals" or raw == "dianaseye"
+                            or raw == "apolloslight" or raw == "vulcansbrand" or raw == "minervasaegis" or raw == "junosgrace"
+                            or raw == "twinfates" or raw == "crowdsfavor" or raw == "bloodthirst" or raw == "medicus"
+                            or raw == "windstep" or raw == "keenedge" or raw == "testudo" or raw == "herculesclub"
+                            or raw == "saturnshourglass" then
+                            boonRemote:FireServer(raw)
+                            break
                         end
                     end
                 end
@@ -1233,9 +1288,11 @@ task.spawn(function()
 
                         -- Attack Method 2: Virtual Click (Fires Bow drawing/release & standard attacks)
                         pcall(function()
-                            VirtualUser:Button1Down(Vector2.zero, workspace.CurrentCamera.CFrame)
-                            task.wait(0.05)
-                            VirtualUser:Button1Up(Vector2.zero, workspace.CurrentCamera.CFrame)
+                            local cam = workspace.CurrentCamera
+                            local center = cam and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or Vector2.zero
+                            VirtualUser:Button1Down(center, cam and cam.CFrame or CFrame.identity)
+                            task.wait(0.08)
+                            VirtualUser:Button1Up(center, cam and cam.CFrame or CFrame.identity)
                         end)
 
                         -- Cast Ability if enabled
