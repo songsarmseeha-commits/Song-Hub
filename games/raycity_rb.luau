@@ -835,9 +835,10 @@ end
 -- 💬 4.9. AUTONOMOUS DIRECT NPC INTERACTION & QUEST ACCEPT ENGINE
 -- ==============================================================================
 local _lastNpcInteractTime = 0
-local function interactWithNearbyNpc()
+local _npcArrivalTimes = {} -- [npcName] = os.clock()
+local function interactWithNearbyNpc(optionalTarget)
     local now = os.clock()
-    if (now - _lastNpcInteractTime) < 0.25 then return false end
+    if (now - _lastNpcInteractTime) < 0.2 then return false end
     _lastNpcInteractTime = now
 
     local root = getCarRoot()
@@ -848,24 +849,54 @@ local function interactWithNearbyNpc()
 
     local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
     local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
-    if not qReq then return false end
+    local sReq = qRemotes and qRemotes:FindFirstChild("SkillQuestRequest")
+    if not qReq and not sReq then return false end
 
-    local closestNpc, closestDist = nil, math.huge
-    for _, npc in ipairs(npcsFolder:GetChildren()) do
-        local pos = npc:GetPivot().Position
-        local dist = (pos - root.Position).Magnitude
-        if dist < closestDist then
-            closestDist = dist
-            closestNpc = npc
+    local targetNpc = nil
+    if typeof(optionalTarget) == "Instance" then
+        targetNpc = optionalTarget
+    elseif typeof(optionalTarget) == "number" or typeof(optionalTarget) == "string" then
+        local numStr = tostring(optionalTarget):match("(%d+)")
+        if numStr and npcsFolder then
+            for _, n in ipairs(npcsFolder:GetChildren()) do
+                local nId = n.Name:match("(%d+)$") or tostring(n:GetAttribute("NpcId") or ""):match("(%d+)$") or tostring(n:GetAttribute("MissionId") or ""):match("(%d+)$")
+                if nId == numStr or n.Name:find(numStr) then
+                    targetNpc = n
+                    break
+                end
+            end
         end
     end
 
-    if not closestNpc or closestDist > 35 then return false end
+    if not targetNpc then
+        local closestNpc, closestDist = nil, math.huge
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            local pos = npc:GetPivot().Position
+            local dist = (pos - root.Position).Magnitude
+            if dist < closestDist then
+                closestDist = dist
+                closestNpc = npc
+            end
+        end
+        if closestDist <= 38 then
+            targetNpc = closestNpc
+        end
+    end
 
-    local rbrcNpcId = closestNpc:GetAttribute("RBRCNpcId")
-    if not rbrcNpcId then return false end
+    if not targetNpc then return false end
 
-    -- Reset any hung tryTalk locks in client environment
+    local rbrcNpcId = targetNpc:GetAttribute("RBRCNpcId")
+    local mId = targetNpc:GetAttribute("MissionId")
+    local nId = targetNpc:GetAttribute("NpcId")
+    if not rbrcNpcId then
+        if mId then
+            rbrcNpcId = "mission24:" .. tostring(mId)
+        elseif nId then
+            rbrcNpcId = "thtalk:" .. tostring(nId)
+        end
+    end
+
+    -- 1. Reset any hung tryTalk locks in client environment
     pcall(function()
         local renv = getrenv and getrenv() or { shared = shared }
         local rq = renv.shared and renv.shared.RBRCQuest
@@ -879,32 +910,69 @@ local function interactWithNearbyNpc()
         end
     end)
 
-    -- Programmatic Talk & Accept directly through QuestRequest
-    local talkRes = nil
+    -- 2. Try native client talk handler first to preserve full game state & UI sync
     pcall(function()
-        talkRes = qReq:InvokeServer({ op = "talk", npcId = rbrcNpcId, carPos = root.Position })
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rq = renv.shared and renv.shared.RBRCQuest
+        if rq and rq.talk and rbrcNpcId then
+            rq.talk(rbrcNpcId)
+        end
+        local ntpReq = require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt)
+        local u = debug.getupvalues(ntpReq.show)
+        if u and type(u[3]) == "function" then
+            u[3]()
+        end
     end)
 
-    if talkRes and talkRes.ok and talkRes.offers and talkRes.offers[1] then
-        local offer = talkRes.offers[1]
-        local accRes = nil
+    -- 3. Programmatic Talk & Accept directly through QuestRequest (Guaranteed Network Remote)
+    local talkRes = nil
+    if qReq and rbrcNpcId then
         pcall(function()
-            accRes = qReq:InvokeServer({
-                op = "accept",
-                questId = offer.questId,
-                carPos = root.Position,
-                carLook = root.CFrame.LookVector
-            })
+            talkRes = qReq:InvokeServer({ op = "talk", npcId = rbrcNpcId, carPos = root.Position })
         end)
-        if accRes and accRes.ok then
-            if accRes.needsBoarding then
-                task.wait(0.18)
+    end
+    if (not talkRes or not talkRes.ok) and qReq and mId then
+        pcall(function()
+            talkRes = qReq:InvokeServer({ op = "talk", npcId = "mission24:" .. tostring(mId), carPos = root.Position })
+        end)
+    end
+
+    if talkRes and talkRes.ok and talkRes.offers and #talkRes.offers > 0 then
+        for _, offer in ipairs(talkRes.offers) do
+            local accRes = nil
+            pcall(function()
+                accRes = qReq:InvokeServer({
+                    op = "accept",
+                    questId = offer.questId,
+                    carPos = root.Position,
+                    carLook = root.CFrame.LookVector
+                })
+            end)
+            if accRes and accRes.ok then
+                if accRes.needsBoarding then
+                    task.wait(0.18)
+                    pcall(function()
+                        qReq:InvokeServer({ op = "boarded", questId = offer.questId })
+                    end)
+                end
+                -- Close dialogue and dismiss prompt
                 pcall(function()
-                    qReq:InvokeServer({ op = "boarded", questId = offer.questId })
+                    require(ReplicatedStorage.RBRCQuest.QuestUI)._offerAnswer(true)
                 end)
+                pcall(function()
+                    require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt).hide()
+                end)
+                return true
             end
-            return true
         end
+    end
+
+    -- If NPC has no active offers or rejects, set cooldown so we do not get stuck
+    if talkRes and (not talkRes.ok or not talkRes.offers or #talkRes.offers == 0) then
+        npcVisitCooldown[targetNpc.Name] = os.clock()
+        pcall(function()
+            require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt).hide()
+        end)
     end
 
     return false
@@ -2078,7 +2146,7 @@ task.spawn(function()
                         questFarmState = "FINISHING"
                         local carPos = root.Position
                         local dist = (destPos - carPos).Magnitude
-                        local arrivalThreshold = 10
+                        local arrivalThreshold = 18
 
                         if dist > arrivalThreshold then
                             -- Drive directly towards finish line (do NOT overshoot!)
@@ -2097,6 +2165,7 @@ task.spawn(function()
                             end
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.12) -- Essential for game engine stationary verification (time >= 0.1s)
 
                             -- 1. Trigger touch on all finish parts in radius 20
                             pcall(function()
@@ -2206,18 +2275,25 @@ task.spawn(function()
                                 local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                                 local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
                                 local qReq = sqRemotes and sqRemotes:FindFirstChild("QuestRequest")
+                                local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
+                                local npcObj = findQuestTargetNpc(tostring(targetId)) or (npcsFolder and (npcsFolder:FindFirstChild("Npc_9400" .. tostring(targetId)) or npcsFolder:FindFirstChild("Npc_" .. tostring(targetId))))
+                                local rbrcId = npcObj and npcObj:GetAttribute("RBRCNpcId") or ("mission24:" .. tostring(targetId))
+
                                 if sReq then
                                     pcall(function()
+                                        sReq:InvokeServer({ op = "talk", npcId = rbrcId, carPos = root.Position })
                                         sReq:InvokeServer({ op = "talk", npcId = "mission:" .. tostring(targetId), carPos = root.Position })
                                         sReq:InvokeServer({ op = "talk", npcId = targetId, carPos = root.Position })
                                     end)
                                 end
                                 if qReq then
                                     pcall(function()
+                                        qReq:InvokeServer({ op = "talk", npcId = rbrcId, carPos = root.Position })
                                         qReq:InvokeServer({ op = "talk", npcId = "mission:" .. tostring(targetId), carPos = root.Position })
                                         qReq:InvokeServer({ op = "talk", npcId = targetId, carPos = root.Position })
                                     end)
                                 end
+                                pcall(interactWithNearbyNpc, npcObj or targetId)
                                 pressReturnKey()
                                 task.wait(0.25)
 
@@ -2416,6 +2492,20 @@ task.spawn(function()
                                 local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
                                 local hasPrompt = (pg and pg:FindFirstChild("RBRCNpcTalkPrompt") and pg.RBRCNpcTalkPrompt.Enabled)
                                     or (pg and pg:FindFirstChild("RaycityQuestUi") and pg.RaycityQuestUi.Enabled)
+
+                                local parentName = targetNpc.Parent and targetNpc.Parent.Name
+                                if parentName then
+                                    _npcArrivalTimes[parentName] = _npcArrivalTimes[parentName] or os.clock()
+                                    -- If car has stayed at this NPC for > 1.8s without quest starting, set cooldown and hide prompt
+                                    if (os.clock() - _npcArrivalTimes[parentName]) > 1.8 then
+                                        npcVisitCooldown[parentName] = os.clock()
+                                        _npcArrivalTimes[parentName] = nil
+                                        pcall(function()
+                                            require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt).hide()
+                                        end)
+                                    end
+                                end
+
                                 if not hasPrompt and targetNpc.Parent then
                                     npcVisitCooldown[targetNpc.Parent.Name] = os.clock()
                                 end
