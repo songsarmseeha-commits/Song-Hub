@@ -810,11 +810,13 @@ local function fireGuiClick(btn)
     pcall(function()
         if firesignal then
             pcall(firesignal, btn.Activated)
+            pcall(firesignal, btn.MouseButton1Down)
             pcall(firesignal, btn.MouseButton1Click)
             pcall(firesignal, btn.MouseButton1Up)
         end
         if getconnections then
             for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do pcall(function() c:Fire() end) end
             for _, c in ipairs(getconnections(btn.MouseButton1Click)) do pcall(function() c:Fire() end) end
             for _, c in ipairs(getconnections(btn.MouseButton1Up)) do pcall(function() c:Fire() end) end
         end
@@ -840,6 +842,22 @@ local function pressReturnKey()
             if tap then fireGuiClick(tap) end
             local btn = ntp:FindFirstChildWhichIsA("GuiButton", true)
             if btn and btn.Visible then fireGuiClick(btn) end
+            pcall(function()
+                local rs = game:GetService("RunService")
+                local conns = getconnections and getconnections(rs.Heartbeat)
+                if conns then
+                    for _, c in ipairs(conns) do
+                        local fn = c.Function
+                        if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
+                            local uvs = debug.getupvalues(fn)
+                            if uvs and type(uvs[34]) == "function" then
+                                uvs[34]()
+                            end
+                            break
+                        end
+                    end
+                end
+            end)
         end
 
         -- 2. Enter button in RBRCGameGuide (Guide Mission prompt)
@@ -854,13 +872,22 @@ local function pressReturnKey()
         if qGui and qGui.Enabled then
             local npcDlg = qGui:FindFirstChild("NpcDialog")
             if npcDlg and npcDlg.Visible then
-                local nextBtn = npcDlg:FindFirstChild("Next")
+                local nextBtn = npcDlg:FindFirstChild("Next") or npcDlg:FindFirstChildWhichIsA("GuiButton", true)
                 if nextBtn then fireGuiClick(nextBtn) end
             end
-            local resDlg = qGui:FindFirstChild("Result")
+            local resDlg = qGui:FindFirstChild("MissionResult") or qGui:FindFirstChild("Result")
             if resDlg and resDlg.Visible then
-                local closeBtn = resDlg:FindFirstChild("Close") or resDlg:FindFirstChildWhichIsA("GuiButton", true)
+                local closeBtn = resDlg:FindFirstChild("Close") or resDlg:FindFirstChild("Ok") or resDlg:FindFirstChildWhichIsA("GuiButton", true)
                 if closeBtn then fireGuiClick(closeBtn) end
+            end
+            local offerDlg = qGui:FindFirstChild("MissionOffer")
+            if offerDlg and offerDlg.Visible then
+                local yesBtn = offerDlg:FindFirstChild("Yes", true) or offerDlg:FindFirstChildWhichIsA("GuiButton", true)
+                if yesBtn then fireGuiClick(yesBtn) end
+                pcall(function()
+                    local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                    if qUiMod and qUiMod._offerAnswer then qUiMod._offerAnswer(true) end
+                end)
             end
             for _, d in ipairs(qGui:GetDescendants()) do
                 if d:IsA("GuiButton") and (d.Visible or (d.Parent and d.Parent:IsA("GuiObject") and d.Parent.Visible)) then
@@ -911,9 +938,9 @@ local function pressReturnKey()
             end
 
             -- 3. Close Result Dialog if visible
-            local resClose = qUi:FindFirstChild("Result", true)
+            local resClose = qUi:FindFirstChild("MissionResult", true) or qUi:FindFirstChild("Result", true)
             if resClose then
-                local closeBtn = resClose:FindFirstChild("Close", true) or resClose:FindFirstChildWhichIsA("GuiButton")
+                local closeBtn = resClose:FindFirstChild("Close", true) or resClose:FindFirstChild("Ok", true) or resClose:FindFirstChildWhichIsA("GuiButton")
                 if closeBtn and closeBtn.Visible then
                     fireGuiClick(closeBtn)
                 end
@@ -938,13 +965,22 @@ local function pressReturnKey()
                     end
                 end
             end)
-        end
-
-        -- 5. Native Return Key
-        if vim then
-            vim:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
-            task.wait(0.03)
-            vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+            pcall(function()
+                local rs = game:GetService("RunService")
+                local conns = getconnections and getconnections(rs.Heartbeat)
+                if conns then
+                    for _, c in ipairs(conns) do
+                        local fn = c.Function
+                        if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
+                            local uvs = debug.getupvalues(fn)
+                            if uvs and type(uvs[34]) == "function" then
+                                uvs[34]()
+                            end
+                            break
+                        end
+                    end
+                end
+            end)
         end
     end)
     pcall(function()
@@ -962,6 +998,8 @@ local function pressReturnKey()
                 pcall(function() qUi._offerAnswer(1) end)
                 pcall(function() qUi._offerAnswer(true) end)
             end
+            if qUi.hideResult then pcall(qUi.hideResult) end
+            if qUi.closeDrops then pcall(qUi.closeDrops) end
         end
     end)
 end
@@ -988,6 +1026,22 @@ task.spawn(function()
                         local uvs = debug.getupvalues(ntpReq.show)
                         if uvs and type(uvs[3]) == "function" then
                             uvs[3]()
+                        end
+                    end)
+                    pcall(function()
+                        local rs = game:GetService("RunService")
+                        local conns = getconnections and getconnections(rs.Heartbeat)
+                        if conns then
+                            for _, c in ipairs(conns) do
+                                local fn = c.Function
+                                if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
+                                    local uvs = debug.getupvalues(fn)
+                                    if uvs and type(uvs[34]) == "function" then
+                                        uvs[34]()
+                                    end
+                                    break
+                                end
+                            end
                         end
                     end)
                     local tap = ntp:FindFirstChild("MobileTap", true)
@@ -1033,8 +1087,8 @@ task.spawn(function()
                         end
                     end
 
-                    -- 4. Auto Close Result Dialog
-                    local resDlg = qUi:FindFirstChild("Result")
+                    -- 4. Auto Close Result Dialog / Claim Rewards
+                    local resDlg = qUi:FindFirstChild("MissionResult") or qUi:FindFirstChild("Result")
                     if resDlg and resDlg.Visible then
                         pcall(function()
                             local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
@@ -1043,7 +1097,11 @@ task.spawn(function()
                                 if qUiMod.closeDrops then qUiMod.closeDrops() end
                             end
                         end)
-                        local closeBtn = resDlg:FindFirstChild("Close", true) or resDlg:FindFirstChildWhichIsA("GuiButton", true)
+                        pcall(function()
+                            local escGate = require(ReplicatedStorage.RaycityUi.RaycityEscGate)
+                            if escGate and escGate.virtualEnter then escGate.virtualEnter() end
+                        end)
+                        local closeBtn = resDlg:FindFirstChild("Close", true) or resDlg:FindFirstChild("Ok", true) or resDlg:FindFirstChildWhichIsA("GuiButton", true)
                         if closeBtn and getconnections then
                             for _, c in ipairs(getconnections(closeBtn.Activated)) do pcall(function() c:Fire() end) end
                             for _, c in ipairs(getconnections(closeBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
@@ -1336,27 +1394,60 @@ local function findQuestTargetNpc(targetName)
 end
 
 local function getActiveMissionTarget()
-    local targetPos, missionObj, missionType = nil, nil, nil
+    local targetPos, missionObj, missionType, isFinishLine = nil, nil, nil, false
     pcall(function()
         local rs = game:GetService("RunService")
         local conns = getconnections and getconnections(rs.Heartbeat)
         if conns then
             for _, c in ipairs(conns) do
                 local fn = c.Function
-                if fn and tostring(debug.getinfo(fn).short_src):find("RBRCQuestClient") then
+                if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
                     local uvs = debug.getupvalues(fn)
                     if type(uvs) == "table" then
-                        for _, uv in pairs(uvs) do
-                            if type(uv) == "table" and (uv.state == "running" or uv.state == "boarding") and type(uv.objectives) == "table" then
-                                missionType = uv.state
-                                for _, obj in ipairs(uv.objectives) do
-                                    if obj.active and not obj.done and typeof(obj.target) == "Vector3" then
+                        -- Check uvs[9].state() first
+                        if uvs[9] and type(uvs[9].state) == "function" then
+                            local okSt, st = pcall(uvs[9].state)
+                            if okSt and type(st) == "table" and (st.state == "running" or st.state == "boarding") and type(st.objectives) == "table" then
+                                missionType = st.state
+                                local targetObjs = {}
+                                for idx, obj in ipairs(st.objectives) do
+                                    if typeof(obj.target) == "Vector3" then
+                                        table.insert(targetObjs, { idx = idx, obj = obj })
+                                    end
+                                end
+                                for tIdx, item in ipairs(targetObjs) do
+                                    local obj = item.obj
+                                    if (obj.active or not obj.done) and typeof(obj.target) == "Vector3" then
                                         targetPos = obj.target
                                         missionObj = obj
+                                        isFinishLine = (tIdx == #targetObjs)
                                         break
                                     end
                                 end
-                                if targetPos then break end
+                            end
+                        end
+
+                        if not targetPos then
+                            for _, uv in pairs(uvs) do
+                                if type(uv) == "table" and (uv.state == "running" or uv.state == "boarding") and type(uv.objectives) == "table" then
+                                    missionType = uv.state
+                                    local targetObjs = {}
+                                    for idx, obj in ipairs(uv.objectives) do
+                                        if typeof(obj.target) == "Vector3" then
+                                            table.insert(targetObjs, { idx = idx, obj = obj })
+                                        end
+                                    end
+                                    for tIdx, item in ipairs(targetObjs) do
+                                        local obj = item.obj
+                                        if (obj.active or not obj.done) and typeof(obj.target) == "Vector3" then
+                                            targetPos = obj.target
+                                            missionObj = obj
+                                            isFinishLine = (tIdx == #targetObjs)
+                                            break
+                                        end
+                                    end
+                                    if targetPos then break end
+                                end
                             end
                         end
                     end
@@ -1365,7 +1456,7 @@ local function getActiveMissionTarget()
             end
         end
     end)
-    return targetPos, missionObj, missionType
+    return targetPos, missionObj, missionType, isFinishLine
 end
 
 local function getActiveQuestDestination()
@@ -1379,7 +1470,7 @@ local function getActiveQuestDestination()
     end
 
     -- Priority 0: Live Active Taxi/Driving/Delivery Mission Checkpoints (Running right now)
-    local mTarget, mObj, mState = getActiveMissionTarget()
+    local mTarget, mObj, mState, isFinish = getActiveMissionTarget()
     if mTarget then
         if not navPoints and okNav and nav and nav.pointTo then
             pcall(nav.pointTo, mTarget)
@@ -1388,7 +1479,8 @@ local function getActiveQuestDestination()
                 navPoints = gl2.points
             end
         end
-        return mTarget, nil, navPoints, "checkpoint", mState
+        local dType = isFinish and "mission_finish" or "checkpoint"
+        return mTarget, nil, navPoints, dType, mState
     end
 
     -- Priority 1: Check Skill Quest / Newbie Quest system
@@ -1469,7 +1561,7 @@ local function getActiveQuestDestination()
     end
 
     -- Priority 3: Live Active Taxi/Driving Mission checkpoints from RBRCQuestClient
-    local mTarget, mObj, mState = getActiveMissionTarget()
+    local mTarget, mObj, mState, isFinish = getActiveMissionTarget()
     if mTarget then
         if not navPoints and okNav and nav and nav.pointTo then
             pcall(nav.pointTo, mTarget)
@@ -1478,7 +1570,8 @@ local function getActiveQuestDestination()
                 navPoints = gl2.points
             end
         end
-        return mTarget, nil, navPoints, "checkpoint", mState
+        local dType = isFinish and "mission_finish" or "checkpoint"
+        return mTarget, nil, navPoints, dType, mState
     end
 
     -- Priority 4: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
@@ -1666,6 +1759,11 @@ local function executeMoveStep(targetPos, destType, speedKmh)
                     end
                 else
                     root.AssemblyLinearVelocity = Vector3.zero
+                    if rcd and type(rcd.phys) == "table" then
+                        rcd.phys.v = Vector3.zero
+                        rcd.phys.throttle = 0
+                        rcd.phys.brake = 1
+                    end
                 end
             end)
             lastWarpTime = os.clock()
@@ -1721,12 +1819,12 @@ local function executeMoveStep(targetPos, destType, speedKmh)
                 ad.C.cap1 = math.max(300, desiredSpeed * 1.15)
                 ad.C.cap2 = math.max(250, desiredSpeed * 0.95)
                 ad.C.cap3 = math.max(200, desiredSpeed * 0.8)
-                ad.C.nearDestM = (destType == "checkpoint") and 5 or 8
+                ad.C.nearDestM = (destType == "checkpoint") and 5 or ((destType == "mission_finish") and 4 or 8)
             else
                 ad.C.cap1 = math.min(200, desiredSpeed * 1.0)
                 ad.C.cap2 = math.min(160, desiredSpeed * 0.85)
                 ad.C.cap3 = math.min(120, desiredSpeed * 0.7)
-                ad.C.nearDestM = (destType == "checkpoint") and 6 or 10
+                ad.C.nearDestM = (destType == "checkpoint") and 6 or ((destType == "mission_finish") and 4 or 10)
             end
         end
     end)
@@ -1833,17 +1931,11 @@ task.spawn(function()
                             end
                         end)
 
-                        -- 3. Trigger remote events for checkpoint / finish passing
+                        -- 3. Trigger remote events for checkpoint passing
                         pcall(function()
                             local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                             if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
                                 qRemotes.QuestEventUp:FireServer("GoalReached", (destObj and destObj.Name) or "Checkpoint")
-                                qRemotes.QuestEventUp:FireServer("FinishLine", "Finish")
-                            end
-                            local qDeliver = require(ReplicatedStorage.RBRCQuest.QuestDeliver)
-                            if qDeliver then
-                                if qDeliver.finish then qDeliver.finish() end
-                                if qDeliver.trunk then qDeliver.trunk(true) end
                             end
                         end)
 
@@ -1860,9 +1952,81 @@ task.spawn(function()
                             root.AssemblyLinearVelocity = dir * 65
                         end
 
+                    elseif destType == "mission_finish" then
+                        -- ==========================================================
+                        -- A2. FINAL FINISH LINE / TAXI DROP-OFF ZONE:
+                        -- DRIVE IN, STOP COMPLETELY, COMPLETE MISSION & ADVANCE!
+                        -- ==========================================================
+                        questFarmState = "FINISHING"
+                        local carPos = root.Position
+                        local dist = (destPos - carPos).Magnitude
+                        local arrivalThreshold = 10
+
+                        if dist > arrivalThreshold then
+                            -- Drive directly towards finish line (do NOT overshoot!)
+                            executeMoveStep(destPos, "mission_finish", math.min(180, Config.QuestDriveSpeed))
+                        else
+                            -- Arrived in the finish / drop-off zone: STOP COMPLETELY!
+                            stopAutoDrive()
+
+                            if rcd and rcd.phys then
+                                rcd.phys.v = Vector3.zero
+                                rcd.phys.throttle = 0
+                                rcd.phys.brake = 1
+                                rcd.phys.airMode = false
+                                rcd.phys.anyContact = true
+                                rcd.phys.handbrake = 1
+                            end
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+
+                            -- 1. Trigger touch on all finish parts in radius 20
+                            pcall(function()
+                                if firetouchinterest then
+                                    local parts = workspace:GetPartBoundsInRadius(destPos, 20)
+                                    for _, p in ipairs(parts) do
+                                        if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                            firetouchinterest(root, p, 0)
+                                            task.wait(0.01)
+                                            firetouchinterest(root, p, 1)
+                                        end
+                                    end
+                                end
+                            end)
+
+                            -- 2. Trigger Passenger Exit & Deliver completion
+                            pcall(function()
+                                local npMod = ReplicatedStorage:FindFirstChild("RBRCNpc") and ReplicatedStorage.RBRCNpc:FindFirstChild("NpcPassenger")
+                                if npMod then
+                                    local np = require(npMod)
+                                    if np.exitRun then np.exitRun() end
+                                    if np.deliverRun then np.deliverRun() end
+                                end
+                                local qDeliver = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("QuestDeliver")
+                                if qDeliver then
+                                    local qd = require(qDeliver)
+                                    if qd.finish then qd.finish() end
+                                    if qd.trunk then qd.trunk(true) end
+                                end
+                            end)
+
+                            -- 3. Trigger Server Remotes for Goal / FinishLine
+                            pcall(function()
+                                local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                                if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
+                                    qRemotes.QuestEventUp:FireServer("GoalReached", (destObj and destObj.Name) or "FinishLine")
+                                    qRemotes.QuestEventUp:FireServer("FinishLine", "Finish")
+                                end
+                            end)
+
+                            -- 4. Advance completion dialogues, close result popups, and claim rewards
+                            pressReturnKey()
+                            task.wait(0.35)
+                        end
+
                     else
                         -- ==========================================================
-                        -- A2. NPC / DELIVERY DESTINATION: DRIVE TOWARDS OBJECTIVE
+                        -- A3. NPC / DELIVERY DESTINATION: DRIVE TOWARDS OBJECTIVE
                         -- ==========================================================
                         questFarmState = "DRIVING"
                         local dist = (root.Position - destPos).Magnitude
