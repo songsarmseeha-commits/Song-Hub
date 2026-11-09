@@ -16,6 +16,13 @@
 --     - 🛡️ Anti-AFK 24/7 Protection
 -- ==============================================================================
 
+-- Strict Game Validation: Prevent running in any other game
+local isEra = (game.PlaceId == 120299741604934 or game.GameId == 10770749098 or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Magics")))
+if not isEra then
+    warn("[Song Hub] ❌ This script is exclusively for Era dos Grimórios (PlaceId: 120299741604934)! Exiting.")
+    return
+end
+
 if not game:IsLoaded() then
     pcall(function() game.Loaded:Wait() end)
     local t0 = tick()
