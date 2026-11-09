@@ -1012,6 +1012,187 @@ local function interactWithNearbyNpc(optionalTarget)
     return false
 end
 
+-- ==============================================================================
+-- 💬 4.9. AUTONOMOUS DIRECT NPC INTERACTION & QUEST ACCEPT ENGINE
+-- ==============================================================================
+local _lastNpcInteractTime = 0
+local _npcArrivalTimes = {} -- [npcName] = os.clock()
+local function interactWithNearbyNpc(optionalTarget)
+    local now = os.clock()
+    if (now - _lastNpcInteractTime) < 0.2 then return false end
+    _lastNpcInteractTime = now
+
+    local root = getCarRoot()
+    if not root then return false end
+
+    local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
+    if not npcsFolder then return false end
+
+    local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+    local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+    local sReq = qRemotes and qRemotes:FindFirstChild("SkillQuestRequest")
+    if not qReq and not sReq then return false end
+
+    local targetNpc = nil
+    if typeof(optionalTarget) == "Instance" then
+        targetNpc = optionalTarget
+    elseif typeof(optionalTarget) == "number" or typeof(optionalTarget) == "string" then
+        local numStr = tostring(optionalTarget):match("(%d+)")
+        if numStr and npcsFolder then
+            for _, n in ipairs(npcsFolder:GetChildren()) do
+                local nId = n.Name:match("(%d+)$") or tostring(n:GetAttribute("NpcId") or ""):match("(%d+)$") or tostring(n:GetAttribute("MissionId") or ""):match("(%d+)$")
+                if nId == numStr or n.Name:find(numStr) then
+                    targetNpc = n
+                    break
+                end
+            end
+        end
+    end
+
+    if not targetNpc then
+        local closestNpc, closestDist = nil, math.huge
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            local pos = npc:GetPivot().Position
+            local dist = (pos - root.Position).Magnitude
+            if dist < closestDist then
+                closestDist = dist
+                closestNpc = npc
+            end
+        end
+        if closestDist <= 38 then
+            targetNpc = closestNpc
+        end
+    end
+
+    if not targetNpc then return false end
+
+    local rbrcNpcId = targetNpc:GetAttribute("RBRCNpcId")
+    local mId = targetNpc:GetAttribute("MissionId")
+    local nId = targetNpc:GetAttribute("NpcId")
+    if not rbrcNpcId then
+        if mId then
+            rbrcNpcId = "mission24:" .. tostring(mId)
+        elseif nId then
+            rbrcNpcId = "thtalk:" .. tostring(nId)
+        end
+    end
+
+    -- 1. Reset any hung tryTalk locks in client environment
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rq = renv.shared and renv.shared.RBRCQuest
+        if rq and rq.talk then
+            local ups = debug.getupvalues(rq.talk)
+            if ups and ups[1] and type(ups[1]) == "function" then
+                debug.setupvalue(ups[1], 1, false) -- u309
+                debug.setupvalue(ups[1], 3, false) -- u307
+                debug.setupvalue(ups[1], 4, false) -- u360
+            end
+        end
+    end)
+
+    -- 2. Try native client talk handler and dismiss any open dialogue / offer prompts
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rq = renv.shared and renv.shared.RBRCQuest
+        if rq and rq.talk and rbrcNpcId then
+            rq.talk(rbrcNpcId)
+        end
+
+        -- If native UI already has an offer dialog open, confirm and accept immediately
+        local qui = require(ReplicatedStorage.RBRCQuest.QuestUI)
+        if qui and qui._offerAnswer then
+            qui._offerAnswer(true)
+        end
+
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local rcUi = pGui and pGui:FindFirstChild("RaycityQuestUi")
+        if rcUi then
+            local offer = rcUi:FindFirstChild("MissionOffer", true)
+            local yesBtn = offer and offer:FindFirstChild("Yes", true)
+            if yesBtn and yesBtn.Visible and firesignal then
+                local conns = getconnections and getconnections(yesBtn.Activated)
+                if conns and #conns > 0 then firesignal(yesBtn.Activated) end
+            end
+            local dlg = rcUi:FindFirstChild("NpcDialog", true)
+            local nextBtn = dlg and dlg:FindFirstChild("Next", true)
+            if nextBtn and nextBtn.Visible and firesignal then
+                local conns = getconnections and getconnections(nextBtn.Activated)
+                if conns and #conns > 0 then firesignal(nextBtn.Activated) end
+            end
+        end
+
+        local ntpReq = require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt)
+        local u = debug.getupvalues(ntpReq.show)
+        if u and type(u[3]) == "function" then
+            u[3]()
+        end
+    end)
+
+    -- 3. Programmatic Talk & Accept directly through QuestRequest (Guaranteed Network Remote)
+    local talkRes = nil
+    if qReq and rbrcNpcId then
+        pcall(function()
+            talkRes = qReq:InvokeServer({ op = "talk", npcId = rbrcNpcId, carPos = root.Position })
+        end)
+    end
+    if (not talkRes or not talkRes.ok) and qReq and mId then
+        pcall(function()
+            talkRes = qReq:InvokeServer({ op = "talk", npcId = "mission24:" .. tostring(mId), carPos = root.Position })
+        end)
+    end
+
+    if talkRes and talkRes.ok and talkRes.offers and #talkRes.offers > 0 then
+        for _, offer in ipairs(talkRes.offers) do
+            local accRes = nil
+            pcall(function()
+                accRes = qReq:InvokeServer({
+                    op = "accept",
+                    questId = offer.questId,
+                    carPos = root.Position,
+                    carLook = root.CFrame.LookVector
+                })
+            end)
+            if accRes and accRes.ok then
+                if accRes.needsBoarding then
+                    -- Server enforces passenger boarding delay (approx 1.5 - 2.5s). Retry until { ok = true }
+                    local bStart = os.clock()
+                    local isBoarded = false
+                    while (os.clock() - bStart) < 3.8 do
+                        task.wait(0.4)
+                        local bRes = nil
+                        pcall(function()
+                            bRes = qReq:InvokeServer({ op = "boarded", questId = offer.questId })
+                        end)
+                        if bRes and bRes.ok then
+                            isBoarded = true
+                            break
+                        end
+                    end
+                end
+                -- Close dialogue and dismiss prompt cleanly
+                pcall(function()
+                    require(ReplicatedStorage.RBRCQuest.QuestUI)._offerAnswer(true)
+                end)
+                pcall(function()
+                    require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt).hide()
+                end)
+                return true
+            end
+        end
+    end
+
+    -- If NPC has no active offers or rejects, set temporary cooldown so we do not get stuck
+    if talkRes and (not talkRes.ok or not talkRes.offers or #talkRes.offers == 0) then
+        npcVisitCooldown[targetNpc.Name] = os.clock()
+        pcall(function()
+            require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt).hide()
+        end)
+    end
+
+    return false
+end
+
 local function pressReturnKey()
     -- 0. Autonomous Programmatic NPC Interaction (Direct Remote - 100% Guaranteed)
     pcall(interactWithNearbyNpc)
@@ -1606,6 +1787,35 @@ local function getActiveMissionTarget()
             -- Waiting for passenger to finish boarding animation: keep car stationary at NPC until boarded!
             return nil, nil, "boarding", false
         end
+        local targetObjs = {}
+        for idx, obj in ipairs(liveM.objectives) do
+            local v = nil
+            if typeof(obj.target) == "Vector3" then
+                v = obj.target
+            elseif type(obj.target) == "table" and obj.target.x and obj.target.y and obj.target.z then
+                v = Vector3.new(obj.target.x, obj.target.y, obj.target.z)
+            end
+            if v then
+                table.insert(targetObjs, { idx = idx, obj = obj, target = v })
+            end
+        end
+        for tIdx, item in ipairs(targetObjs) do
+            local obj = item.obj
+            if (obj.active or not obj.done) then
+                targetPos = item.target
+                missionObj = obj
+                isFinishLine = (tIdx == #targetObjs)
+                return targetPos, missionObj, missionType, isFinishLine
+            end
+        end
+    end
+
+    -- 2. Upvalue inspection fallback
+
+    -- 1. Direct Server-Verified Quest State from QuestRequest (Guaranteed Live)
+    local liveM = getLiveMissionState()
+    if liveM and type(liveM.objectives) == "table" and (liveM.state == "running" or liveM.state == "boarding") then
+        missionType = liveM.state
         local targetObjs = {}
         for idx, obj in ipairs(liveM.objectives) do
             local v = nil
