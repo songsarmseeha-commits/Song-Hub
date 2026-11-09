@@ -22,6 +22,13 @@
 --   ======================================================================
 -- ]]
 
+-- Strict Game Validation: Prevent running in any other game
+local isRaycity = (game.PlaceId == 117419079466193 or game.GameId == 10772794231 or game:GetService("ReplicatedStorage"):FindFirstChild("RCDrive") or workspace:FindFirstChild("MyCar"))
+if not isRaycity then
+    warn("[Song Hub] ❌ This script is exclusively for Raycity RB (PlaceId: 117419079466193)! Exiting.")
+    return
+end
+
 if not game:IsLoaded() then
     pcall(function() game.Loaded:Wait() end)
     local t0 = tick()
