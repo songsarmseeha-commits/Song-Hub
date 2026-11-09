@@ -1129,7 +1129,7 @@ local function hookTournamentMinigame()
         if tmg and not tmg.__SongHubHooked then
             tmg.__SongHubHooked = true
             local rawPlay = tmg.Play
-            local hookedPlay = function(onGrade, onFinish)
+            tmg.Play = function(onGrade, onFinish)
                 if tournamentPerfectKick then
                     pcall(function()
                         local SoundUtils = require(rep.Shared.Utility.SoundUtils)
@@ -1157,13 +1157,6 @@ local function hookTournamentMinigame()
                 end
                 return rawPlay(onGrade, onFinish)
             end
-
-            if typeof(hookfunction) == "function" and typeof(rawPlay) == "function" then
-                hookfunction(rawPlay, hookedPlay)
-            elseif typeof(replaceclosure) == "function" and typeof(rawPlay) == "function" then
-                replaceclosure(rawPlay, hookedPlay)
-            end
-            tmg.Play = hookedPlay
             print("[Song Hub] 🏆 Successfully hooked TournamentMinigameClient for 100% Perfect kicks!")
         end
     end)
@@ -1174,14 +1167,7 @@ local function hookTournamentMinigame()
         local ts = TournamentService or require(rep.Shared.Services.TournamentService)
         if ts and not ts.__SongHubHooked then
             ts.__SongHubHooked = true
-            local rawIsTooWeak = ts.IsTooWeak
-            local bypassWeak = function() return false end
-            if typeof(hookfunction) == "function" and typeof(rawIsTooWeak) == "function" then
-                hookfunction(rawIsTooWeak, bypassWeak)
-            elseif typeof(replaceclosure) == "function" and typeof(rawIsTooWeak) == "function" then
-                replaceclosure(rawIsTooWeak, bypassWeak)
-            end
-            ts.IsTooWeak = bypassWeak
+            ts.IsTooWeak = function() return false end
         end
     end)
 
@@ -1192,7 +1178,7 @@ local function hookTournamentMinigame()
         if cgc and not cgc.__SongHubHooked then
             cgc.__SongHubHooked = true
             local rawConfirm = cgc.Confirm
-            local autoConfirmPrompt = function(cfg)
+            cgc.Confirm = function(cfg)
                 if autoTournament and cfg and cfg.Options and cfg.Options.Continue then
                     local txt = tostring(cfg.Text or "")
                     if string.find(txt:lower(), "weaker") or string.find(txt:lower(), "lose") or string.find(txt:lower(), "certainly") then
@@ -1202,12 +1188,6 @@ local function hookTournamentMinigame()
                 end
                 return rawConfirm(cfg)
             end
-            if typeof(hookfunction) == "function" and typeof(rawConfirm) == "function" then
-                hookfunction(rawConfirm, autoConfirmPrompt)
-            elseif typeof(replaceclosure) == "function" and typeof(rawConfirm) == "function" then
-                replaceclosure(rawConfirm, autoConfirmPrompt)
-            end
-            cgc.Confirm = autoConfirmPrompt
             print("[Song Hub] 🏆 Successfully hooked ConfirmGuiClient for Instant Tournament Auto-Continue!")
         end
     end)
