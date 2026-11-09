@@ -21,6 +21,13 @@
 --   ======================================================================
 -- ]]
 
+-- Strict Game Validation: Prevent running in any other game
+local isGloryBound = (game.PlaceId == 137629355240872 or game.GameId == 10768652372 or (workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Gym")))
+if not isGloryBound then
+    warn("[Song Hub] ❌ This script is exclusively for GloryBound (PlaceId: 137629355240872)! Exiting.")
+    return
+end
+
 if not game:IsLoaded() then
     pcall(function() game.Loaded:Wait() end)
     local t0 = tick()
