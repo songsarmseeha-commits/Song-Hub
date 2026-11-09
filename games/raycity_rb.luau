@@ -967,6 +967,104 @@ local function pressReturnKey()
 end
 
 -- ==============================================================================
+-- 💬 5.0. CONTINUOUS BACKGROUND AUTO DIALOGUE SKIP & QUEST ACCEPT ENGINE
+-- ==============================================================================
+task.spawn(function()
+    while isAlive() do
+        task.wait(0.12)
+        if Config.AutoSkipDialogue or Config.AutoAcceptQuest or Config.AutoFarmQuests then
+            pcall(function()
+                local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                if not pg then return end
+
+                local qUi = pg:FindFirstChild("RaycityQuestUi")
+                local ntp = pg:FindFirstChild("RBRCNpcTalkPrompt")
+                local gg = pg:FindFirstChild("RBRCGameGuide")
+
+                -- 1. Auto Talk to NPC when RBRCNpcTalkPrompt is shown ([Enter] Press Enter to chat with...)
+                if ntp and ntp.Enabled then
+                    pcall(function()
+                        local ntpReq = require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt)
+                        local uvs = debug.getupvalues(ntpReq.show)
+                        if uvs and type(uvs[3]) == "function" then
+                            uvs[3]()
+                        end
+                    end)
+                    local tap = ntp:FindFirstChild("MobileTap", true)
+                    if tap and getconnections then
+                        for _, c in ipairs(getconnections(tap.Activated)) do pcall(function() c:Fire() end) end
+                    end
+                    pcall(function()
+                        local escGate = require(ReplicatedStorage.RaycityUi.RaycityEscGate)
+                        if escGate and escGate.virtualEnter then escGate.virtualEnter() end
+                    end)
+                end
+
+                -- 2. Auto Accept Quest Offer when RaycityQuestUi.MissionOffer is visible (Yes / ยอมรับ)
+                if qUi and qUi.Enabled then
+                    local offer = qUi:FindFirstChild("MissionOffer")
+                    if offer and offer.Visible then
+                        pcall(function()
+                            local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                            if qUiMod and qUiMod._offerAnswer then
+                                qUiMod._offerAnswer(true)
+                            end
+                        end)
+                        local yesBtn = offer:FindFirstChild("Yes", true)
+                        if yesBtn and getconnections then
+                            for _, c in ipairs(getconnections(yesBtn.Activated)) do pcall(function() c:Fire() end) end
+                            for _, c in ipairs(getconnections(yesBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                        end
+                    end
+
+                    -- 3. Auto Advance NPC Dialog (Next / ยืนยัน)
+                    local npcDlg = qUi:FindFirstChild("NpcDialog")
+                    if npcDlg and npcDlg.Visible then
+                        pcall(function()
+                            local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                            if qUiMod and qUiMod._dialogEnter then
+                                qUiMod._dialogEnter()
+                            end
+                        end)
+                        local nextBtn = npcDlg:FindFirstChild("Next", true)
+                        if nextBtn and getconnections then
+                            for _, c in ipairs(getconnections(nextBtn.Activated)) do pcall(function() c:Fire() end) end
+                            for _, c in ipairs(getconnections(nextBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                        end
+                    end
+
+                    -- 4. Auto Close Result Dialog
+                    local resDlg = qUi:FindFirstChild("Result")
+                    if resDlg and resDlg.Visible then
+                        pcall(function()
+                            local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                            if qUiMod then
+                                if qUiMod.hideResult then qUiMod.hideResult() end
+                                if qUiMod.closeDrops then qUiMod.closeDrops() end
+                            end
+                        end)
+                        local closeBtn = resDlg:FindFirstChild("Close", true) or resDlg:FindFirstChildWhichIsA("GuiButton", true)
+                        if closeBtn and getconnections then
+                            for _, c in ipairs(getconnections(closeBtn.Activated)) do pcall(function() c:Fire() end) end
+                            for _, c in ipairs(getconnections(closeBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                        end
+                    end
+                end
+
+                -- 5. Auto Dismiss GameGuide prompt if visible
+                if gg and gg.Enabled then
+                    local enterBtn = gg:FindFirstChild("Enter", true)
+                    if enterBtn and getconnections then
+                        for _, c in ipairs(getconnections(enterBtn.Activated)) do pcall(function() c:Fire() end) end
+                        for _, c in ipairs(getconnections(enterBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- ==============================================================================
 -- 📦 5.1. STATE & INVENTORY MANAGER FOR QUEST PROGRESSION
 -- ==============================================================================
 local function getSkillQuestState()
@@ -1541,20 +1639,37 @@ local function executeMoveStep(targetPos, destType, speedKmh)
 
     -- ⚡ Mode 1: Instant Warp (Single-shot teleport with cooldown, NEVER spams spawnCar)
     if mode == "Instant Warp" then
-        if not isWarping and (os.clock() - lastWarpTime) >= 1.5 and dist > 8 then
+        if not isWarping and (os.clock() - lastWarpTime) >= 1.2 and dist > 6 then
             isWarping = true
             stopAutoDrive()
             pcall(function()
-                local targetCF = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+                local dir = dist > 0.1 and (targetPos - root.Position).Unit or root.CFrame.LookVector
+                local targetCF
+                if destType == "checkpoint" then
+                    targetCF = CFrame.new(targetPos + dir * 15, targetPos + dir * 30)
+                else
+                    targetCF = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+                end
+
                 if rcd and type(rcd.teleport) == "function" then
                     rcd.teleport(targetCF)
                 elseif root then
                     root.CFrame = targetCF
+                end
+
+                if destType == "checkpoint" then
+                    root.AssemblyLinearVelocity = dir * 65
+                    if rcd and type(rcd.phys) == "table" then
+                        rcd.phys.v = dir * 65
+                        rcd.phys.throttle = 1
+                        rcd.phys.brake = 0
+                    end
+                else
                     root.AssemblyLinearVelocity = Vector3.zero
                 end
             end)
             lastWarpTime = os.clock()
-            task.wait(1.2) -- Wait for car respawn and physics streaming
+            task.wait(1.0)
             isWarping = false
         end
         return
@@ -1691,40 +1806,85 @@ task.spawn(function()
                 end
 
                 if destPos then
-                    -- ==========================================================
-                    -- A. QUEST IN PROGRESS: DRIVE TOWARDS DESTINATION
-                    -- ==========================================================
-                    questFarmState = "DRIVING"
-                    local dist = (root.Position - destPos).Magnitude
-                    local arrivalThreshold = (destType == "checkpoint") and 8 or 13
+                    if destType == "checkpoint" then
+                        -- ==========================================================
+                        -- A1. CHECKPOINT / FINISH GATE: DRIVE THROUGH AT FULL SPEED!
+                        -- ==========================================================
+                        questFarmState = "RACING"
+                        local carPos = root.Position
+                        local fwd = (destPos - carPos)
+                        local gateDist = fwd.Magnitude
+                        local dir = fwd.Magnitude > 0.1 and fwd.Unit or root.CFrame.LookVector
 
-                    if dist > arrivalThreshold then
-                        -- Drive smoothly along road lanes towards destination
-                        executeMoveStep(destPos, destType, Config.QuestDriveSpeed)
+                        -- 1. Aim 35 studs PAST the checkpoint so AutoDrive powers all the way through the gate
+                        local throughPos = destPos + dir * 35
+
+                        -- 2. Trigger Touch on all gate trigger parts within 25 studs
+                        pcall(function()
+                            if firetouchinterest then
+                                local parts = workspace:GetPartBoundsInRadius(destPos, 25)
+                                for _, p in ipairs(parts) do
+                                    if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                        firetouchinterest(root, p, 0)
+                                        task.wait(0.01)
+                                        firetouchinterest(root, p, 1)
+                                    end
+                                end
+                            end
+                        end)
+
+                        -- 3. Trigger remote events for checkpoint / finish passing
+                        pcall(function()
+                            local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                            if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
+                                qRemotes.QuestEventUp:FireServer("GoalReached", (destObj and destObj.Name) or "Checkpoint")
+                                qRemotes.QuestEventUp:FireServer("FinishLine", "Finish")
+                            end
+                            local qDeliver = require(ReplicatedStorage.RBRCQuest.QuestDeliver)
+                            if qDeliver then
+                                if qDeliver.finish then qDeliver.finish() end
+                                if qDeliver.trunk then qDeliver.trunk(true) end
+                            end
+                        end)
+
+                        -- 4. Drive through the gate at full speed!
+                        executeMoveStep(throughPos, "checkpoint", math.max(220, Config.QuestDriveSpeed))
+
+                        -- 5. Close to gate (<= 20 studs): punch through with high forward velocity
+                        if gateDist <= 20 then
+                            if rcd and type(rcd.phys) == "table" then
+                                rcd.phys.throttle = 1
+                                rcd.phys.brake = 0
+                                rcd.phys.v = dir * 65
+                            end
+                            root.AssemblyLinearVelocity = dir * 65
+                        end
+
                     else
                         -- ==========================================================
-                        -- B. ARRIVED AT OBJECTIVE: COMPLETE & CLAIM
+                        -- A2. NPC / DELIVERY DESTINATION: DRIVE TOWARDS OBJECTIVE
                         -- ==========================================================
-                        stopAutoDrive()
+                        questFarmState = "DRIVING"
+                        local dist = (root.Position - destPos).Magnitude
+                        local arrivalThreshold = 13
 
-                        -- Solid brake on the road so interaction triggers 100%
-                        if rcd and rcd.phys then
-                            rcd.phys.v = Vector3.zero
-                            rcd.phys.throttle = 0
-                            rcd.phys.brake = 1
-                            rcd.phys.airMode = false
-                            rcd.phys.anyContact = true
-                        end
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
+                        if dist > arrivalThreshold then
+                            -- Drive smoothly along road lanes towards destination
+                            executeMoveStep(destPos, destType, Config.QuestDriveSpeed)
+                        else
+                            -- Arrived at NPC / destination: Stop car and interact
+                            stopAutoDrive()
 
-                            -- Stop native AutoDrive if running
-                            pcall(function()
-                                local RaycityUi = ReplicatedStorage:FindFirstChild("RaycityUi")
-                                if RaycityUi and RaycityUi:FindFirstChild("AutoDrive") then
-                                    require(RaycityUi.AutoDrive).stop()
-                                end
-                            end)
+                            -- Solid brake on the road so interaction triggers 100%
+                            if rcd and rcd.phys then
+                                rcd.phys.v = Vector3.zero
+                                rcd.phys.throttle = 0
+                                rcd.phys.brake = 1
+                                rcd.phys.airMode = false
+                                rcd.phys.anyContact = true
+                            end
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
 
                             if destType == "skill_return_npc" or destType == "favorite_npc_target" then
                                 -- Arrived at NPC to complete quest and claim reward
@@ -1733,10 +1893,8 @@ task.spawn(function()
                                 local targetNpcId = activeQ and (activeQ.completedExceptNpcId or activeQ.rewardNpc or activeQ.npcId) or 2000
                                 local qId = activeQ and activeQ.questId or 990203
 
-                                -- 1. Free up inventory slots so the 10-20 reward items never fail to claim
                                 ensureInventorySpace(18)
 
-                                -- 2. Submit reward claim to server
                                 local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                                 local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
                                 if sReq then
@@ -1769,21 +1927,20 @@ task.spawn(function()
                                 if sReq then
                                     pcall(function()
                                         sReq:InvokeServer({ op = "talk", npcId = "mission:" .. tostring(targetId), carPos = root.Position })
+                                        sReq:InvokeServer({ op = "talk", npcId = targetId, carPos = root.Position })
                                     end)
                                 end
                                 if qReq then
                                     pcall(function()
                                         qReq:InvokeServer({ op = "talk", npcId = "mission:" .. tostring(targetId), carPos = root.Position })
+                                        qReq:InvokeServer({ op = "talk", npcId = targetId, carPos = root.Position })
                                     end)
                                 end
                                 pressReturnKey()
                                 task.wait(0.25)
 
                             else
-                                -- Standard checkpoint / delivery arrival
                                 questFarmState = "DELIVERING"
-
-                                -- Trigger Touch on destination marker
                                 if destObj and destObj:IsA("BasePart") and firetouchinterest then
                                     pcall(function()
                                         firetouchinterest(root, destObj, 0)
@@ -1791,8 +1948,6 @@ task.spawn(function()
                                         firetouchinterest(root, destObj, 1)
                                     end)
                                 end
-
-                                -- Trigger Trunk / Delivery completion
                                 pcall(function()
                                     local rep = game:GetService("ReplicatedStorage")
                                     local qDeliver = require(rep.RBRCQuest.QuestDeliver)
@@ -1801,28 +1956,12 @@ task.spawn(function()
                                         if qDeliver.trunk then qDeliver.trunk(true) end
                                     end
                                 end)
-
-                                -- Submit delivery via server remotes
                                 pcall(function()
                                     local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
-                                    if qRemotes then
-                                        if qRemotes:FindFirstChild("QuestEventUp") then
-                                            qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
-                                        end
+                                    if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
+                                        qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
                                     end
                                 end)
-
-                                -- Close result / drops dialogs if open
-                                pcall(function()
-                                    local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
-                                    if qUi then
-                                        if qUi.hideResult then qUi.hideResult() end
-                                        if qUi.closeDrops then qUi.closeDrops() end
-                                        if qUi._dialogEnter then qUi._dialogEnter() end
-                                    end
-                                end)
-
-                                -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
                                 pressReturnKey()
                                 task.wait(0.25)
                             end
@@ -1992,7 +2131,10 @@ task.spawn(function()
                                 root.AssemblyLinearVelocity = Vector3.zero
                                 root.AssemblyAngularVelocity = Vector3.zero
 
-                                if targetNpc.Parent then
+                                local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                                local hasPrompt = (pg and pg:FindFirstChild("RBRCNpcTalkPrompt") and pg.RBRCNpcTalkPrompt.Enabled)
+                                    or (pg and pg:FindFirstChild("RaycityQuestUi") and pg.RaycityQuestUi.Enabled)
+                                if not hasPrompt and targetNpc.Parent then
                                     npcVisitCooldown[targetNpc.Parent.Name] = os.clock()
                                 end
 
