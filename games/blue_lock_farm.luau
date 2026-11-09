@@ -906,6 +906,8 @@ local function doCompleteObby(targetCourse)
         { name = "HardObby", label = "Hard Obby", part = victoryPartsFolder:FindFirstChild("HardObby") }
     }
 
+    if isTournamentActive and isTournamentActive() then return 0 end
+
     local origCf = hrp.CFrame
     local claimedCount = 0
 
@@ -1003,7 +1005,7 @@ local autoRerollGrades = false
 local selectedRerollUnits = { "All Units" }
 local targetGrades = { "S", "SS", "X", "EX", "UR" }
 local rerollCurrencyMode = "Auto (Tokens then Cash)"
-local autoTeleportToGrading = true
+local autoTeleportToGrading = false
 local autoUnequipForReroll = true
 
 -- Ball Skin Automation & Market
@@ -1151,6 +1153,35 @@ local function clickGuiObject(btn)
     end)
 end
 
+-- Helper: Tournament match & automation state queries
+local isStartingTournament = false
+
+local function isTournamentInMatch()
+    if TournamentGuiClient and TournamentGuiClient.IsInMatch and TournamentGuiClient.IsInMatch() then
+        return true
+    end
+    local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+    if not gui then return false end
+
+    -- Active NextActionFrame prompt or minigame frame
+    if (gui:FindFirstChild("NextActionFrame") and gui.NextActionFrame.Visible)
+        or (gui:FindFirstChild("RotationMinigame") and gui.RotationMinigame.Visible) then
+        return true
+    end
+
+    -- ForfeitButton is positioned on-screen when match is active (Y.Scale < 1.0)
+    local fb = gui:FindFirstChild("ForfeitButton")
+    if fb and fb.Visible and fb.Position.Y.Scale < 1.0 then
+        return true
+    end
+
+    return false
+end
+
+local function isTournamentActive()
+    return autoTournament or isStartingTournament or isTournamentInMatch()
+end
+
 -- Hook TournamentMinigameClient & TournamentService for Guaranteed 100% "Perfect" Grade & Match Start
 local function hookTournamentMinigame()
     -- 1. Hook TournamentMinigameClient.Play for 100% Perfect Kicks
@@ -1202,7 +1233,7 @@ local function hookTournamentMinigame()
         end
     end)
 
-    -- 3. Hook ConfirmGuiClient.Confirm to automatically bypass "Your team is much weaker" confirmation prompt
+    -- 3. Hook ConfirmGuiClient.Confirm to automatically bypass any warning prompt
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
         local cgc = ConfirmGuiClient or require(rep.Client.Core.Gui.ConfirmGuiClient)
@@ -1210,11 +1241,16 @@ local function hookTournamentMinigame()
             cgc.__SongHubHooked = true
             local rawConfirm = cgc.Confirm
             cgc.Confirm = function(cfg)
-                if autoTournament and cfg and cfg.Options and cfg.Options.Continue then
-                    local txt = tostring(cfg.Text or "")
-                    if string.find(txt:lower(), "weaker") or string.find(txt:lower(), "lose") or string.find(txt:lower(), "certainly") then
+                if (autoTournament or isStartingTournament or isTournamentInMatch()) and cfg and cfg.Options then
+                    if cfg.Options.Continue then
                         task.spawn(cfg.Options.Continue)
                         return
+                    elseif cfg.Options.Yes then
+                        local txt = tostring(cfg.Text or "")
+                        if string.find(txt:lower(), "weaker") or string.find(txt:lower(), "lose") or string.find(txt:lower(), "certainly") or string.find(txt:lower(), "play") then
+                            task.spawn(cfg.Options.Yes)
+                            return
+                        end
                     end
                 end
                 return rawConfirm(cfg)
@@ -1228,10 +1264,9 @@ end
 pcall(hookTournamentMinigame)
 
 -- Helper: Initiate Tournament Match natively through UI and ProximityPrompt
-local isStartingTournament = false
 local function doStartTournamentMatch()
     if isStartingTournament then return false end
-    if TournamentGuiClient and TournamentGuiClient.IsInMatch() then return true end
+    if isTournamentInMatch() then return true end
 
     isStartingTournament = true
     local started = false
@@ -1239,22 +1274,19 @@ local function doStartTournamentMatch()
     pcall(function()
         hookTournamentMinigame()
 
-        -- 1. Teleport closer to field if too far
-        pcall(function()
-            local hrp = getRoot()
-            local fieldObj = getTournamentField()
-            if fieldObj and hrp then
-                local fieldPos = fieldObj.Base.Position
-                if (hrp.Position - fieldPos).Magnitude > 45 then
-                    hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
-                    task.wait(0.3)
-                end
-            end
-        end)
+        local hrp = getRoot()
+        local fieldObj = getTournamentField()
+        local fieldPos = (fieldObj and fieldObj.Base and fieldObj.Base.Position) or Vector3.new(-1795, 3.425, 171.5)
+
+        -- 1. Ensure character stays positioned on the tournament stadium field
+        if hrp and (hrp.Position - fieldPos).Magnitude > 20 then
+            hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
+            if hrp.AssemblyLinearVelocity then hrp.AssemblyLinearVelocity = Vector3.zero end
+            task.wait(0.25)
+        end
 
         -- 2. Try native ProximityPrompt interaction first
         pcall(function()
-            local fieldObj = getTournamentField()
             local base = fieldObj and fieldObj.Base
             local att = base and base:FindFirstChild("ProximityAttachment")
             local prompt = att and att:FindFirstChildOfClass("ProximityPrompt")
@@ -1271,7 +1303,7 @@ local function doStartTournamentMatch()
             local fObj = getTournamentField()
             if fObj and TournamentGuiClient then
                 TournamentGuiClient.Open(fObj)
-                task.wait(0.35)
+                task.wait(0.3)
             end
         end
 
@@ -1293,13 +1325,13 @@ local function doStartTournamentMatch()
         -- 4. Equip Best Units ONCE if enabled
         if tournamentAutoEquipBest and equipBest and equipBest.Visible then
             clickGuiObject(equipBest)
-            task.wait(0.35)
+            task.wait(0.3)
         end
 
         -- 5. Click StartButton ONCE
         if startBtn and startBtn.Visible then
             clickGuiObject(startBtn)
-            task.wait(0.4)
+            task.wait(0.35)
         end
 
         -- 6. Dismiss any lingering ConfirmGui prompt if it appeared (fallback if hook didn't catch it)
@@ -1319,7 +1351,7 @@ local function doStartTournamentMatch()
                             end
                         end
                     end)
-                    task.wait(0.3)
+                    task.wait(0.2)
                     break
                 end
             end
@@ -1328,10 +1360,7 @@ local function doStartTournamentMatch()
         end
 
         -- Check if match started
-        local fb = gui and gui:FindFirstChild("ForfeitButton")
-        if (TournamentGuiClient and TournamentGuiClient.IsInMatch())
-            or (gui and gui:FindFirstChild("NextActionFrame") and gui.NextActionFrame.Visible)
-            or (fb and fb.Visible and fb.Position.Y.Scale < 1.0) then
+        if isTournamentInMatch() then
             started = true
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
@@ -2293,7 +2322,7 @@ UIElements.rerollCurrency = TabAutomation:Dropdown({
 UIElements.autoTeleportToGrading = TabAutomation:Toggle({
     Title = "Auto Teleport to Grading Station",
     Desc = "Teleports to the grading station if you do not have Bluetooth enabled",
-    Value = true,
+    Value = false,
     Callback = function(val)
         autoTeleportToGrading = val
     end
@@ -3956,6 +3985,10 @@ local lastPolisherWarn = 0
 task.spawn(function()
     while isAlive() do
         if autoDepositPolisher or autoCollectPolisher then
+            if isTournamentActive and isTournamentActive() then
+                task.wait(0.5)
+                continue
+            end
             pcall(function()
                 local isUnlocked = false
                 if PolisherService then
@@ -4521,7 +4554,7 @@ task.spawn(function()
                             local gradingPos = gradingPart and (gradingPart.Position + Vector3.new(0, 3, 0)) or Vector3.new(-1767.87, 14, 27.88)
 
                             if not hasBluetooth and not canReach then
-                                if autoTeleportToGrading and hrp then
+                                if not (isTournamentActive and isTournamentActive()) and autoTeleportToGrading and hrp then
                                     if not savedPlotPosBeforeGrading then
                                         savedPlotPosBeforeGrading = hrp.CFrame
                                     end
@@ -5089,7 +5122,7 @@ end)
 do
 -- Function: Instantly snatch all active Variant Tokens matching multi-select filter
 local function snatchActiveVariantTokens()
-    if not autoSnatchVariantTokens or not isAlive() then return end
+    if not autoSnatchVariantTokens or not isAlive() or (isTournamentActive and isTournamentActive()) then return end
     local sys = workspace:FindFirstChild("Systems")
     local spawns = sys and sys:FindFirstChild("VariantTokenSpawns")
     if spawns and Remotes:FindFirstChild("CollectVariantTokenSpawn") then
@@ -5134,7 +5167,7 @@ end
 
 -- 10. Item Rain Snatch Engine
 local function sweepItemRainDrops()
-    if not autoCollectItemRain or not isAlive() then return end
+    if not autoCollectItemRain or not isAlive() or (isTournamentActive and isTournamentActive()) then return end
     pcall(function()
         local hrp = getRoot()
         if not hrp then return end
@@ -5173,34 +5206,23 @@ task.spawn(function()
 end)
 
 -- Helper: Handle in-match prompts, decisions, and rotation minigame
-local function isTournamentInMatch()
-    if TournamentGuiClient and TournamentGuiClient.IsInMatch() then
-        return true
-    end
-    local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
-    if not gui then return false end
-
-    -- Active NextActionFrame prompt or minigame frame
-    if (gui:FindFirstChild("NextActionFrame") and gui.NextActionFrame.Visible)
-        or (gui:FindFirstChild("RotationMinigame") and gui.RotationMinigame.Visible) then
-        return true
-    end
-
-    -- ForfeitButton is positioned on-screen when match is active (Y.Scale < 1.0)
-    local fb = gui:FindFirstChild("ForfeitButton")
-    if fb and fb.Visible and fb.Position.Y.Scale < 1.0 then
-        return true
-    end
-
-    return false
-end
-
 local function handleTournamentMatch()
     local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
     if not gui then return end
 
     -- Hook minigame for 100% Perfect kicks
     hookTournamentMinigame()
+
+    -- Ensure character stays stationed on the tournament stadium pitch
+    pcall(function()
+        local hrp = getRoot()
+        local fieldObj = getTournamentField()
+        local fieldPos = (fieldObj and fieldObj.Base and fieldObj.Base.Position) or Vector3.new(-1795, 3.425, 171.5)
+        if hrp and (hrp.Position - fieldPos).Magnitude > 25 then
+            hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
+            if hrp.AssemblyLinearVelocity then hrp.AssemblyLinearVelocity = Vector3.zero end
+        end
+    end)
 
     -- 1. Solve RotationMinigame with 100% Perfect precision (Delta + PC)
     pcall(function()
@@ -5371,7 +5393,7 @@ end)
 -- 12. Map Tokens Loop (GradeToken, TraitToken, Potions)
 task.spawn(function()
     while isAlive() do
-        if autoCollectMapTokens then
+        if autoCollectMapTokens and not (isTournamentActive and isTournamentActive()) then
             pcall(function()
                 local hrp = getRoot()
                 if not hrp then return end
