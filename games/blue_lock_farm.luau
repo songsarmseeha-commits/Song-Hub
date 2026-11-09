@@ -292,6 +292,9 @@ pcall(function() TournamentMinigameClient = require(ReplicatedStorage.Client.Cor
 TournamentMatchClient = nil
 pcall(function() TournamentMatchClient = require(ReplicatedStorage.Client.Core.Classes.TournamentMatchClient) end)
 
+ConfirmGuiClient = nil
+pcall(function() ConfirmGuiClient = require(ReplicatedStorage.Client.Core.Gui.ConfirmGuiClient) end)
+
 CurrencyService = nil
 pcall(function() CurrencyService = require(ReplicatedStorage.Shared.Services.CurrencyService) end)
 
@@ -1112,10 +1115,10 @@ end
 
 -- Hook TournamentMinigameClient & TournamentService for Guaranteed 100% "Perfect" Grade & Match Start
 local function hookTournamentMinigame()
-    -- Hook TournamentMinigameClient.Play
+    -- 1. Hook TournamentMinigameClient.Play for 100% Perfect Kicks
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
-        local tmg = require(rep.Client.Core.Gui.TournamentMinigameClient)
+        local tmg = TournamentMinigameClient or require(rep.Client.Core.Gui.TournamentMinigameClient)
         if tmg and not tmg.__SongHubHooked then
             tmg.__SongHubHooked = true
             local rawPlay = tmg.Play
@@ -1158,10 +1161,10 @@ local function hookTournamentMinigame()
         end
     end)
 
-    -- Hook TournamentService.IsTooWeak to allow playing even against ultra-strong teams
+    -- 2. Hook TournamentService.IsTooWeak to allow playing even against ultra-strong teams
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
-        local ts = require(rep.Shared.Services.TournamentService)
+        local ts = TournamentService or require(rep.Shared.Services.TournamentService)
         if ts and not ts.__SongHubHooked then
             ts.__SongHubHooked = true
             local rawIsTooWeak = ts.IsTooWeak
@@ -1172,6 +1175,33 @@ local function hookTournamentMinigame()
                 replaceclosure(rawIsTooWeak, bypassWeak)
             end
             ts.IsTooWeak = bypassWeak
+        end
+    end)
+
+    -- 3. Hook ConfirmGuiClient.Confirm to automatically bypass "Your team is much weaker" confirmation prompt
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local cgc = ConfirmGuiClient or require(rep.Client.Core.Gui.ConfirmGuiClient)
+        if cgc and not cgc.__SongHubHooked then
+            cgc.__SongHubHooked = true
+            local rawConfirm = cgc.Confirm
+            local autoConfirmPrompt = function(cfg)
+                if autoTournament and cfg and cfg.Options and cfg.Options.Continue then
+                    local txt = tostring(cfg.Text or "")
+                    if string.find(txt:lower(), "weaker") or string.find(txt:lower(), "lose") or string.find(txt:lower(), "certainly") then
+                        task.spawn(cfg.Options.Continue)
+                        return
+                    end
+                end
+                return rawConfirm(cfg)
+            end
+            if typeof(hookfunction) == "function" and typeof(rawConfirm) == "function" then
+                hookfunction(rawConfirm, autoConfirmPrompt)
+            elseif typeof(replaceclosure) == "function" and typeof(rawConfirm) == "function" then
+                replaceclosure(rawConfirm, autoConfirmPrompt)
+            end
+            cgc.Confirm = autoConfirmPrompt
+            print("[Song Hub] 🏆 Successfully hooked ConfirmGuiClient for Instant Tournament Auto-Continue!")
         end
     end)
 end
@@ -1187,10 +1217,21 @@ local function doStartTournamentMatch()
 
     pcall(function()
         hookTournamentMinigame()
-        local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
-        local main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
 
-        -- 1. Try native ProximityPrompt interaction first
+        -- 1. Teleport closer to field if too far
+        pcall(function()
+            local hrp = getRoot()
+            local fieldObj = getTournamentField()
+            if fieldObj and hrp then
+                local fieldPos = fieldObj.Base.Position
+                if (hrp.Position - fieldPos).Magnitude > 45 then
+                    hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
+                    task.wait(0.3)
+                end
+            end
+        end)
+
+        -- 2. Try native ProximityPrompt interaction first
         pcall(function()
             local fieldObj = getTournamentField()
             local base = fieldObj and fieldObj.Base
@@ -1198,55 +1239,74 @@ local function doStartTournamentMatch()
             local prompt = att and att:FindFirstChildOfClass("ProximityPrompt")
             if prompt and typeof(fireproximityprompt) == "function" then
                 fireproximityprompt(prompt)
-                task.wait(0.35)
+                task.wait(0.25)
             end
         end)
 
-        -- 2. If selection frame is still not open, open it via client module
-        gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
-        main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
+        -- 3. If selection frame is still not open, open it via client module
+        local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+        local main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
         if not main or not main.Visible then
             local fObj = getTournamentField()
             if fObj and TournamentGuiClient then
                 TournamentGuiClient.Open(fObj)
-                task.wait(0.4)
+                task.wait(0.35)
             end
         end
 
+        gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
         main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
+
+        -- Wait up to 1.5s for UnitsSelectionMainFrame if needed
+        local openDeadline = os.clock() + 1.5
+        while (not main or not main.Visible) and os.clock() < openDeadline do
+            task.wait(0.1)
+            gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
+            main = gui and gui:FindFirstChild("UnitsSelectionMainFrame")
+        end
+
         local btnHolder = main and main:FindFirstChild("ButtonHolder")
         local equipBest = btnHolder and btnHolder:FindFirstChild("EquipBestButton")
         local startBtn = btnHolder and btnHolder:FindFirstChild("StartButton")
 
-        -- 3. Equip Best Units if enabled
+        -- 4. Equip Best Units ONCE if enabled
         if tournamentAutoEquipBest and equipBest and equipBest.Visible then
             clickGuiObject(equipBest)
-            task.wait(0.3)
+            task.wait(0.35)
         end
 
-        -- 4. Click StartButton
+        -- 5. Click StartButton ONCE
         if startBtn and startBtn.Visible then
             clickGuiObject(startBtn)
-            task.wait(0.5)
+            task.wait(0.4)
         end
 
-        -- 5. Auto-confirm "ConfirmGui" if warning appeared (e.g. weaker than opponent)
-        pcall(function()
+        -- 6. Dismiss any lingering ConfirmGui prompt if it appeared (fallback if hook didn't catch it)
+        local confirmDeadline = os.clock() + 1.5
+        while os.clock() < confirmDeadline do
             local cg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ConfirmGui")
-            if cg and cg.Enabled then
-                local mf = cg:FindFirstChild("MainFrame")
-                local active = mf and mf:FindFirstChild("Active")
-                if active then
-                    local bf = active:FindFirstChild("ButtonsFrame")
-                    local contBtn = bf and bf:FindFirstChild("ContinueButton")
-                    if contBtn and contBtn.Visible then
-                        clickGuiObject(contBtn)
-                        task.wait(0.4)
-                    end
+            local active = cg and cg:FindFirstChild("MainFrame") and cg.MainFrame:FindFirstChild("Active")
+            if active then
+                local bf = active:FindFirstChild("ButtonsFrame")
+                local contBtn = bf and bf:FindFirstChild("ContinueButton")
+                if contBtn and contBtn.Visible then
+                    clickGuiObject(contBtn)
+                    pcall(function()
+                        if typeof(getconnections) == "function" then
+                            for _, c in ipairs(getconnections(contBtn.MouseButton1Click)) do
+                                c:Fire()
+                            end
+                        end
+                    end)
+                    task.wait(0.3)
+                    break
                 end
             end
-        end)
+            if isTournamentInMatch() then break end
+            task.wait(0.1)
+        end
 
+        -- Check if match started
         local fb = gui and gui:FindFirstChild("ForfeitButton")
         if (TournamentGuiClient and TournamentGuiClient.IsInMatch())
             or (gui and gui:FindFirstChild("NextActionFrame") and gui.NextActionFrame.Visible)
@@ -5194,37 +5254,23 @@ local function handleTournamentMatch()
         end
     end)
 
-    -- 3. In-Lobby / Units Selection: Auto Equip Best & Auto Start Match
+    -- 3. Safety Net: Dismiss any modal warning ("Your team is much weaker" or any prompt)
     pcall(function()
-        local main = gui:FindFirstChild("UnitsSelectionMainFrame")
-        if main and main.Visible then
-            local btnHolder = main:FindFirstChild("ButtonHolder")
-            local equipBest = btnHolder and btnHolder:FindFirstChild("EquipBestButton")
-            local startBtn = btnHolder and btnHolder:FindFirstChild("StartButton")
-
-            if tournamentAutoEquipBest and equipBest and equipBest.Visible then
-                clickGuiObject(equipBest)
-                task.wait(0.25)
-            end
-
-            if startBtn and startBtn.Visible then
-                clickGuiObject(startBtn)
-                task.wait(0.4)
-            end
-
-            -- Confirm dialog
-            local cg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ConfirmGui")
-            if cg and cg.Enabled then
-                local mf = cg:FindFirstChild("MainFrame")
-                local active = mf and mf:FindFirstChild("Active")
-                if active then
-                    local bf = active:FindFirstChild("ButtonsFrame")
-                    local contBtn = bf and bf:FindFirstChild("ContinueButton")
-                    if contBtn and contBtn.Visible then
-                        clickGuiObject(contBtn)
-                        task.wait(0.3)
+        local cg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ConfirmGui")
+        local active = cg and cg:FindFirstChild("MainFrame") and cg.MainFrame:FindFirstChild("Active")
+        if active then
+            local bf = active:FindFirstChild("ButtonsFrame")
+            local contBtn = bf and bf:FindFirstChild("ContinueButton")
+            if contBtn and contBtn.Visible then
+                clickGuiObject(contBtn)
+                pcall(function()
+                    if typeof(getconnections) == "function" then
+                        for _, c in ipairs(getconnections(contBtn.MouseButton1Click)) do
+                            c:Fire()
+                        end
                     end
-                end
+                end)
+                task.wait(0.2)
             end
         end
     end)
@@ -5254,42 +5300,45 @@ task.spawn(function()
     while isAlive() do
         if autoTournament then
             pcall(function()
+                -- Safety Net: Auto-confirm any lingering modal in ConfirmGui immediately
+                pcall(function()
+                    local cg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ConfirmGui")
+                    local active = cg and cg:FindFirstChild("MainFrame") and cg.MainFrame:FindFirstChild("Active")
+                    if active then
+                        local bf = active:FindFirstChild("ButtonsFrame")
+                        local contBtn = bf and bf:FindFirstChild("ContinueButton")
+                        if contBtn and contBtn.Visible then
+                            clickGuiObject(contBtn)
+                            pcall(function()
+                                if typeof(getconnections) == "function" then
+                                    for _, c in ipairs(getconnections(contBtn.MouseButton1Click)) do
+                                        c:Fire()
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end)
+
                 local inMatch = isTournamentInMatch()
 
                 if inMatch then
                     handleTournamentMatch()
                 else
-                    local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("TournamentSelectionGui")
-                    -- Also handle lobby start menu if visible
-                    if gui and gui:FindFirstChild("UnitsSelectionMainFrame") and gui.UnitsSelectionMainFrame.Visible then
-                        handleTournamentMatch()
-                    else
-                        -- Check if we should join
-                        local seed = (TournamentService and TournamentService.GetSeed and TournamentService.GetSeed()) or 0
-                        local hasWon = false
-                        if TournamentService and TournamentService.HasWonSeed then
-                            local ok, won = pcall(TournamentService.HasWonSeed, LocalPlayer, seed)
-                            if ok and won then hasWon = true end
-                        end
+                    -- Check if we should join/start tournament match
+                    local seed = (TournamentService and TournamentService.GetSeed and TournamentService.GetSeed()) or 0
+                    local hasWon = false
+                    if TournamentService and TournamentService.HasWonSeed then
+                        local ok, won = pcall(TournamentService.HasWonSeed, LocalPlayer, seed)
+                        if ok and won then hasWon = true end
+                    end
 
-                        local shouldPlay = (not hasWon) or tournamentAutoReMatch
-                        local now = os.clock()
+                    local shouldPlay = (not hasWon) or tournamentAutoReMatch
+                    local now = os.clock()
 
-                        if shouldPlay and (now - lastAttemptTick) > 5 then
-                            lastAttemptTick = now
-                            -- Teleport to tournament pitch if too far
-                            local hrp = getRoot()
-                            local fieldObj = getTournamentField()
-                            if fieldObj and hrp then
-                                local fieldPos = fieldObj.Base.Position
-                                if (hrp.Position - fieldPos).Magnitude > 45 then
-                                    hrp.CFrame = CFrame.new(fieldPos + Vector3.new(0, 3, 0))
-                                    task.wait(0.4)
-                                end
-                            end
-
-                            doStartTournamentMatch()
-                        end
+                    if shouldPlay and not isStartingTournament and (now - lastAttemptTick) > 3.0 then
+                        lastAttemptTick = now
+                        doStartTournamentMatch()
                     end
                 end
             end)
