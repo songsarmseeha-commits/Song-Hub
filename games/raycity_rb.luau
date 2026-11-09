@@ -910,13 +910,37 @@ local function interactWithNearbyNpc(optionalTarget)
         end
     end)
 
-    -- 2. Try native client talk handler first to preserve full game state & UI sync
+    -- 2. Try native client talk handler and dismiss any open dialogue / offer prompts
     pcall(function()
         local renv = getrenv and getrenv() or { shared = shared }
         local rq = renv.shared and renv.shared.RBRCQuest
         if rq and rq.talk and rbrcNpcId then
             rq.talk(rbrcNpcId)
         end
+
+        -- If native UI already has an offer dialog open, confirm and accept immediately
+        local qui = require(ReplicatedStorage.RBRCQuest.QuestUI)
+        if qui and qui._offerAnswer then
+            qui._offerAnswer(true)
+        end
+
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local rcUi = pGui and pGui:FindFirstChild("RaycityQuestUi")
+        if rcUi then
+            local offer = rcUi:FindFirstChild("MissionOffer", true)
+            local yesBtn = offer and offer:FindFirstChild("Yes", true)
+            if yesBtn and yesBtn.Visible and firesignal then
+                local conns = getconnections and getconnections(yesBtn.Activated)
+                if conns and #conns > 0 then firesignal(yesBtn.Activated) end
+            end
+            local dlg = rcUi:FindFirstChild("NpcDialog", true)
+            local nextBtn = dlg and dlg:FindFirstChild("Next", true)
+            if nextBtn and nextBtn.Visible and firesignal then
+                local conns = getconnections and getconnections(nextBtn.Activated)
+                if conns and #conns > 0 then firesignal(nextBtn.Activated) end
+            end
+        end
+
         local ntpReq = require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt)
         local u = debug.getupvalues(ntpReq.show)
         if u and type(u[3]) == "function" then
@@ -950,12 +974,22 @@ local function interactWithNearbyNpc(optionalTarget)
             end)
             if accRes and accRes.ok then
                 if accRes.needsBoarding then
-                    task.wait(0.18)
-                    pcall(function()
-                        qReq:InvokeServer({ op = "boarded", questId = offer.questId })
-                    end)
+                    -- Server enforces passenger boarding delay (approx 1.5 - 2.5s). Retry until { ok = true }
+                    local bStart = os.clock()
+                    local isBoarded = false
+                    while (os.clock() - bStart) < 3.8 do
+                        task.wait(0.4)
+                        local bRes = nil
+                        pcall(function()
+                            bRes = qReq:InvokeServer({ op = "boarded", questId = offer.questId })
+                        end)
+                        if bRes and bRes.ok then
+                            isBoarded = true
+                            break
+                        end
+                    end
                 end
-                -- Close dialogue and dismiss prompt
+                -- Close dialogue and dismiss prompt cleanly
                 pcall(function()
                     require(ReplicatedStorage.RBRCQuest.QuestUI)._offerAnswer(true)
                 end)
@@ -967,7 +1001,7 @@ local function interactWithNearbyNpc(optionalTarget)
         end
     end
 
-    -- If NPC has no active offers or rejects, set cooldown so we do not get stuck
+    -- If NPC has no active offers or rejects, set temporary cooldown so we do not get stuck
     if talkRes and (not talkRes.ok or not talkRes.offers or #talkRes.offers == 0) then
         npcVisitCooldown[targetNpc.Name] = os.clock()
         pcall(function()
@@ -1280,20 +1314,42 @@ end
 
 local function ensureInventorySpace(minFree)
     if not Config.AutoCleanInventory then return end
-    minFree = minFree or 18
+    minFree = minFree or 10
     pcall(function()
         local rep = game:GetService("ReplicatedStorage")
         local pcMod = rep:FindFirstChild("RaycityProfile") and rep.RaycityProfile:FindFirstChild("ProfileClient")
         local scMod = rep:FindFirstChild("RaycityShop") and rep.RaycityShop:FindFirstChild("ShopClient")
-        if not pcMod or not scMod then return end
+        local iuReq = rep:FindFirstChild("RaycityItemUse") and rep.RaycityItemUse:FindFirstChild("Remotes") and rep.RaycityItemUse.Remotes:FindFirstChild("ItemUseRequest")
+        if not pcMod then return end
+
         local pc = require(pcMod)
-        local sc = require(scMod)
         local data = pc.get and pc.get()
+        if not data or not data.inventory then
+            data = pc.request and pc.request("get")
+            data = data and (data.profile or data)
+        end
         if not data or not data.inventory then return end
+
         local count = 0
         for _ in pairs(data.inventory) do count = count + 1 end
         local free = (data.invSize or 30) - count
-        if free < minFree then
+
+        -- 1. Use / consume usable car keys, part boxes, charms, or tickets to free inventory slots permanently
+        if free < minFree and iuReq then
+            for cell, item in pairs(data.inventory) do
+                pcall(function()
+                    local uRes = iuReq:InvokeServer("use", { cell = tonumber(cell), id = item.id })
+                    if uRes and uRes.ok then
+                        free = free + 1
+                    end
+                end)
+                if free >= minFree then break end
+            end
+        end
+
+        -- 2. Sell unbound loot items via ShopClient if still under threshold
+        if free < minFree and scMod then
+            local sc = require(scMod)
             for cell, item in pairs(data.inventory) do
                 if not item.bound then
                     local res = sc.request("sell", {
@@ -1546,6 +1602,10 @@ local function getActiveMissionTarget()
     local liveM = getLiveMissionState()
     if liveM and type(liveM.objectives) == "table" and (liveM.state == "running" or liveM.state == "boarding") then
         missionType = liveM.state
+        if liveM.state == "boarding" then
+            -- Waiting for passenger to finish boarding animation: keep car stationary at NPC until boarded!
+            return nil, nil, "boarding", false
+        end
         local targetObjs = {}
         for idx, obj in ipairs(liveM.objectives) do
             local v = nil
@@ -1998,6 +2058,7 @@ local function executeMoveStep(targetPos, destType, speedKmh)
     local maxSpeedMps = desiredSpeed / 3.6
 
     pcall(function()
+        ad.canCruise = function() return true end
         if ad.C then
             ad.C.maxSpeed = maxSpeedMps
             if mode == "Hyper Sonic Glide" then
@@ -2217,12 +2278,24 @@ task.spawn(function()
                         -- ==========================================================
                         questFarmState = "DRIVING"
                         local dist = (root.Position - destPos).Magnitude
-                        local arrivalThreshold = 13
+                        local arrivalThreshold = 28
 
-                        if dist > arrivalThreshold then
+                        local promptOpen = false
+                        pcall(function()
+                            local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                            local pr = pGui and pGui:FindFirstChild("RBRCNpcTalkPrompt")
+                            if pr and pr.Enabled then promptOpen = true end
+                        end)
+
+                        if dist > arrivalThreshold and not promptOpen then
                             -- Drive smoothly along road lanes towards destination
                             executeMoveStep(destPos, destType, Config.QuestDriveSpeed)
                         else
+                            -- Arrived in proximity: glide directly into NPC interaction ring
+                            if dist > 8 and not promptOpen then
+                                pcall(driveCarStep, destPos, 40, false)
+                            end
+
                             -- Arrived at NPC / destination: Stop car and interact
                             stopAutoDrive()
 
@@ -2242,9 +2315,9 @@ task.spawn(function()
                                 questFarmState = "CLAIMING"
                                 local activeQ = (typeof(mState) == "table") and mState or nil
                                 local targetNpcId = activeQ and (activeQ.completedExceptNpcId or activeQ.rewardNpc or activeQ.npcId) or 2000
-                                local qId = activeQ and activeQ.questId or 990203
+                                local qId = activeQ and activeQ.questId or 990204
 
-                                ensureInventorySpace(18)
+                                ensureInventorySpace(10)
 
                                 local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                                 local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
@@ -2355,10 +2428,20 @@ task.spawn(function()
                                 local nPos = getNpcWorldPos(bestQ.npcId)
                                 if nPos then
                                     local distToNpc = (root.Position - nPos).Magnitude
-                                    if distToNpc > 13 then
+                                    local promptOpen = false
+                                    pcall(function()
+                                        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                                        local pr = pGui and pGui:FindFirstChild("RBRCNpcTalkPrompt")
+                                        if pr and pr.Enabled then promptOpen = true end
+                                    end)
+
+                                    if distToNpc > 28 and not promptOpen then
                                         executeMoveStep(nPos, "npc", Config.QuestDriveSpeed)
                                         return
                                     else
+                                        if distToNpc > 8 and not promptOpen then
+                                            pcall(driveCarStep, nPos, 40, false)
+                                        end
                                         stopAutoDrive()
                                         if rcd and rcd.phys then
                                             rcd.phys.v = Vector3.zero
@@ -2369,6 +2452,9 @@ task.spawn(function()
                                         end
                                         root.AssemblyLinearVelocity = Vector3.zero
                                         root.AssemblyAngularVelocity = Vector3.zero
+
+                                        ensureInventorySpace(10)
+
                                         local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                                         local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
                                         if sReq then
