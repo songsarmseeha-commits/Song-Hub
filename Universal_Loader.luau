@@ -11,11 +11,7 @@
 -- ==============================================================================
 
 if getgenv then
-    if getgenv()._SongHubLoading and (os.clock() - (getgenv()._SongHubLastLoad or 0)) < 6 then
-        print("[Song Hub] 🛡️ Loader is already loading. Skipping duplicate call.")
-        return
-    end
-    getgenv()._SongHubLoading = true
+    getgenv()._SongHubLoading = false
     getgenv()._SongHubLastLoad = os.clock()
 end
 
