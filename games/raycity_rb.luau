@@ -2414,12 +2414,15 @@ task.spawn(function()
                             for _, q in ipairs(qq.available) do
                                 local reqL = q.reqMinLevel or 1
                                 if pLevel >= reqL then
-                                    if q.questId >= 990201 and q.questId <= 990999 then
-                                        if not bestQ or bestQ.questId > q.questId then
+                                    local nPos = getNpcWorldPos(q.npcId)
+                                    if nPos then
+                                        if q.questId >= 990201 and q.questId <= 990999 then
+                                            if not bestQ or bestQ.questId > q.questId then
+                                                bestQ = q
+                                            end
+                                        elseif not bestQ and (q.questCategory == 1 or q.questId >= 100000) then
                                             bestQ = q
                                         end
-                                    elseif not bestQ and (q.questCategory == 1 or q.questId >= 100000) then
-                                        bestQ = q
                                     end
                                 end
                             end
@@ -2582,8 +2585,8 @@ task.spawn(function()
                                 local parentName = targetNpc.Parent and targetNpc.Parent.Name
                                 if parentName then
                                     _npcArrivalTimes[parentName] = _npcArrivalTimes[parentName] or os.clock()
-                                    -- If car has stayed at this NPC for > 1.8s without quest starting, set cooldown and hide prompt
-                                    if (os.clock() - _npcArrivalTimes[parentName]) > 1.8 then
+                                    -- If car has stayed at this NPC for > 4.5s without quest starting, set cooldown and hide prompt
+                                    if (os.clock() - _npcArrivalTimes[parentName]) > 4.5 then
                                         npcVisitCooldown[parentName] = os.clock()
                                         _npcArrivalTimes[parentName] = nil
                                         pcall(function()
