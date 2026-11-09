@@ -1206,6 +1206,9 @@ local function hookTournamentMinigame()
     end)
 end
 
+-- Initialize tournament hooks immediately
+pcall(hookTournamentMinigame)
+
 -- Helper: Initiate Tournament Match natively through UI and ProximityPrompt
 local isStartingTournament = false
 local function doStartTournamentMatch()
