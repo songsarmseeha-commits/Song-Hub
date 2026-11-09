@@ -1280,6 +1280,19 @@ local function getActiveQuestDestination()
         end
     end
 
+    -- Priority 0: Live Active Taxi/Driving/Delivery Mission Checkpoints (Running right now)
+    local mTarget, mObj, mState = getActiveMissionTarget()
+    if mTarget then
+        if not navPoints and okNav and nav and nav.pointTo then
+            pcall(nav.pointTo, mTarget)
+            local okGl2, gl2 = pcall(nav.getGuideLine)
+            if okGl2 and gl2 and gl2.points and #gl2.points > 0 then
+                navPoints = gl2.points
+            end
+        end
+        return mTarget, nil, navPoints, "checkpoint", mState
+    end
+
     -- Priority 1: Check Skill Quest / Newbie Quest system
     local qqState = getSkillQuestState()
 
