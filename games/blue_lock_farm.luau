@@ -83,6 +83,13 @@
     ========================================================================
 ]]
 
+-- Strict Game Validation: Prevent running in any other game
+local isBlueLock = (game.PlaceId == 132767904294856 or game.GameId == 10700618962 or (workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("PlotModels")))
+if not isBlueLock then
+    warn("[Song Hub] ❌ This script is exclusively for Blue Lock Farm (PlaceId: 132767904294856)! Exiting.")
+    return
+end
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
