@@ -96,7 +96,7 @@ local CITY_WAYPOINTS = {
 -- ==============================================================================
 local Config = {
     -- Autonomous Quest Farming
-    AutoFarmQuests = false,
+    AutoFarmQuests = true,
     QuestDriveMode = "Realistic Road Drive", -- "Realistic Road Drive" | "Instant Warp" | "Hyper Sonic Glide" | "Hybrid Cruise"
     QuestDriveSpeed = 260, -- km/h
     AutoSkipDialogue = true,
@@ -829,13 +829,24 @@ local function pressReturnKey()
             if enterBtn and enterBtn.Visible then fireGuiClick(enterBtn) end
         end
 
+        -- 3. RaycityQuestUi: NpcDialog Next & Result buttons
         local qGui = pg and pg:FindFirstChild("RaycityQuestUi")
         if qGui and qGui.Enabled then
+            local npcDlg = qGui:FindFirstChild("NpcDialog")
+            if npcDlg and npcDlg.Visible then
+                local nextBtn = npcDlg:FindFirstChild("Next")
+                if nextBtn then fireGuiClick(nextBtn) end
+            end
+            local resDlg = qGui:FindFirstChild("Result")
+            if resDlg and resDlg.Visible then
+                local closeBtn = resDlg:FindFirstChild("Close") or resDlg:FindFirstChildWhichIsA("GuiButton", true)
+                if closeBtn then fireGuiClick(closeBtn) end
+            end
             for _, d in ipairs(qGui:GetDescendants()) do
                 if d:IsA("GuiButton") and (d.Visible or (d.Parent and d.Parent:IsA("GuiObject") and d.Parent.Visible)) then
                     local name = d.Name:lower()
                     local text = (d:FindFirstChildWhichIsA("TextLabel") and d:FindFirstChildWhichIsA("TextLabel").Text or (d:IsA("TextButton") and d.Text or "")):lower()
-                    if name == "next" or name:find("ต่อไป") or text:find("ต่อไป") or text:find("enter") or name:find("enter") then
+                    if name == "next" or name:find("ต่อไป") or text:find("ต่อไป") or text:find("enter") or name:find("enter") or text:find("ยืนยัน") then
                         fireGuiClick(d)
                     elseif name == "yes" or name == "accept" or name:find("ตกลง") or text:find("รับ") or text:find("ตกลง") or text:find("accept") then
                         fireGuiClick(d)
@@ -950,19 +961,104 @@ end)
 
 
 -- ==============================================================================
--- 🏁 6. ACTIVE QUEST DESTINATION DETECTOR
+-- 🏁 6. ACTIVE QUEST DESTINATION DETECTOR & NPC RESOLVER
 -- ==============================================================================
+local function getNpcWorldPos(target)
+    if not target then return nil end
+    if typeof(target) == "Vector3" then return target end
+    if typeof(target) == "CFrame" then return target.Position end
+    if typeof(target) == "Instance" then
+        if target:IsA("BasePart") then return target.Position end
+        if target:IsA("Model") then
+            local p = target.PrimaryPart or target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Root") or target:FindFirstChildWhichIsA("BasePart")
+            if p then return p.Position end
+            return target:GetPivot().Position
+        end
+    end
+
+    local strTarget = tostring(target):lower()
+    local cleanName = strTarget:gsub("<[^>]->", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    local numId = tonumber(cleanName:match("(%d+)$"))
+
+    -- 1. Static known key coordinates
+    if cleanName:find("welcome") or cleanName:find("newbie") or numId == 9900 or numId == 939900 then
+        return Vector3.new(-531.45, 42.89, -5564.04)
+    end
+    if cleanName:find("aoi") or cleanName:find("อาโออิ") or numId == 2000 then
+        return Vector3.new(-531.45, 42.89, -5564.04)
+    end
+    if cleanName:find("sarah") or numId == 68 then
+        return Vector3.new(2085.6, 78.5, -5052.3)
+    end
+    if cleanName:find("ken") or numId == 69 then
+        return Vector3.new(2125.1, 78.5, -5067.9)
+    end
+
+    -- 2. QuestDataSkill.npcs table
+    local skillPos = nil
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local qSkill = require(rep.RBRCQuest.QuestDataSkill)
+        if qSkill and qSkill.npcs then
+            if numId and qSkill.npcs[numId] and qSkill.npcs[numId].roblox then
+                local r = qSkill.npcs[numId].roblox
+                skillPos = Vector3.new(r[1], r[2], r[3])
+                return
+            end
+            for id, nData in pairs(qSkill.npcs) do
+                if nData.name and nData.name:lower():find(cleanName, 1, true) and nData.roblox then
+                    local r = nData.roblox
+                    skillPos = Vector3.new(r[1], r[2], r[3])
+                    return
+                end
+            end
+        end
+    end)
+    if skillPos then return skillPos end
+
+    -- 3. Workspace RBRCNpcs model
+    local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
+    if npcsFolder then
+        if numId then
+            for _, n in ipairs(npcsFolder:GetChildren()) do
+                local nId = tostring(n.Name):match("(%d+)$") or tostring(n:GetAttribute("NpcId") or ""):match("(%d+)$") or tostring(n:GetAttribute("MissionId") or ""):match("(%d+)$")
+                if nId == tostring(numId) then
+                    local p = n.PrimaryPart or n:FindFirstChild("HumanoidRootPart") or n:FindFirstChild("Root") or n:FindFirstChildWhichIsA("BasePart")
+                    if p then return p.Position end
+                end
+            end
+        end
+        for _, n in ipairs(npcsFolder:GetChildren()) do
+            local name = n.Name:lower()
+            local thaiName = tostring(n:GetAttribute("NameThai") or ""):lower()
+            local nativeName = tostring(n:GetAttribute("NameNative") or ""):lower()
+            if name:find(cleanName, 1, true) or thaiName:find(cleanName, 1, true) or nativeName:find(cleanName, 1, true) then
+                local p = n.PrimaryPart or n:FindFirstChild("HumanoidRootPart") or n:FindFirstChild("Root") or n:FindFirstChildWhichIsA("BasePart")
+                if p then return p.Position end
+            end
+        end
+    end
+
+    -- 4. QuestData.npc
+    local qDataPos = nil
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local qData = require(rep.RBRCQuest.QuestData)
+        if qData and qData.npc and numId then
+            local d = qData.npc(numId)
+            if d and d.position then qDataPos = d.position end
+        end
+    end)
+    if qDataPos then return qDataPos end
+
+    return nil
+end
+
 local function findQuestTargetNpc(targetName)
     if not targetName or targetName == "" then return nil end
-    local cleanName = targetName:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    local cleanName = targetName:gsub("<[^>]->", ""):gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
     local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
     if not npcsFolder then return nil end
-
-    -- Special Shortcut for Tutorial / Welcome Newbie NPC (Npc_939900)
-    if cleanName:find("welcome") or cleanName:find("newbie") or cleanName:find("greeting") or cleanName:find("solve") then
-        local wNpc = npcsFolder:FindFirstChild("Npc_939900")
-        if wNpc then return wNpc end
-    end
 
     -- Direct numerical ID check
     local directNum = cleanName:match("(%d+)")
@@ -1104,7 +1200,91 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Priority 1: Live Active Taxi/Driving Mission checkpoints from RBRCQuestClient
+    -- Priority 1: Check Skill Quest / Newbie Quest system (RBRCQqState)
+    local qqState = nil
+    pcall(function()
+        if shared.RBRCQqState and shared.RBRCQqState.get then
+            qqState = shared.RBRCQqState.get()
+        elseif getrenv and getrenv().shared and getrenv().shared.RBRCQqState and getrenv().shared.RBRCQqState.get then
+            qqState = getrenv().shared.RBRCQqState.get()
+        end
+    end)
+
+    if qqState and qqState.active and #qqState.active > 0 then
+        local activeQ = qqState.active[1]
+        local unfinishedObj = nil
+        if activeQ.ojt then
+            for _, obj in ipairs(activeQ.ojt) do
+                if not obj.done then
+                    unfinishedObj = obj
+                    break
+                end
+            end
+        end
+
+        -- A. Need to return to NPC to report in / claim reward:
+        if not unfinishedObj or unfinishedObj.kind == "npc" or activeQ.completedExceptNpcId or activeQ.status == "reward" or activeQ.completed then
+            local targetId = activeQ.completedExceptNpcId or activeQ.rewardNpc or (unfinishedObj and unfinishedObj.target) or activeQ.npcId or 9900
+            local pos = getNpcWorldPos(targetId)
+            if pos then
+                if not navPoints and okNav and nav and nav.pointTo then
+                    pcall(nav.pointTo, pos)
+                    local okGl, gl = pcall(nav.getGuideLine)
+                    if okGl and gl and gl.points and #gl.points > 0 then navPoints = gl.points end
+                end
+                return pos, nil, navPoints, "skill_return_npc", activeQ
+            end
+        -- B. Need to do a mission NPC (e.g. Sarah 68):
+        elseif unfinishedObj and unfinishedObj.kind == "missionNpc" then
+            local targetId = unfinishedObj.target
+            local pos = getNpcWorldPos(targetId) or getNpcWorldPos("mission:" .. tostring(targetId))
+            if pos then
+                if not navPoints and okNav and nav and nav.pointTo then
+                    pcall(nav.pointTo, pos)
+                    local okGl, gl = pcall(nav.getGuideLine)
+                    if okGl and gl and gl.points and #gl.points > 0 then navPoints = gl.points end
+                end
+                return pos, nil, navPoints, "skill_mission_npc", { quest = activeQ, targetId = targetId }
+            end
+        end
+    end
+
+    -- Priority 2: Check Favorite Quest UI (RBRCQuestFavorite widget on right side) with HTML tag stripping
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    local favGui = pg and pg:FindFirstChild("RBRCQuestFavorite")
+    if favGui and favGui.Enabled then
+        for _, d in ipairs(favGui:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible and d.Text ~= "" and d.Text ~= "Favorite Quest" then
+                local rawText = d.Text:gsub("<[^>]->", "") -- Strip HTML/font tags
+                for _, line in ipairs(string.split(rawText, "\n")) do
+                    local cleanLine = line:gsub("^%s+", ""):gsub("%s+$", "")
+                    if cleanLine ~= "" then
+                        local extracted = cleanLine:match("[Gg]o back to%s*(.+)")
+                            or cleanLine:match("[Gg]o to%s*(.+)")
+                            or cleanLine:match("[Tt]alk to%s*(.+)")
+                            or cleanLine:match("กลับไปหา%s*(.+)")
+                            or cleanLine:match("ไปหา%s*(.+)")
+                            or cleanLine:match("ไปพบ%s*(.+)")
+                            or cleanLine:match("คุยกับ%s*(.+)")
+                        if extracted then
+                            local cleanTarget = extracted:gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                            local pos = getNpcWorldPos(cleanTarget)
+                            if pos then
+                                if not navPoints and okNav and nav and nav.pointTo then
+                                    pcall(nav.pointTo, pos)
+                                    local okGl, gl = pcall(nav.getGuideLine)
+                                    if okGl and gl and gl.points and #gl.points > 0 then navPoints = gl.points end
+                                end
+                                return pos, nil, navPoints, "favorite_npc_target", cleanTarget
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Priority 3: Live Active Taxi/Driving Mission checkpoints from RBRCQuestClient
     local mTarget, mObj, mState = getActiveMissionTarget()
     if mTarget then
         if not navPoints and okNav and nav and nav.pointTo then
@@ -1117,7 +1297,7 @@ local function getActiveQuestDestination()
         return mTarget, nil, navPoints, "checkpoint", mState
     end
 
-    -- Priority 2: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
+    -- Priority 4: Navigation GuideLine (Ground Truth from RaycityUi.Navigation)
     if okNav and nav then
         if nav.getGuideLine then
             local okGl, gl = pcall(nav.getGuideLine)
@@ -1133,7 +1313,7 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Priority 3: Road Guide Quads from workspace.RaycityNavigation
+    -- Priority 5: Road Guide Quads from workspace.RaycityNavigation
     local rNav = workspace:FindFirstChild("RaycityNavigation")
     if rNav then
         local guideBucket = rNav:FindFirstChild("GuideBucket")
@@ -1165,27 +1345,15 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Priority 4: Parse active quest from UI (English + Thai bilingual parser)
-    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    -- Priority 6: Parse candidate texts from other HUD elements
     local candidateTexts = {}
     if pg then
-        -- Check RBRCQuestFavorite first (Primary Quest Tracker widget on right of screen)
-        local qFav = pg:FindFirstChild("RBRCQuestFavorite")
-        if qFav and qFav.Enabled then
-            for _, d in ipairs(qFav:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible and d.Text ~= "" and d.Text ~= "Favorite Quest" then
-                    table.insert(candidateTexts, d.Text)
-                end
-            end
-        end
-
-        -- Check RaycityQuestUi, RBRCGameGuide, RaycityHud
         for _, gName in ipairs({ "RaycityQuestUi", "RBRCGameGuide", "RaycityHud" }) do
             local g = pg:FindFirstChild(gName)
             if g and g.Enabled then
                 for _, d in ipairs(g:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
-                        local t = d.Text
+                        local t = d.Text:gsub("<[^>]->", "")
                         if t:lower():find("go back") or t:lower():find("talk to") or t:lower():find("meet") or t:lower():find("deliver")
                             or t:find("กลับไปหา") or t:find("ไปพบ") or t:find("คุยกับ") or t:find("ส่ง") or t:find("ภารกิจ") then
                             table.insert(candidateTexts, t)
@@ -1196,63 +1364,28 @@ local function getActiveQuestDestination()
         end
     end
 
-    -- Extract target NPC model from candidate texts
     local targetNpcModel = nil
     for _, txt in ipairs(candidateTexts) do
         for _, rawLine in ipairs(string.split(txt, "\n")) do
             local line = rawLine:gsub("^%s+", ""):gsub("%s+$", "")
             if line ~= "" then
-                -- 1. Directional Prefix matching (English + Thai)
                 local extracted = line:match("[Gg]o back to%s*(.+)")
                     or line:match("[Gg]o to%s*(.+)")
                     or line:match("[Tt]alk to%s*(.+)")
-                    or line:match("[Rr]eturn to%s*(.+)")
-                    or line:match("[Mm]eet%s*(.+)")
-                    or line:match("[Vv]isit%s*(.+)")
-                    or line:match("[Dd]eliver to%s*(.+)")
                     or line:match("กลับไปหา%s*(.+)")
                     or line:match("ไปพบ%s*(.+)")
                     or line:match("คุยกับ%s*(.+)")
-                    or line:match("ส่งของให้%s*(.+)")
-                    or line:match("ส่ง%s*(.+)")
-
                 if extracted then
-                    local clean = extracted:gsub("%d+/%d+", ""):gsub("[%[%]]", ""):gsub("%.+$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    local clean = extracted:gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    local pos = getNpcWorldPos(clean)
+                    if pos then
+                        return pos, nil, navPoints, "npc_pos", clean
+                    end
                     local npc = findQuestTargetNpc(clean)
                     if npc then
                         targetNpcModel = npc
                         break
                     end
-                end
-
-                -- 2. Bracket matching e.g. [Welcome Newbie] or [Madame Danger]
-                for matchName in line:gmatch("%[(.-)%]") do
-                    if matchName and matchName ~= "" and not matchName:find("Lv") then
-                        local npc = findQuestTargetNpc(matchName)
-                        if npc then
-                            targetNpcModel = npc
-                            break
-                        end
-                    end
-                end
-                if targetNpcModel then break end
-
-                -- 3. Subquest format: "ภารกิจ - มาดามอันตราย 0/1" or "Missions - Solve the Problem"
-                local taskName = line:match("ภารกิจ%s*%-%s*([^%d%/]+)") or line:match("[Mm]issions?%s*%-%s*([^%d%/]+)")
-                if taskName then
-                    local cleanTask = taskName:gsub("[%[%]]", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    local npc = findQuestTargetNpc(cleanTask)
-                    if npc then
-                        targetNpcModel = npc
-                        break
-                    end
-                end
-
-                -- 4. Direct NPC name lookup fallback
-                local directNpc = findQuestTargetNpc(line)
-                if directNpc then
-                    targetNpcModel = directNpc
-                    break
                 end
             end
         end
@@ -1262,18 +1395,11 @@ local function getActiveQuestDestination()
     if targetNpcModel then
         local p = targetNpcModel.PrimaryPart or targetNpcModel:FindFirstChild("HumanoidRootPart") or targetNpcModel:FindFirstChild("Root") or targetNpcModel:FindFirstChildWhichIsA("BasePart")
         if p then
-            if not navPoints and okNav and nav and nav.pointTo then
-                pcall(nav.pointTo, p.Position)
-                local okGl2, gl2 = pcall(nav.getGuideLine)
-                if okGl2 and gl2 and gl2.points and #gl2.points > 0 then
-                    navPoints = gl2.points
-                end
-            end
             return p.Position, targetNpcModel, navPoints, "npc", nil
         end
     end
 
-    -- Priority 5: Existing workspace quest markers
+    -- Priority 7: Existing workspace quest markers
     local qMarkers = workspace:FindFirstChild("RBRCQuestMarkers") or workspace:FindFirstChild("RBRCQuestGuide")
     if qMarkers then
         for _, m in ipairs(qMarkers:GetChildren()) do
@@ -1406,7 +1532,6 @@ task.spawn(function()
                             -- ==========================================================
                             -- B. ARRIVED AT OBJECTIVE: COMPLETE & CLAIM
                             -- ==========================================================
-                            questFarmState = "DELIVERING"
                             driveCarStep(destPos, 0, false)
 
                             -- Solid brake on the road so interaction triggers 100%
@@ -1428,54 +1553,96 @@ task.spawn(function()
                                 end
                             end)
 
-                            -- Trigger Touch on destination marker
-                            if destObj and destObj:IsA("BasePart") and firetouchinterest then
+                            if destType == "skill_return_npc" or destType == "favorite_npc_target" then
+                                -- Arrived at NPC to complete quest and claim reward
+                                questFarmState = "CLAIMING"
+                                local activeQ = (typeof(mState) == "table") and mState or nil
+                                local targetNpcId = activeQ and (activeQ.completedExceptNpcId or activeQ.rewardNpc or activeQ.npcId) or 9900
+                                local qId = activeQ and activeQ.questId or 990202
+
+                                local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                                local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
+                                if sReq then
+                                    pcall(function()
+                                        sReq:InvokeServer({ op = "talk", npcId = targetNpcId, carPos = root.Position })
+                                    end)
+                                    task.wait(0.05)
+                                    pcall(function()
+                                        sReq:InvokeServer({ op = "reward", questId = qId, carPos = root.Position, choice = 0 })
+                                    end)
+                                end
+
                                 pcall(function()
-                                    firetouchinterest(root, destObj, 0)
-                                    task.wait(0.02)
-                                    firetouchinterest(root, destObj, 1)
+                                    local renv = getrenv and getrenv() or { shared = shared }
+                                    local qt = renv.shared and renv.shared.RaycityQuestTalk
+                                    if qt and qt.open and activeQ then
+                                        qt.open(activeQ)
+                                    end
                                 end)
-                            end
 
-                            -- Trigger Trunk / Delivery completion
-                            pcall(function()
-                                local rep = game:GetService("ReplicatedStorage")
-                                local qDeliver = require(rep.RBRCQuest.QuestDeliver)
-                                if qDeliver then
-                                    if qDeliver.finish then qDeliver.finish() end
-                                    if qDeliver.trunk then qDeliver.trunk(true) end
-                                end
-                            end)
+                                pressReturnKey()
+                                task.wait(0.2)
 
-                            -- Submit delivery via server remotes
-                            pcall(function()
+                            elseif destType == "skill_mission_npc" then
+                                questFarmState = "TALKING"
+                                local targetId = (typeof(mState) == "table" and mState.targetId) or 68
                                 local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
-                                if qRemotes then
-                                    if qRemotes:FindFirstChild("QuestEventUp") then
-                                        qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
-                                    end
-                                    if qRemotes:FindFirstChild("QuestRequest") then
-                                        qRemotes.QuestRequest:InvokeServer("ClaimCurrentQuest")
-                                        qRemotes.QuestRequest:InvokeServer("CompleteQuest")
-                                        qRemotes.QuestRequest:InvokeServer("FinishQuest")
-                                    end
+                                local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+                                if qReq then
+                                    pcall(function()
+                                        qReq:InvokeServer({ op = "talk", npcId = "mission:" .. tostring(targetId), carPos = root.Position })
+                                    end)
                                 end
-                            end)
+                                pressReturnKey()
+                                task.wait(0.2)
 
-                            -- Close result / drops dialogs if open
-                            pcall(function()
-                                local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
-                                if qUi then
-                                    if qUi.hideResult then qUi.hideResult() end
-                                    if qUi.closeDrops then qUi.closeDrops() end
-                                    if qUi._dialogEnter then qUi._dialogEnter() end
+                            else
+                                -- Standard checkpoint / delivery arrival
+                                questFarmState = "DELIVERING"
+
+                                -- Trigger Touch on destination marker
+                                if destObj and destObj:IsA("BasePart") and firetouchinterest then
+                                    pcall(function()
+                                        firetouchinterest(root, destObj, 0)
+                                        task.wait(0.02)
+                                        firetouchinterest(root, destObj, 1)
+                                    end)
                                 end
-                            end)
 
-                            -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
-                            pressReturnKey()
+                                -- Trigger Trunk / Delivery completion
+                                pcall(function()
+                                    local rep = game:GetService("ReplicatedStorage")
+                                    local qDeliver = require(rep.RBRCQuest.QuestDeliver)
+                                    if qDeliver then
+                                        if qDeliver.finish then qDeliver.finish() end
+                                        if qDeliver.trunk then qDeliver.trunk(true) end
+                                    end
+                                end)
 
-                            task.wait(0.25)
+                                -- Submit delivery via server remotes
+                                pcall(function()
+                                    local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                                    if qRemotes then
+                                        if qRemotes:FindFirstChild("QuestEventUp") then
+                                            qRemotes.QuestEventUp:FireServer("GoalReached", destObj and destObj.Name or "Goal")
+                                        end
+                                    end
+                                end)
+
+                                -- Close result / drops dialogs if open
+                                pcall(function()
+                                    local qUi = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                                    if qUi then
+                                        if qUi.hideResult then qUi.hideResult() end
+                                        if qUi.closeDrops then qUi.closeDrops() end
+                                        if qUi._dialogEnter then qUi._dialogEnter() end
+                                    end
+                                end)
+
+                                -- Send Enter key & virtual Enter to confirm delivery or start NPC conversation
+                                pressReturnKey()
+                                task.wait(0.25)
+                            end
                         end
                     end
                 else
@@ -1484,6 +1651,21 @@ task.spawn(function()
                     -- ==========================================================
                     if Config.LoopNextQuest then
                         questFarmState = "SEARCHING"
+
+                        -- 0. Check Skill/Newbie Quests available to auto-accept:
+                        pcall(function()
+                            local qq = nil
+                            if shared.RBRCQqState and shared.RBRCQqState.get then qq = shared.RBRCQqState.get()
+                            elseif getrenv and getrenv().shared and getrenv().shared.RBRCQqState then qq = getrenv().shared.RBRCQqState.get() end
+                            if qq and qq.available and #qq.available > 0 and Config.AutoAcceptQuest then
+                                local nextQ = qq.available[1]
+                                local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+                                local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
+                                if sReq and nextQ.questId then
+                                    sReq:InvokeServer({ op = "accept", questId = nextQ.questId, carPos = root.Position })
+                                end
+                            end
+                        end)
                         local targetNpc, targetDist = nil, 99999
                         local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
 
