@@ -141,8 +141,39 @@ pcall(function()
     end
 end)
 
--- Load WindUI
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+-- Multi-tier WindUI framework loader with offline cache and multiple fallbacks
+local WindUI = nil
+pcall(function()
+    if isfile and readfile and isfile("WindUI_cache.lua") then
+        local cached = readfile("WindUI_cache.lua")
+        if cached and #cached > 10000 then
+            WindUI = loadstring(cached)()
+        end
+    end
+end)
+if not WindUI then
+    pcall(function()
+        local raw = game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
+        if raw and #raw > 10000 then
+            pcall(function() if writefile then writefile("WindUI_cache.lua", raw) end end)
+            WindUI = loadstring(raw)()
+        end
+    end)
+end
+if not WindUI then
+    pcall(function()
+        local raw = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
+        if raw and #raw > 10000 then
+            pcall(function() if writefile then writefile("WindUI_cache.lua", raw) end end)
+            WindUI = loadstring(raw)()
+        end
+    end)
+end
+
+if not WindUI then
+    warn("[Song Hub] ❌ Failed to load WindUI framework! Please check your network connection.")
+    return
+end
 
 -- Register Custom Football & Blue Lock Stadium Themes
 pcall(function()
