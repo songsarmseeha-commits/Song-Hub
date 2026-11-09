@@ -500,29 +500,28 @@ TabSettings:Button({
 
 
 -- ==============================================================================
--- 🛡️ 1. ANTI-CHEAT BYPASS & SAFETY SHIELD
+-- 🛡️ 1. ANTI-CHEAT BYPASS & MULTIPLAYER SYNC PRESERVATION
 -- ==============================================================================
 pcall(function()
-    local acFolder = ReplicatedStorage:FindFirstChild("RaycityAntiCheat")
-    local remotes = acFolder and acFolder:FindFirstChild("Remotes")
-    if remotes and typeof(hookmetamethod) == "function" then
-        local blocked = {}
-        for _, name in ipairs({ "AcPush", "AcMove", "AcThrill" }) do
-            local r = remotes:FindFirstChild(name)
-            if r then blocked[r] = true end
-        end
-        if next(blocked) ~= nil then
-            local oldNamecall
-            local hookFn = function(self, ...)
-                local method = getnamecallmethod()
-                if (method == "FireServer" or method == "fireServer") and blocked[self] then
-                    return nil
-                end
-                return oldNamecall(self, ...)
+    -- Ensure vehicle network replication continues 24/7 even when window is unfocused or backgrounded
+    local rep = game:GetService("ReplicatedStorage")
+    local rcMod = require(rep.RaycityMultiplayer.RemoteCars)
+    if rcMod then
+        rcMod.PAUSE_WHEN_UNFOCUSED = false
+    end
+end)
+
+-- Continuous background sync guard ensuring PAUSE_WHEN_UNFOCUSED remains false
+task.spawn(function()
+    while isAlive() do
+        pcall(function()
+            local rep = game:GetService("ReplicatedStorage")
+            local rcMod = require(rep.RaycityMultiplayer.RemoteCars)
+            if rcMod and rcMod.PAUSE_WHEN_UNFOCUSED ~= false then
+                rcMod.PAUSE_WHEN_UNFOCUSED = false
             end
-            oldNamecall = hookmetamethod(game, "__namecall", typeof(newcclosure) == "function" and newcclosure(hookFn) or hookFn)
-            print("[Raycity Hub] 🛡️ Anti-Cheat Telemetry Shield Activated!")
-        end
+        end)
+        task.wait(2.5)
     end
 end)
 
@@ -832,7 +831,101 @@ local function fireGuiClick(btn)
     end)
 end
 
+-- ==============================================================================
+-- 💬 4.9. AUTONOMOUS DIRECT NPC INTERACTION & QUEST ACCEPT ENGINE
+-- ==============================================================================
+local _lastNpcInteractTime = 0
+local function interactWithNearbyNpc()
+    local now = os.clock()
+    if (now - _lastNpcInteractTime) < 0.25 then return false end
+    _lastNpcInteractTime = now
+
+    local root = getCarRoot()
+    if not root then return false end
+
+    local npcsFolder = workspace:FindFirstChild("RBRCNpcs")
+    if not npcsFolder then return false end
+
+    local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+    local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+    if not qReq then return false end
+
+    local closestNpc, closestDist = nil, math.huge
+    for _, npc in ipairs(npcsFolder:GetChildren()) do
+        local pos = npc:GetPivot().Position
+        local dist = (pos - root.Position).Magnitude
+        if dist < closestDist then
+            closestDist = dist
+            closestNpc = npc
+        end
+    end
+
+    if not closestNpc or closestDist > 35 then return false end
+
+    local rbrcNpcId = closestNpc:GetAttribute("RBRCNpcId")
+    if not rbrcNpcId then return false end
+
+    -- Reset any hung tryTalk locks in client environment
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rq = renv.shared and renv.shared.RBRCQuest
+        if rq and rq.talk then
+            local ups = debug.getupvalues(rq.talk)
+            if ups and ups[1] and type(ups[1]) == "function" then
+                debug.setupvalue(ups[1], 1, false) -- u309
+                debug.setupvalue(ups[1], 3, false) -- u307
+                debug.setupvalue(ups[1], 4, false) -- u360
+            end
+        end
+    end)
+
+    -- Programmatic Talk & Accept directly through QuestRequest
+    local talkRes = nil
+    pcall(function()
+        talkRes = qReq:InvokeServer({ op = "talk", npcId = rbrcNpcId, carPos = root.Position })
+    end)
+
+    if talkRes and talkRes.ok and talkRes.offers and talkRes.offers[1] then
+        local offer = talkRes.offers[1]
+        local accRes = nil
+        pcall(function()
+            accRes = qReq:InvokeServer({
+                op = "accept",
+                questId = offer.questId,
+                carPos = root.Position,
+                carLook = root.CFrame.LookVector
+            })
+        end)
+        if accRes and accRes.ok then
+            if accRes.needsBoarding then
+                task.wait(0.18)
+                pcall(function()
+                    qReq:InvokeServer({ op = "boarded", questId = offer.questId })
+                end)
+            end
+            return true
+        end
+    end
+
+    return false
+end
+
 local function pressReturnKey()
+    -- 0. Autonomous Programmatic NPC Interaction (Direct Remote - 100% Guaranteed)
+    pcall(interactWithNearbyNpc)
+
+    -- 1. NATIVE EXECUTOR PHYSICAL KEYBOARD INJECTION (Guaranteed 100% OS Keystrokes)
+    pcall(function()
+        if keytap then
+            keytap(0x0D) -- VK_RETURN (Enter)
+        end
+        if keypress and keyrelease then
+            keypress(0x0D)
+            task.wait(0.03)
+            keyrelease(0x0D)
+        end
+    end)
+
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         -- 1. MobileTap in RBRCNpcTalkPrompt (Talk to NPC prompt)
@@ -842,6 +935,16 @@ local function pressReturnKey()
             if tap then fireGuiClick(tap) end
             local btn = ntp:FindFirstChildWhichIsA("GuiButton", true)
             if btn and btn.Visible then fireGuiClick(btn) end
+            pcall(function()
+                local rep = game:GetService("ReplicatedStorage")
+                local escGate = require(rep.RaycityUi.RaycityEscGate)
+                if escGate and escGate.onFieldEnter then
+                    local cs = getconnections and getconnections(escGate.onFieldEnter)
+                    if cs then
+                        for _, c in ipairs(cs) do pcall(function() c:Fire() end) end
+                    end
+                end
+            end)
             pcall(function()
                 local rs = game:GetService("RunService")
                 local conns = getconnections and getconnections(rs.Heartbeat)
@@ -867,18 +970,29 @@ local function pressReturnKey()
             if enterBtn and enterBtn.Visible then fireGuiClick(enterBtn) end
         end
 
-        -- 3. RaycityQuestUi: NpcDialog Next & Result buttons
+        -- 3. RaycityQuestUi: NpcDialog Next, Offer Yes & Result buttons
         local qGui = pg and pg:FindFirstChild("RaycityQuestUi")
         if qGui and qGui.Enabled then
             local npcDlg = qGui:FindFirstChild("NpcDialog")
             if npcDlg and npcDlg.Visible then
                 local nextBtn = npcDlg:FindFirstChild("Next") or npcDlg:FindFirstChildWhichIsA("GuiButton", true)
                 if nextBtn then fireGuiClick(nextBtn) end
+                pcall(function()
+                    local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                    if qUiMod and qUiMod._dialogEnter then qUiMod._dialogEnter() end
+                end)
             end
             local resDlg = qGui:FindFirstChild("MissionResult") or qGui:FindFirstChild("Result")
             if resDlg and resDlg.Visible then
                 local closeBtn = resDlg:FindFirstChild("Close") or resDlg:FindFirstChild("Ok") or resDlg:FindFirstChildWhichIsA("GuiButton", true)
                 if closeBtn then fireGuiClick(closeBtn) end
+                pcall(function()
+                    local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
+                    if qUiMod then
+                        if qUiMod.hideResult then qUiMod.hideResult() end
+                        if qUiMod.closeDrops then qUiMod.closeDrops() end
+                    end
+                end)
             end
             local offerDlg = qGui:FindFirstChild("MissionOffer")
             if offerDlg and offerDlg.Visible then
@@ -905,82 +1019,26 @@ local function pressReturnKey()
         end
     end)
     pcall(function()
-        local vim = game:GetService("VirtualInputManager")
-        local vu = game:GetService("VirtualUser")
         local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-
-        -- 1. Advance NPC Dialog (Next / ยืนยัน)
         local qUi = pg and pg:FindFirstChild("RaycityQuestUi")
         if qUi and qUi.Enabled then
             local nextBtn = qUi:FindFirstChild("Next", true)
             if nextBtn and nextBtn:IsA("GuiButton") and nextBtn.Visible then
                 fireGuiClick(nextBtn)
-                local center = nextBtn.AbsolutePosition + (nextBtn.AbsoluteSize / 2)
-                pcall(function()
-                    vu:CaptureController()
-                    vu:ClickButton1(center)
-                    vim:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
-                    task.wait(0.04)
-                    vim:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-                end)
             end
-
-            -- 2. Accept Quest Offer if visible (Yes / ยอมรับ)
             local yesBtn = qUi:FindFirstChild("Yes", true)
             if yesBtn and yesBtn:IsA("GuiButton") and yesBtn.Visible then
                 fireGuiClick(yesBtn)
                 pcall(function()
                     local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
-                    if qUiMod and qUiMod._offerAnswer then
-                        qUiMod._offerAnswer(true)
-                    end
+                    if qUiMod and qUiMod._offerAnswer then qUiMod._offerAnswer(true) end
                 end)
             end
-
-            -- 3. Close Result Dialog if visible
             local resClose = qUi:FindFirstChild("MissionResult", true) or qUi:FindFirstChild("Result", true)
             if resClose then
                 local closeBtn = resClose:FindFirstChild("Close", true) or resClose:FindFirstChild("Ok", true) or resClose:FindFirstChildWhichIsA("GuiButton")
-                if closeBtn and closeBtn.Visible then
-                    fireGuiClick(closeBtn)
-                end
+                if closeBtn and closeBtn.Visible then fireGuiClick(closeBtn) end
             end
-        end
-
-        -- 4. Tap RBRCNpcTalkPrompt if active
-        local ntp = pg and pg:FindFirstChild("RBRCNpcTalkPrompt")
-        if ntp and ntp.Enabled then
-            local tap = ntp:FindFirstChild("MobileTap", true)
-            if tap and tap:IsA("GuiButton") and tap.Visible then
-                fireGuiClick(tap)
-            end
-            pcall(function()
-                local rep = game:GetService("ReplicatedStorage")
-                local ntpMod = rep:FindFirstChild("RBRCNpc") and rep.RBRCNpc:FindFirstChild("NpcTalkPrompt")
-                if ntpMod then
-                    local ntpReq = require(ntpMod)
-                    local u = debug.getupvalues(ntpReq.show)
-                    if u and type(u[3]) == "function" then
-                        u[3]()
-                    end
-                end
-            end)
-            pcall(function()
-                local rs = game:GetService("RunService")
-                local conns = getconnections and getconnections(rs.Heartbeat)
-                if conns then
-                    for _, c in ipairs(conns) do
-                        local fn = c.Function
-                        if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
-                            local uvs = debug.getupvalues(fn)
-                            if uvs and type(uvs[34]) == "function" then
-                                uvs[34]()
-                            end
-                            break
-                        end
-                    end
-                end
-            end)
         end
     end)
     pcall(function()
@@ -1021,6 +1079,16 @@ task.spawn(function()
 
                 -- 1. Auto Talk to NPC when RBRCNpcTalkPrompt is shown ([Enter] Press Enter to chat with...)
                 if ntp and ntp.Enabled then
+                    pcall(interactWithNearbyNpc)
+                    pcall(function()
+                        if keytap then
+                            keytap(0x0D) -- VK_RETURN
+                        elseif keypress and keyrelease then
+                            keypress(0x0D)
+                            task.wait(0.03)
+                            keyrelease(0x0D)
+                        end
+                    end)
                     pcall(function()
                         local ntpReq = require(ReplicatedStorage.RBRCNpc.NpcTalkPrompt)
                         local uvs = debug.getupvalues(ntpReq.show)
@@ -1029,18 +1097,12 @@ task.spawn(function()
                         end
                     end)
                     pcall(function()
-                        local rs = game:GetService("RunService")
-                        local conns = getconnections and getconnections(rs.Heartbeat)
-                        if conns then
-                            for _, c in ipairs(conns) do
-                                local fn = c.Function
-                                if fn and tostring(debug.getinfo(fn).short_src or debug.getinfo(fn).source):find("RBRCQuestClient") then
-                                    local uvs = debug.getupvalues(fn)
-                                    if uvs and type(uvs[34]) == "function" then
-                                        uvs[34]()
-                                    end
-                                    break
-                                end
+                        local rep = game:GetService("ReplicatedStorage")
+                        local escGate = require(rep.RaycityUi.RaycityEscGate)
+                        if escGate and escGate.onFieldEnter then
+                            local cs = getconnections and getconnections(escGate.onFieldEnter)
+                            if cs then
+                                for _, c in ipairs(cs) do pcall(function() c:Fire() end) end
                             end
                         end
                     end)
@@ -1059,38 +1121,35 @@ task.spawn(function()
                     local offer = qUi:FindFirstChild("MissionOffer")
                     if offer and offer.Visible then
                         pcall(function()
+                            if keytap then keytap(0x0D) end
                             local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
                             if qUiMod and qUiMod._offerAnswer then
                                 qUiMod._offerAnswer(true)
                             end
                         end)
                         local yesBtn = offer:FindFirstChild("Yes", true)
-                        if yesBtn and getconnections then
-                            for _, c in ipairs(getconnections(yesBtn.Activated)) do pcall(function() c:Fire() end) end
-                            for _, c in ipairs(getconnections(yesBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                        end
+                        if yesBtn then fireGuiClick(yesBtn) end
                     end
 
                     -- 3. Auto Advance NPC Dialog (Next / ยืนยัน)
                     local npcDlg = qUi:FindFirstChild("NpcDialog")
                     if npcDlg and npcDlg.Visible then
                         pcall(function()
+                            if keytap then keytap(0x0D) end
                             local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
                             if qUiMod and qUiMod._dialogEnter then
                                 qUiMod._dialogEnter()
                             end
                         end)
                         local nextBtn = npcDlg:FindFirstChild("Next", true)
-                        if nextBtn and getconnections then
-                            for _, c in ipairs(getconnections(nextBtn.Activated)) do pcall(function() c:Fire() end) end
-                            for _, c in ipairs(getconnections(nextBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                        end
+                        if nextBtn then fireGuiClick(nextBtn) end
                     end
 
                     -- 4. Auto Close Result Dialog / Claim Rewards
                     local resDlg = qUi:FindFirstChild("MissionResult") or qUi:FindFirstChild("Result")
                     if resDlg and resDlg.Visible then
                         pcall(function()
+                            if keytap then keytap(0x0D) end
                             local qUiMod = require(ReplicatedStorage.RBRCQuest.QuestUI)
                             if qUiMod then
                                 if qUiMod.hideResult then qUiMod.hideResult() end
@@ -1102,20 +1161,14 @@ task.spawn(function()
                             if escGate and escGate.virtualEnter then escGate.virtualEnter() end
                         end)
                         local closeBtn = resDlg:FindFirstChild("Close", true) or resDlg:FindFirstChild("Ok", true) or resDlg:FindFirstChildWhichIsA("GuiButton", true)
-                        if closeBtn and getconnections then
-                            for _, c in ipairs(getconnections(closeBtn.Activated)) do pcall(function() c:Fire() end) end
-                            for _, c in ipairs(getconnections(closeBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                        end
+                        if closeBtn then fireGuiClick(closeBtn) end
                     end
                 end
 
                 -- 5. Auto Dismiss GameGuide prompt if visible
                 if gg and gg.Enabled then
                     local enterBtn = gg:FindFirstChild("Enter", true)
-                    if enterBtn and getconnections then
-                        for _, c in ipairs(getconnections(enterBtn.Activated)) do pcall(function() c:Fire() end) end
-                        for _, c in ipairs(getconnections(enterBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
-                    end
+                    if enterBtn then fireGuiClick(enterBtn) end
                 end
             end)
         end
@@ -1393,8 +1446,62 @@ local function findQuestTargetNpc(targetName)
     return nil
 end
 
+local _cachedLiveMission = nil
+local _lastLiveMissionCheck = 0
+
+local function getLiveMissionState()
+    local now = os.clock()
+    if (now - _lastLiveMissionCheck) < 0.25 and _cachedLiveMission ~= nil then
+        return _cachedLiveMission
+    end
+    _lastLiveMissionCheck = now
+    pcall(function()
+        local qr = ReplicatedStorage:FindFirstChild("RBRCQuest")
+        local remotes = qr and qr:FindFirstChild("Remotes")
+        local qReq = remotes and remotes:FindFirstChild("QuestRequest")
+        if qReq then
+            local st = qReq:InvokeServer({ op = "state" })
+            if st and st.mission and (st.mission.state == "running" or st.mission.state == "boarding") then
+                _cachedLiveMission = st.mission
+                return
+            end
+        end
+        _cachedLiveMission = false
+    end)
+    return _cachedLiveMission
+end
+
 local function getActiveMissionTarget()
     local targetPos, missionObj, missionType, isFinishLine = nil, nil, nil, false
+
+    -- 1. Direct Server-Verified Quest State from QuestRequest (Guaranteed Live)
+    local liveM = getLiveMissionState()
+    if liveM and type(liveM.objectives) == "table" and (liveM.state == "running" or liveM.state == "boarding") then
+        missionType = liveM.state
+        local targetObjs = {}
+        for idx, obj in ipairs(liveM.objectives) do
+            local v = nil
+            if typeof(obj.target) == "Vector3" then
+                v = obj.target
+            elseif type(obj.target) == "table" and obj.target.x and obj.target.y and obj.target.z then
+                v = Vector3.new(obj.target.x, obj.target.y, obj.target.z)
+            end
+            if v then
+                table.insert(targetObjs, { idx = idx, obj = obj, target = v })
+            end
+        end
+        for tIdx, item in ipairs(targetObjs) do
+            local obj = item.obj
+            if (obj.active or not obj.done) then
+                targetPos = item.target
+                missionObj = obj
+                isFinishLine = (tIdx == #targetObjs)
+                return targetPos, missionObj, missionType, isFinishLine
+            end
+        end
+    end
+
+    -- 2. Upvalue inspection fallback
     pcall(function()
         local rs = game:GetService("RunService")
         local conns = getconnections and getconnections(rs.Heartbeat)
@@ -1739,9 +1846,10 @@ local function executeMoveStep(targetPos, destType, speedKmh)
                 local dir = dist > 0.1 and (targetPos - root.Position).Unit or root.CFrame.LookVector
                 local targetCF
                 if destType == "checkpoint" then
-                    targetCF = CFrame.new(targetPos + dir * 15, targetPos + dir * 30)
+                    -- Warp directly into front entrance of checkpoint gate so gate plane is crossed
+                    targetCF = CFrame.new(targetPos - dir * 6, targetPos + dir * 15)
                 else
-                    targetCF = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+                    targetCF = CFrame.new(targetPos + Vector3.new(0, 1.2, 0), targetPos + dir * 5)
                 end
 
                 if rcd and type(rcd.teleport) == "function" then
@@ -1751,19 +1859,28 @@ local function executeMoveStep(targetPos, destType, speedKmh)
                 end
 
                 if destType == "checkpoint" then
-                    root.AssemblyLinearVelocity = dir * 65
+                    root.AssemblyLinearVelocity = dir * 75
                     if rcd and type(rcd.phys) == "table" then
-                        rcd.phys.v = dir * 65
+                        rcd.phys.v = dir * 75
                         rcd.phys.throttle = 1
                         rcd.phys.brake = 0
                     end
+                    pcall(function()
+                        local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                        qt:FireServer({pos = targetPos, speed = 60, stopped = false, gear = 3})
+                    end)
                 else
                     root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
                     if rcd and type(rcd.phys) == "table" then
                         rcd.phys.v = Vector3.zero
                         rcd.phys.throttle = 0
                         rcd.phys.brake = 1
                     end
+                    pcall(function()
+                        local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                        qt:FireServer({pos = targetPos, speed = 0, stopped = true, gear = 1})
+                    end)
                 end
             end)
             lastWarpTime = os.clock()
@@ -1934,8 +2051,9 @@ task.spawn(function()
                         -- 3. Trigger remote events for checkpoint passing
                         pcall(function()
                             local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
-                            if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
-                                qRemotes.QuestEventUp:FireServer("GoalReached", (destObj and destObj.Name) or "Checkpoint")
+                            local qt = qRemotes and qRemotes:FindFirstChild("QuestTelemetry")
+                            if qt then
+                                qt:FireServer({ pos = destPos, speed = 60, stopped = false, gear = 3 })
                             end
                         end)
 
@@ -2010,12 +2128,12 @@ task.spawn(function()
                                 end
                             end)
 
-                            -- 3. Trigger Server Remotes for Goal / FinishLine
+                            -- 3. Trigger Server Telemetry for FinishLine validation & passenger delivery
                             pcall(function()
                                 local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
-                                if qRemotes and qRemotes:FindFirstChild("QuestEventUp") then
-                                    qRemotes.QuestEventUp:FireServer("GoalReached", (destObj and destObj.Name) or "FinishLine")
-                                    qRemotes.QuestEventUp:FireServer("FinishLine", "Finish")
+                                local qt = qRemotes and qRemotes:FindFirstChild("QuestTelemetry")
+                                if qt then
+                                    qt:FireServer({ pos = root.Position, speed = 0, stopped = true, gear = 1 })
                                 end
                             end)
 
