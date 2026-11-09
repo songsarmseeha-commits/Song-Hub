@@ -1501,36 +1501,145 @@ end
 
 
 -- ==============================================================================
--- 🚗 7. MASTER AUTONOMOUS QUEST FARMING ENGINE (ขับเองอัตโนมัติ)
+-- 🚗 7. MASTER AUTONOMOUS QUEST FARMING ENGINE (ระบบขับเองอัตโนมัติ 100% ลื่นไหล ไม่ติดค้าง)
 -- ==============================================================================
-local questFarmState = "SEARCHING" -- "SEARCHING" | "DRIVING" | "DELIVERING"
-local lastStuckPos = nil
-local stuckCounter = 0
+local questFarmState = "SEARCHING" -- "SEARCHING" | "DRIVING" | "DELIVERING" | "CLAIMING" | "TALKING"
 local npcVisitCooldown = {} -- [npcName] = os.clock()
 
-local function executeMoveStep(targetPos, speedKmh)
-    local root = getCarRoot()
-    if not root then return end
-    local dist = (root.Position - targetPos).Magnitude
+-- Autonomous Driving State & Anti-Stuck Tracking
+local currentAutoTarget = nil
+local lastWarpTime = 0
+local isWarping = false
+local lastProgressPos = nil
+local lastProgressTime = os.clock()
 
-    if Config.QuestDriveMode == "Instant Warp" then
-        teleportCar(targetPos)
-        task.wait(0.08)
-    elseif Config.QuestDriveMode == "Hyper Sonic Glide" then
-        if dist > 40 then
-            pcall(driveCarStep, targetPos, speedKmh or 350, true)
-        else
-            pcall(driveCarStep, targetPos, speedKmh or 180, false)
+local function getAutoDrive()
+    local ok, ad = pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local rUi = rep:FindFirstChild("RaycityUi")
+        return rUi and rUi:FindFirstChild("AutoDrive") and require(rUi.AutoDrive)
+    end)
+    return ok and ad or nil
+end
+
+local function stopAutoDrive()
+    pcall(function()
+        local ad = getAutoDrive()
+        if ad and ad.stop then
+            ad.stop()
         end
-    elseif Config.QuestDriveMode == "Hybrid Cruise" then
-        if dist > 60 then
-            pcall(driveCarStep, targetPos, speedKmh or 400, true)
-        else
-            pcall(driveCarStep, targetPos, speedKmh or 220, false)
+    end)
+    currentAutoTarget = nil
+end
+
+local function executeMoveStep(targetPos, destType, speedKmh)
+    local root = getCarRoot()
+    local rcd = getRCDrive()
+    if not root or not targetPos then return end
+    local dist = (root.Position - targetPos).Magnitude
+    local mode = Config.QuestDriveMode or "Realistic Road Drive"
+
+    -- ⚡ Mode 1: Instant Warp (Single-shot teleport with cooldown, NEVER spams spawnCar)
+    if mode == "Instant Warp" then
+        if not isWarping and (os.clock() - lastWarpTime) >= 1.5 and dist > 8 then
+            isWarping = true
+            stopAutoDrive()
+            pcall(function()
+                local targetCF = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+                if rcd and type(rcd.teleport) == "function" then
+                    rcd.teleport(targetCF)
+                elseif root then
+                    root.CFrame = targetCF
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end
+            end)
+            lastWarpTime = os.clock()
+            task.wait(1.2) -- Wait for car respawn and physics streaming
+            isWarping = false
         end
-    else
-        -- "Realistic Road Drive" or fallback
-        pcall(driveCarStep, targetPos, speedKmh, false)
+        return
+    end
+
+    -- ⚡ Mode 2: Hybrid Cruise (Instant warp for long distances > 80m, then road cruise)
+    if mode == "Hybrid Cruise" and dist > 80 then
+        if not isWarping and (os.clock() - lastWarpTime) >= 2.0 then
+            isWarping = true
+            stopAutoDrive()
+            local dir = (targetPos - root.Position).Unit
+            local nearWarpPos = targetPos - dir * 25
+            pcall(function()
+                local targetCF = CFrame.new(nearWarpPos + Vector3.new(0, 1.5, 0), targetPos)
+                if rcd and type(rcd.teleport) == "function" then
+                    rcd.teleport(targetCF)
+                elseif root then
+                    root.CFrame = targetCF
+                end
+            end)
+            lastWarpTime = os.clock()
+            task.wait(1.2)
+            isWarping = false
+            return
+        end
+    end
+
+    -- 🏎️ Modes 3 & 4: Native AutoDrive Engine (Realistic Road Drive & Hyper Sonic Glide)
+    local ad = getAutoDrive()
+    if not ad then
+        -- Fallback if AutoDrive is not loaded
+        pcall(driveCarStep, targetPos, speedKmh or 160, false)
+        return
+    end
+
+    -- Speed & Driving Tuning
+    local desiredSpeed = speedKmh or Config.QuestDriveSpeed or 220
+    if mode == "Realistic Road Drive" then
+        desiredSpeed = math.min(180, desiredSpeed)
+    elseif mode == "Hyper Sonic Glide" then
+        desiredSpeed = math.max(260, desiredSpeed)
+    end
+    local maxSpeedMps = desiredSpeed / 3.6
+
+    pcall(function()
+        if ad.C then
+            ad.C.maxSpeed = maxSpeedMps
+            if mode == "Hyper Sonic Glide" then
+                ad.C.cap1 = math.max(300, desiredSpeed * 1.15)
+                ad.C.cap2 = math.max(250, desiredSpeed * 0.95)
+                ad.C.cap3 = math.max(200, desiredSpeed * 0.8)
+                ad.C.nearDestM = (destType == "checkpoint") and 5 or 8
+            else
+                ad.C.cap1 = math.min(200, desiredSpeed * 1.0)
+                ad.C.cap2 = math.min(160, desiredSpeed * 0.85)
+                ad.C.cap3 = math.min(120, desiredSpeed * 0.7)
+                ad.C.nearDestM = (destType == "checkpoint") and 6 or 10
+            end
+        end
+    end)
+
+    -- Plan / update AutoDrive route when target changes (> 8 studs) or stopped
+    local needsNewRoute = false
+    if not currentAutoTarget or (currentAutoTarget - targetPos).Magnitude > 8 then
+        needsNewRoute = true
+    elseif not ad.isActive or not ad.isActive() then
+        needsNewRoute = true
+    end
+
+    if needsNewRoute then
+        currentAutoTarget = targetPos
+        pcall(function()
+            ad.requestAutoMove(targetPos, "SongHubQuest")
+            ad.start()
+        end)
+    end
+
+    -- Hyper Sonic Glide: Apply Nitro boost and extra torque in physics
+    if mode == "Hyper Sonic Glide" and rcd and type(rcd.phys) == "table" then
+        pcall(function()
+            rcd.phys.boosting = true
+            rcd.phys.torqueBonus = 8000
+            rcd.phys.throttle = 1
+            if rcd.phys.brake then rcd.phys.brake = 0 end
+        end)
     end
 end
 
@@ -1550,22 +1659,35 @@ task.spawn(function()
                     return
                 end
 
-                -- Universal Anti-Stuck Detection for all driving states
-                if destPos then
-                    if lastStuckPos and (root.Position - lastStuckPos).Magnitude < 1.8 then
-                        stuckCounter = stuckCounter + 1
-                        if stuckCounter >= 10 then -- Stuck for ~0.6 second
-                            local forward = root.CFrame.LookVector
-                            teleportCar(root.CFrame + Vector3.new(0, 3, 0) + forward * 10)
-                            stuckCounter = 0
-                        end
+                -- Universal Non-Destructive Anti-Stuck Detection
+                if destPos and not isWarping then
+                    local movedDelta = lastProgressPos and (root.Position - lastProgressPos).Magnitude or 10
+                    if movedDelta > 2.0 then
+                        lastProgressPos = root.Position
+                        lastProgressTime = os.clock()
                     else
-                        lastStuckPos = root.Position
-                        stuckCounter = 0
+                        if (os.clock() - lastProgressTime) > 3.5 then
+                            -- Car stuck in place for 3.5s: replan route and apply gentle nudge
+                            local ad = getAutoDrive()
+                            if ad then
+                                pcall(function()
+                                    ad.stop()
+                                    task.wait(0.05)
+                                    ad.requestAutoMove(destPos, "SongHubUnstuck")
+                                    ad.start()
+                                end)
+                            end
+                            if rcd and type(rcd.phys) == "table" then
+                                rcd.phys.v = root.CFrame.LookVector * 15 + Vector3.new(0, 3, 0)
+                                rcd.phys.throttle = 1
+                                rcd.phys.brake = 0
+                            end
+                            lastProgressTime = os.clock()
+                        end
                     end
                 else
-                    stuckCounter = 0
-                    lastStuckPos = root.Position
+                    lastProgressPos = root.Position
+                    lastProgressTime = os.clock()
                 end
 
                 if destPos then
@@ -1574,62 +1696,27 @@ task.spawn(function()
                     -- ==========================================================
                     questFarmState = "DRIVING"
                     local dist = (root.Position - destPos).Magnitude
+                    local arrivalThreshold = (destType == "checkpoint") and 8 or 13
 
-                    -- Compute road waypoint along the green arrow path if available
-                    local targetWp = destPos
-                    if points and #points > 0 then
-                        local closestIdx = 1
-                        local closestDist = math.huge
-                        local carPos = root.Position
-                        for i = 1, #points do
-                            local d = (points[i] - carPos).Magnitude
-                            if d < closestDist then
-                                closestDist = d
-                                closestIdx = i
-                            end
-                        end
-
-                        if closestDist > 65 then
-                            targetWp = points[closestIdx]
-                        else
-                            targetWp = points[#points]
-                            for i = closestIdx, #points do
-                                if (points[i] - carPos).Magnitude >= 28 then
-                                    targetWp = points[i]
-                                    break
-                                end
-                            end
-                        end
-                    end
-
-                    if destType == "checkpoint" then
-                        -- Checkpoint Gate: Drive through gate smoothly
-                        if dist > 18 then
-                            executeMoveStep(targetWp, math.max(140, Config.QuestDriveSpeed))
-                        else
-                            executeMoveStep(destPos, math.max(140, Config.QuestDriveSpeed))
-                            task.wait(0.02)
-                        end
+                    if dist > arrivalThreshold then
+                        -- Drive smoothly along road lanes towards destination
+                        executeMoveStep(destPos, destType, Config.QuestDriveSpeed)
                     else
-                        -- Standard NPC or Delivery Destination
-                        if dist > 14 then
-                            executeMoveStep(targetWp, Config.QuestDriveSpeed)
-                        else
-                            -- ==========================================================
-                            -- B. ARRIVED AT OBJECTIVE: COMPLETE & CLAIM
-                            -- ==========================================================
-                            driveCarStep(destPos, 0, false)
+                        -- ==========================================================
+                        -- B. ARRIVED AT OBJECTIVE: COMPLETE & CLAIM
+                        -- ==========================================================
+                        stopAutoDrive()
 
-                            -- Solid brake on the road so interaction triggers 100%
-                            if rcd and rcd.phys then
-                                rcd.phys.v = Vector3.zero
-                                rcd.phys.throttle = 0
-                                rcd.phys.brake = 1
-                                rcd.phys.airMode = false
-                                rcd.phys.anyContact = true
-                            end
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
+                        -- Solid brake on the road so interaction triggers 100%
+                        if rcd and rcd.phys then
+                            rcd.phys.v = Vector3.zero
+                            rcd.phys.throttle = 0
+                            rcd.phys.brake = 1
+                            rcd.phys.airMode = false
+                            rcd.phys.anyContact = true
+                        end
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
 
                             -- Stop native AutoDrive if running
                             pcall(function()
@@ -1771,12 +1858,20 @@ task.spawn(function()
                                 local nPos = getNpcWorldPos(bestQ.npcId)
                                 if nPos then
                                     local distToNpc = (root.Position - nPos).Magnitude
-                                    if distToNpc > 15 then
-                                        executeMoveStep(nPos, Config.QuestDriveSpeed)
+                                    if distToNpc > 13 then
+                                        executeMoveStep(nPos, "npc", Config.QuestDriveSpeed)
                                         return
                                     else
-                                        driveCarStep(nPos, 0, false)
+                                        stopAutoDrive()
+                                        if rcd and rcd.phys then
+                                            rcd.phys.v = Vector3.zero
+                                            rcd.phys.throttle = 0
+                                            rcd.phys.brake = 1
+                                            rcd.phys.airMode = false
+                                            rcd.phys.anyContact = true
+                                        end
                                         root.AssemblyLinearVelocity = Vector3.zero
+                                        root.AssemblyAngularVelocity = Vector3.zero
                                         local sqRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
                                         local sReq = sqRemotes and sqRemotes:FindFirstChild("SkillQuestRequest")
                                         if sReq then
@@ -1882,11 +1977,11 @@ task.spawn(function()
                                 end
                             end
 
-                            if targetDist > 14 then
-                                executeMoveStep(targetWp, math.min(180, Config.QuestDriveSpeed))
+                            if targetDist > 13 then
+                                executeMoveStep(nPos, "npc", math.min(180, Config.QuestDriveSpeed))
                             else
                                 -- Arrived at NPC: Stop car and interact
-                                driveCarStep(nPos, 0, false)
+                                stopAutoDrive()
                                 if rcd and rcd.phys then
                                     rcd.phys.v = Vector3.zero
                                     rcd.phys.throttle = 0
