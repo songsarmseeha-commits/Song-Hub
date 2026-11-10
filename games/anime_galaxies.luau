@@ -5211,16 +5211,16 @@ Tabs.Config:Section({ Title = "🌐 Song Hub Community & Support" })
 
 Tabs.Config:Button({
     Title = "💬 Join Discord Community",
-    Desc = "Copy Discord invite link to your clipboard (https://discord.gg/cecytf4MHE)",
+    Desc = "Copy Discord invite link to your clipboard (https://discord.gg/Cpcg9wU5k)",
     Icon = "message-circle",
     Callback = function()
         pcall(function()
             if typeof(setclipboard) == "function" then
-                setclipboard("https://discord.gg/cecytf4MHE")
+                setclipboard("https://discord.gg/Cpcg9wU5k")
             end
             WindUI:Notify({
                 Title = "Discord Link Copied! 💬",
-                Content = "https://discord.gg/cecytf4MHE\nJoin Song Hub Discord for support, updates & keys!",
+                Content = "https://discord.gg/Cpcg9wU5k\nJoin Song Hub Discord for support, updates & keys!",
                 Duration = 4,
                 Icon = "clipboard-check"
             })
