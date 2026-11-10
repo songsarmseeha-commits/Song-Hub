@@ -9,8 +9,8 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 -- ⚙️ CONFIGURATION
--- Paste your Cloudflare Worker URL here (e.g. "https://song-hub-whitelist.yourname.workers.dev")
-local CLOUDFLARE_URL = "https://song-hub-whitelist.yourname.workers.dev" -- <-- วาง URL ของ Cloudflare Worker ที่นี่
+-- Live Cloudflare Worker URL
+local CLOUDFLARE_URL = "https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev"
 local SERVER_VERIFY_URL = CLOUDFLARE_URL .. "/api/verify-key"
 local GET_KEY_PORTAL_URL = CLOUDFLARE_URL .. "/getkey"
 local DISCORD_INVITE_URL = "https://discord.gg/your-discord-here"
