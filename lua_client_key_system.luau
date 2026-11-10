@@ -194,6 +194,16 @@ local function authenticateUser(callbackOnSuccess)
     })
 end
 
+-- Auto-execute authentication flow if run directly
+task.spawn(function()
+    authenticateUser(function(data)
+        print(string.format("[Song Hub] ✅ Authenticated successfully as %s", data.role or data.keyType or "User"))
+        -- Launch the universal game loader
+        local loaderCode = game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. tostring(os.time()))
+        loadstring(loaderCode)()
+    end)
+end)
+
 return {
     authenticate = authenticateUser,
     verifyRequest = sendVerifyRequest,
