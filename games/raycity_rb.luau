@@ -495,11 +495,11 @@ TabSettings:Keybind({
 
 TabSettings:Button({
     Title = "💬 Join Discord Community",
-    Desc = "Copy Discord invite link (https://discord.gg/cecytf4MHE)",
+    Desc = "Copy Discord invite link (https://discord.gg/Cpcg9wU5k)",
     Icon = "message-circle",
     Callback = function()
         if setclipboard then
-            setclipboard("https://discord.gg/cecytf4MHE")
+            setclipboard("https://discord.gg/Cpcg9wU5k")
             WindUI:Notify({ Title = "Copied!", Content = "Discord link copied to clipboard!", Duration = 3, Icon = "clipboard" })
         end
     end
