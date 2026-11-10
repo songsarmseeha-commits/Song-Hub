@@ -133,7 +133,7 @@ local HttpService = game:GetService("HttpService")
 local CLOUDFLARE_URL = "https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev"
 local SERVER_VERIFY_URL = CLOUDFLARE_URL .. "/api/verify-key"
 local GET_KEY_PORTAL_URL = CLOUDFLARE_URL .. "/getkey"
-local DISCORD_INVITE_URL = "https://discord.gg/your-discord-here"
+local DISCORD_INVITE_URL = "https://discord.gg/Cpcg9wU5k"
 local KEY_SAVE_PATH = "SongHub/saved_license_key.txt"
 
 local function getHardwareId()
