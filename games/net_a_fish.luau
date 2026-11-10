@@ -683,6 +683,22 @@ TabTeleport:Toggle({
     end
 })
 
+TabTeleport:Button({
+    Title = "💬 Join Discord Community",
+    Desc = "Copy Discord invite link to clipboard (https://discord.gg/Cpcg9wU5k)",
+    Callback = function()
+        if setclipboard then
+            setclipboard("https://discord.gg/Cpcg9wU5k")
+            WindUI:Notify({
+                Title = "Discord Copied!",
+                Content = "https://discord.gg/Cpcg9wU5k\nJoin Song Hub Discord for support, updates & keys!",
+                Duration = 4,
+                Icon = "clipboard-check"
+            })
+        end
+    end
+})
+
 UserInputService.JumpRequest:Connect(function()
     if Config.InfJump and isAlive() then
         local hum = getHumanoid()
@@ -898,3 +914,4 @@ WindUI:Notify({
     Duration = 5,
     Icon = "check"
 })
+
