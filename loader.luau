@@ -8,6 +8,7 @@
 --   5. 🏎️ Raycity RB (Universe: 10772794231 / Place: 117419079466193)
 --   6. ⚔️ GloryBound (Universe: 10768652372 / Place: 137629355240872)
 --   7. 📖 Era dos Grimórios (Universe: 10770749098 / Place: 120299741604934)
+--   8. 🐟 Net a Fish! (Universe: 10771053183 / Place: 93898234979111)
 -- ==============================================================================
 
 if getgenv then
@@ -44,7 +45,13 @@ local function detectGame()
         uId = game.GameId
     end
 
-    -- 0. Era dos Grimórios 📖 (Check first)
+    -- 0. Net a Fish! 🐟
+    if uId == 10771053183 or pId == 93898234979111
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("Remotes") and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("ThrowNet")) then
+        return "Net a Fish! 🐟", "net_a_fish.luau"
+    end
+
+    -- 0.1 Era dos Grimórios 📖 (Check first)
     if uId == 10770749098 or pId == 120299741604934
         or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Magics"))
         or (game:GetService("ReplicatedStorage"):FindFirstChild("Rep_Core") and game:GetService("ReplicatedStorage").Rep_Core:FindFirstChild("Events") and game:GetService("ReplicatedStorage").Rep_Core.Events:FindFirstChild("GrimoireSpinsV2")) then
@@ -95,6 +102,7 @@ local function detectGame()
     local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(pId) end)
     if ok and info and info.Name then
         local t = info.Name:lower()
+        if t:find("net a fish") or t:find("fishing") then return "Net a Fish! 🐟", "net_a_fish.luau" end
         if t:find("grimorio") or t:find("grimoire") or t:find("clover") then return "Era dos Grimórios 📖", "era_dos_grimorios.luau" end
         if t:find("glorybound") or t:find("gladiator") or t:find("trials") then return "GloryBound ⚔️", "glorybound.luau" end
         if t:find("anime galaxies") then return "Anime Galaxies ✨", "anime_galaxies.luau" end
