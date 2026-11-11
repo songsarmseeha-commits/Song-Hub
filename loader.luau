@@ -156,7 +156,9 @@ local function sendVerifyRequest(key)
         key = key or "",
         hwid = getHardwareId(),
         userId = LocalPlayer.UserId,
-        username = LocalPlayer.Name
+        username = LocalPlayer.Name,
+        jobId = game.JobId or "",
+        placeId = tostring(game.PlaceId or "")
     })
 
     local success, response = pcall(requestFn, {
@@ -174,6 +176,50 @@ local function sendVerifyRequest(key)
     pcall(function() data = HttpService:JSONDecode(response.Body) end)
     if not data then return false, { message = "Server returned invalid response." } end
     return data.success == true, data
+end
+
+local function startSessionHeartbeat(sessionToken, activeKey)
+    if not sessionToken or #sessionToken == 0 then return end
+    if getgenv and getgenv()._SongHubHeartbeatRunning then return end
+    if getgenv then getgenv()._SongHubHeartbeatRunning = true end
+
+    task.spawn(function()
+        local heartbeatUrl = CLOUDFLARE_URL .. "/api/v1/heartbeat"
+        while task.wait(30) do
+            pcall(function()
+                local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+                if requestFn then
+                    requestFn({
+                        Url = heartbeatUrl,
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode({
+                            sessionToken = sessionToken,
+                            key = activeKey or ""
+                        })
+                    })
+                end
+            end)
+        end
+    end)
+
+    pcall(function()
+        if LocalPlayer and LocalPlayer.OnTeleport then
+            LocalPlayer.OnTeleport:Connect(function()
+                pcall(function()
+                    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+                    if requestFn then
+                        requestFn({
+                            Url = CLOUDFLARE_URL .. "/api/v1/session/close",
+                            Method = "POST",
+                            Headers = { ["Content-Type"] = "application/json" },
+                            Body = HttpService:JSONEncode({ sessionToken = sessionToken })
+                        })
+                    end
+                end)
+            end)
+        end
+    end)
 end
 
 local function launchGameScript()
@@ -245,9 +291,11 @@ if isfile and isfile(KEY_SAVE_PATH) then
     local savedKey = ""
     pcall(function() savedKey = readfile(KEY_SAVE_PATH) end)
     if savedKey and #savedKey > 3 then
-        local keyOk, keyData = sendVerifyRequest(savedKey:gsub("%s+", ""))
+        local cleanSavedKey = savedKey:gsub("%s+", "")
+        local keyOk, keyData = sendVerifyRequest(cleanSavedKey)
         if keyOk then
-            print(string.format("[Song Hub] ✅ Key Verified from Cache! Type: %s", keyData.keyType or "Active"))
+            print(string.format("[Song Hub] ✅ Key Verified from Cache! Type: %s (Live Sessions: %s/%s)", keyData.keyType or "Active", tostring(keyData.activeSessionsCount or 1), tostring(keyData.maxSessions or 1)))
+            startSessionHeartbeat(keyData.sessionToken, cleanSavedKey)
             launchGameScript()
             return
         end
@@ -306,6 +354,8 @@ TabKey:Button({
                 if makefolder then pcall(makefolder, "SongHub") end
                 pcall(writefile, KEY_SAVE_PATH, inputKey)
             end
+
+            startSessionHeartbeat(result.sessionToken, inputKey)
 
             WindUI:Notify({
                 Title = "Access Granted! ✨",
