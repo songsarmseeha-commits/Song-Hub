@@ -90,6 +90,9 @@ end)
 local CITY_WAYPOINTS = {
     ["🏙️ City Center / Start"] = Vector3.new(-482, 44, -5589),
     ["🎲 Derix (เต๋า & กล่องเงิน 1.5M)"] = Vector3.new(-1225.35, 40.34, -5316),
+    ["🌟 Jin Ok (ฟาร์มเวลตามรูป)"] = Vector3.new(3962, 50.83, 7952),
+    ["⚡ Hyon Jun (ฟาร์มเวลไว)"] = Vector3.new(1558, 36.75, 8768),
+    ["🔥 Tony (Car EXP 8.2k)"] = Vector3.new(-6810, 27.85, -5412),
     ["🏢 Gangnam District"] = Vector3.new(1250, 45, -3420),
     ["🌆 Cheongdam Avenue"] = Vector3.new(-1800, 48, -2100),
     ["🔧 Tuning Shop & Garage"] = Vector3.new(200, 42, -4900),
@@ -100,9 +103,100 @@ local CITY_WAYPOINTS = {
 
 
 -- ==============================================================================
+-- ⚡ ROAD FIGHT LEVEL FARM TARGETS ("วิ่งแต่อันแรกยาวๆ")
+-- ==============================================================================
+local LEVEL_FARM_TARGETS = {
+    ["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"] = {
+        bossId = 8,
+        npcId = 1779,
+        questId = "R1779",
+        name = "Jin Ok",
+        coords = Vector3.new(3962, 50.83, 7952),
+        ux = 3533,
+        cx = 2840,
+        desc = "จุดที่คนในคอมมูนิตี้แนะนำมากที่สุด! ระยะสั้นมาก รับรอบ 1 วิ่งยาวๆ ได้ EXP สูงลิบ"
+    },
+    ["🎲 Derix (เดอร์ริก) - EXP + ลุ้นกล่อง 1.5M"] = {
+        bossId = 2,
+        npcId = 1676,
+        questId = "R1676",
+        name = "Derix",
+        coords = Vector3.new(-1225.35, 40.34, -5316),
+        ux = 1800,
+        cx = 5000,
+        desc = "Car EXP 5,000 ต่อรอบ + ได้เต๋า และมีโอกาสดรอปกล่องเงิน Power Jet Box 3 (1.5M Rain)"
+    },
+    ["⚡ Hyon Jun (ฮยอนจุน) - ฟาร์มเวลไว"] = {
+        bossId = 10,
+        npcId = 1787,
+        questId = "R1787",
+        name = "Hyon Jun",
+        coords = Vector3.new(1558, 36.75, 8768),
+        ux = 3533,
+        cx = 2425,
+        desc = "จุดฟาร์มเลเวลย่านกังนัมใต้ จุดเช็คพอยต์ใกล้ รับรอบ 1 สแปมทำเควสต่อเนื่อง"
+    },
+    ["🔥 Tony (โทนี่) - Car EXP สูงสุด (8.2k EXP)"] = {
+        bossId = 25,
+        npcId = 1847,
+        questId = "R1847",
+        name = "Tony",
+        coords = Vector3.new(-6810, 27.85, -5412),
+        ux = 4315,
+        cx = 8239,
+        desc = "Car EXP สูงที่สุดในบอสปกติ (8,239 EXP) สำหรับผู้เล่นเลเวล 45+"
+    },
+    ["🏎️ Bryan (ไบรอัน) - Level 29+ Farm"] = {
+        bossId = 6,
+        npcId = 1767,
+        questId = "R1767",
+        name = "Bryan",
+        coords = Vector3.new(7315.5, 43.44, 8120),
+        ux = 2100,
+        cx = 2464,
+        desc = "บอสสายฮีโร่ ให้ EXP ดี เหมาะสำหรับเลเวล 29-35"
+    },
+    ["🚁 Mr. Copter - Level 15+ Farm"] = {
+        bossId = 1,
+        npcId = 2050,
+        questId = "R2050",
+        name = "Mr. Copter",
+        coords = Vector3.new(-2058.2, 37.4, -4993),
+        ux = 1500,
+        cx = 1000,
+        desc = "บอสช่วงเริ่มต้น เลเวล 15 ฟาร์มผ่านง่าย"
+    },
+    ["⭐ James (เจมส์) - Level 42+ Farm"] = {
+        bossId = 21,
+        npcId = 1831,
+        questId = "R1831",
+        name = "James",
+        coords = Vector3.new(-12168, 51.11, -5516),
+        ux = 4315,
+        cx = 5214,
+        desc = "บอสย่านทิศตะวันตก เลเวล 42+ ให้ EXP สูง"
+    },
+    ["👑 Kang Tae San (คังแทซาน) - EXP สูงสุดในเกม"] = {
+        bossId = 26,
+        npcId = 1851,
+        questId = "R1851",
+        name = "Kang Tae San",
+        coords = Vector3.new(-10458, 29.05, -5060),
+        ux = 4315,
+        cx = 8632,
+        desc = "ราชาบอส Road King คังแทซาน Car EXP สูงสุด 8,632"
+    }
+}
+
+-- ==============================================================================
 -- ⚙️ 3. CONFIGURATION & STATE
 -- ==============================================================================
 local Config = {
+    -- ⚡ Road Fight Level Farm ("วิ่งแต่อันแรกยาวๆ")
+    AutoFarmLevel = false,
+    LevelFarmTarget = "🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)",
+    LevelFarmOnlyRound1 = true,
+
     -- 🎲 Derix 1.5M Dice Farm (Road Fight Boss)
     AutoFarmDerix = false,
     DerixRound = "Auto All Rounds", -- "Auto All Rounds" | "Round 1 (R1676)" | "Round 2 (R1678)" | "Round 3 (R1679)" | "Round 4 (R1680)"
@@ -157,7 +251,72 @@ local updateFlyState = function() end
 local teleportCar = function(targetCF) end
 local handleDiceRollAndRewards = function() end
 local autoOpenCashBoxes = function() end
-local challengeDerix = function(preferredRound) end
+local challengeBoss = function(bossId, questId, npcId, preferredRound)
+    local root = getCarRoot()
+    if not root then return false end
+
+    local now = os.clock()
+    if (now - LevelFarmStats.lastChallengeTime) < 1.5 then return false end
+    LevelFarmStats.lastChallengeTime = now
+
+    local targetQuestId = questId or "R1779"
+    local targetNpcId = npcId or 1779
+
+    LevelFarmStats.activeFightRound = targetQuestId
+
+    -- 1. Native UI prompt button click if open
+    pcall(function()
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local rfGui = pGui and pGui:FindFirstChild("RBRCRoadFightUi")
+        if rfGui then
+            local dlg = rfGui:FindFirstChild("RoadFightDlg")
+            if dlg and dlg.Visible then
+                local btn = dlg:FindFirstChild("btChallenge", true)
+                if btn and firesignal then
+                    firesignal(btn.Activated)
+                end
+            end
+        end
+    end)
+
+    -- 2. Native RBRCRoadFightClient handler
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rfc = renv.shared and renv.shared.RBRCRoadFightClient
+        if rfc and rfc.talk then
+            rfc.talk(targetNpcId)
+        end
+    end)
+
+    -- 3. Network Remote Function: RoadFightRequest & QuestRequest
+    pcall(function()
+        local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+        local rfReq = qRemotes and qRemotes:FindFirstChild("RoadFightRequest")
+        if rfReq then
+            rfReq:InvokeServer({
+                op = "accept",
+                questId = targetQuestId,
+                carPos = root.Position
+            })
+        end
+    end)
+    pcall(function()
+        local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+        local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+        if qReq then
+            qReq:InvokeServer({
+                op = "accept",
+                questId = targetQuestId,
+                carPos = root.Position,
+                carLook = root.CFrame.LookVector
+            })
+        end
+    end)
+
+    return true
+end
+
+challengeDerix = function(preferredRound) end
 
 local DERIX_COORDS = Vector3.new(-1225.35, 40.34, -5316.0)
 local DerixStats = {
@@ -230,6 +389,59 @@ local Window = WindUI:CreateWindow({
     Acrylic = false,
     Resizable = true
 })
+
+-- ==============================================================================
+-- 🖱️ UI CLICKABILITY & MODAL ENHANCER (FIX UNCLICKABLE UI BUG)
+-- Ensures WindUI is always topmost (DisplayOrder 999999) and mouse cursor is
+-- permanently freed from vehicle camera LockCenter so all buttons/dropdowns work.
+-- ==============================================================================
+pcall(function()
+    local roots = {
+        (typeof(gethui) == "function" and gethui()) or nil,
+        game:GetService("CoreGui"),
+        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    }
+
+    local function elevateGui(sg)
+        if sg:IsA("ScreenGui") then
+            local name = sg.Name
+            if name:find("WindUI") or name:find("RaycityHub") or name:find("SongHub") then
+                sg.DisplayOrder = 999999
+                sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+                if not sg:FindFirstChild("_MouseUnlockerModal") then
+                    local modalBtn = Instance.new("TextButton")
+                    modalBtn.Name = "_MouseUnlockerModal"
+                    modalBtn.Size = UDim2.new(0, 0, 0, 0)
+                    modalBtn.Position = UDim2.new(0, 0, 0, 0)
+                    modalBtn.BackgroundTransparency = 1
+                    modalBtn.Text = ""
+                    modalBtn.Modal = true
+                    modalBtn.Active = false
+                    modalBtn.Selectable = false
+                    modalBtn.Parent = sg
+                end
+            end
+        end
+    end
+
+    for _, root in ipairs(roots) do
+        if root then
+            for _, desc in ipairs(root:GetDescendants()) do
+                elevateGui(desc)
+            end
+            root.DescendantAdded:Connect(function(desc)
+                task.wait(0.02)
+                elevateGui(desc)
+            end)
+        end
+    end
+
+    UserInputService.MouseIconEnabled = true
+    if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end
+end)
 
 -- TAB 1: 📜 Auto Farm Quest (ขับเองออโต้)
 local TabQuest = Window:Tab({ Title = "Auto Quest Farm", Icon = "file-text" })
@@ -440,6 +652,92 @@ TabDerix:Button({
     Callback = function()
         autoOpenCashBoxes()
         WindUI:Notify({ Title = "Boxes Processed", Content = "ตรวจสอบและกดเปิดกล่องเงินในกระเป๋าเรียบร้อย!", Duration = 2, Icon = "check-circle" })
+    end
+})
+
+-- TAB 1.6: ⚡ Level Farm (วิ่งแต่อันแรกยาวๆ ตามรูป)
+local TabLevel = Window:Tab({ Title = "Level Farm (เวลไว)", Icon = "zap" })
+
+TabLevel:Paragraph({
+    Title = "⚡ Auto Level Farm (วิ่งแต่อันแรกยาวๆ)",
+    Desc = "ฟังก์ชั่นฟาร์มเลเวลรถและคนขับที่ดีที่สุดในเกม! บอทจะพารถไปหา NPC บอส Road Fight ที่ให้ EXP สูงสุด และรับภารกิจ "รอบที่ 1 / Standard" วนซ้ำแบบไม่รู้จบ ตามเทคนิคของคอมมูนิตี้ไทย ("วิ่งแต่อันแรกยาวๆได้เลย")",
+    Image = "flame"
+})
+
+TabLevel:Toggle({
+    Title = "⚡ Master Auto Level Farm (เปิดบอทฟาร์มเลเวล)",
+    Desc = "เปิดใช้งานบอทวิ่งฟาร์มบอสที่เลือกเพื่อปั๊มเลเวล Car EXP & Driver EXP วนลูป 24 ชม.",
+    Value = Config.AutoFarmLevel,
+    Callback = function(val)
+        Config.AutoFarmLevel = val
+        if val then
+            Config.AutoFarmQuests = true
+            WindUI:Notify({ Title = "Level Farm Started! ⚡", Content = "เริ่มฟาร์มเลเวล: " .. Config.LevelFarmTarget .. "\n(โหมดวิ่งแต่อันแรกยาวๆ)", Duration = 3, Icon = "play" })
+        else
+            WindUI:Notify({ Title = "Level Farm Stopped", Content = "หยุดการฟาร์มเลเวลชั่วคราว", Duration = 2, Icon = "pause" })
+        end
+    end
+})
+
+TabLevel:Dropdown({
+    Title = "🎯 Target Boss (เลือกบอสที่จะฟาร์มเวล)",
+    Desc = "เลือกจุด NPC บอส Road Fight ที่ต้องการให้บอทไปวิ่งฟาร์มเลเวล",
+    Values = {
+        "🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)",
+        "🎲 Derix (เดอร์ริก) - EXP + ลุ้นกล่อง 1.5M",
+        "⚡ Hyon Jun (ฮยอนจุน) - ฟาร์มเวลไว",
+        "🔥 Tony (โทนี่) - Car EXP สูงสุด (8.2k EXP)",
+        "🏎️ Bryan (ไบรอัน) - Level 29+ Farm",
+        "🚁 Mr. Copter - Level 15+ Farm",
+        "⭐ James (เจมส์) - Level 42+ Farm",
+        "👑 Kang Tae San (คังแทซาน) - EXP สูงสุดในเกม"
+    },
+    Value = Config.LevelFarmTarget,
+    Callback = function(val)
+        Config.LevelFarmTarget = val
+        local info = LEVEL_FARM_TARGETS[val]
+        if info then
+            WindUI:Notify({ Title = "Target Selected", Content = info.name .. " (" .. tostring(info.cx) .. " Car EXP / " .. tostring(info.ux) .. " User EXP)", Duration = 3, Icon = "target" })
+        end
+    end
+})
+
+TabLevel:Toggle({
+    Title = "🔄 Lock Round 1 Only (วิ่งแต่อันแรกยาวๆ)",
+    Desc = "ล็อคให้รับเฉพาะภารกิจรอบที่ 1 เพื่อรอบที่ไวที่สุดและ EXP/นาที สูงที่สุด",
+    Value = Config.LevelFarmOnlyRound1,
+    Callback = function(val)
+        Config.LevelFarmOnlyRound1 = val
+    end
+})
+
+TabLevel:Toggle({
+    Title = "🎲 Auto Roll Dice (ทอยเต๋ารับรางวัลอัตโนมัติ)",
+    Desc = "เมื่อมีเต๋าเด้งขึ้นมา ให้กดทอยเต๋าแบบสุ่มอัตโนมัติทันที",
+    Value = Config.AutoRollDice,
+    Callback = function(val)
+        Config.AutoRollDice = val
+    end
+})
+
+TabLevel:Toggle({
+    Title = "📦 Auto Open Cash Boxes (เปิดกล่องเงินอัตโนมัติ)",
+    Desc = "เปิดกล่องเงิน Power Jet Box 3 (1.5M), Box 2 (700k), Box 1 (500k) ทันทีเมื่อได้รับ",
+    Value = Config.AutoOpen15MBox,
+    Callback = function(val)
+        Config.AutoOpen15MBox = val
+    end
+})
+
+TabLevel:Button({
+    Title = "🚀 Teleport to Selected Boss (วาร์ปไปหน้าบอสทันที)",
+    Desc = "พารถวาร์ปไปจอดหน้า NPC บอสที่เลือกใน Dropdown ทันที",
+    Callback = function()
+        local t = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
+        if t and t.coords then
+            teleportCar(t.coords)
+            WindUI:Notify({ Title = "Teleported", Content = "มาถึงหน้า " .. t.name .. " เรียบร้อยแล้ว!", Duration = 2, Icon = "map-pin" })
+        end
     end
 })
 
@@ -2929,7 +3227,28 @@ task.spawn(function()
                     -- ==========================================================
                     -- C. NO ACTIVE QUEST IN PROGRESS: FIND AVAILABLE QUEST GIVER NPC
                     -- ==========================================================
-                    if Config.AutoFarmDerix then
+                    if Config.AutoFarmLevel then
+                        questFarmState = "LEVEL_FARM"
+                        local curTarget = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
+                        local targetCoords = curTarget.coords
+                        local distToBoss = (root.Position - targetCoords).Magnitude
+                        if distToBoss > 24 then
+                            executeMoveStep(targetCoords, "level_boss", Config.QuestDriveSpeed)
+                        else
+                            stopAutoDrive()
+                            if rcd and rcd.phys then
+                                rcd.phys.v = Vector3.zero
+                                rcd.phys.throttle = 0
+                                rcd.phys.brake = 1
+                            end
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                            challengeBoss(curTarget.bossId, curTarget.questId, curTarget.npcId, Config.LevelFarmOnlyRound1 and "Round 1" or nil)
+                            pressReturnKey()
+                            handleDiceRollAndRewards()
+                            task.wait(0.3)
+                        end
+                    elseif Config.AutoFarmDerix then
                         questFarmState = "DERIX_FARM"
                         local distToDerix = (root.Position - DERIX_COORDS).Magnitude
                         if distToDerix > 24 then
