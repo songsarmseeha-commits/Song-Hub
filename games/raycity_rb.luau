@@ -89,6 +89,7 @@ end)
 -- ==============================================================================
 local CITY_WAYPOINTS = {
     ["🏙️ City Center / Start"] = Vector3.new(-482, 44, -5589),
+    ["🎲 Derix (เต๋า & กล่องเงิน 1.5M)"] = Vector3.new(-1225.35, 40.34, -5316),
     ["🏢 Gangnam District"] = Vector3.new(1250, 45, -3420),
     ["🌆 Cheongdam Avenue"] = Vector3.new(-1800, 48, -2100),
     ["🔧 Tuning Shop & Garage"] = Vector3.new(200, 42, -4900),
@@ -102,6 +103,13 @@ local CITY_WAYPOINTS = {
 -- ⚙️ 3. CONFIGURATION & STATE
 -- ==============================================================================
 local Config = {
+    -- 🎲 Derix 1.5M Dice Farm (Road Fight Boss)
+    AutoFarmDerix = false,
+    DerixRound = "Auto All Rounds", -- "Auto All Rounds" | "Round 1 (R1676)" | "Round 2 (R1678)" | "Round 3 (R1679)" | "Round 4 (R1680)"
+    AutoRollDice = true,
+    AutoOpen15MBox = true,
+    AutoOpenAllCashBoxes = true,
+
     -- Autonomous Quest Farming
     AutoFarmQuests = true,
     AutoStoryProgression = true,
@@ -147,6 +155,19 @@ local Config = {
 -- Forward declarations for UI callbacks
 local updateFlyState = function() end
 local teleportCar = function(targetCF) end
+local handleDiceRollAndRewards = function() end
+local autoOpenCashBoxes = function() end
+local challengeDerix = function(preferredRound) end
+
+local DERIX_COORDS = Vector3.new(-1225.35, 40.34, -5316.0)
+local DerixStats = {
+    wins = 0,
+    diceRolled = 0,
+    boxesOpened15M = 0,
+    rainEarned = 0,
+    lastChallengeTime = 0,
+    activeFightRound = nil
+}
 
 -- ==============================================================================
 -- 🎨 12. WINDUI GUI CREATION
@@ -332,6 +353,93 @@ TabQuest:Toggle({
     Value = Config.AutoWhirlSkill,
     Callback = function(val)
         Config.AutoWhirlSkill = val
+    end
+})
+
+
+-- ==============================================================================
+-- TAB 1.5: 🎲 Derix Dice & 1.5M Cash Farm (บอทฟาร์มเต๋า Derix)
+-- ==============================================================================
+local TabDerix = Window:Tab({ Title = "Derix 1.5M Farm", Icon = "dices" })
+
+TabDerix:Paragraph({
+    Title = "🎲 Derix Road Fight & Dice Farm (ฟาร์มเต๋า & กล่องเงิน 1.5M)",
+    Desc = "ระบบจะพารถวิ่งไปหา NPC Derix (จอห์น เดอร์ริก), ท้าแข่งประลอง Road Fight, ขับผ่านเช็คพอยต์ด้วยความเร็วสูง, ทอยเต๋ารับรางวัลอัตโนมัติ และตรวจเปิดกล่องเงิน Power Jet Box 3 (1.5M Rain) เข้าตัวทันทีแบบ 24/7!",
+    Image = "dices"
+})
+
+TabDerix:Toggle({
+    Title = "🎲 Master Auto Farm Derix (เปิดบอทฟาร์มเต๋า Derix วนลูป)",
+    Desc = "เปิดใช้งานบอทวิ่งฟาร์ม Derix Road Fight อย่างต่อเนื่อง วนลูปตลอด 24 ชั่วโมง",
+    Value = Config.AutoFarmDerix,
+    Callback = function(val)
+        Config.AutoFarmDerix = val
+        if val then
+            Config.AutoFarmQuests = true
+            WindUI:Notify({ Title = "Derix Farm Started! 🎲", Content = "กำลังมุ่งหน้าไปหา Derix เพื่อเริ่มฟาร์มเต๋า & กล่อง 1.5M...", Duration = 3, Icon = "play" })
+        else
+            WindUI:Notify({ Title = "Derix Farm Stopped", Content = "หยุดการฟาร์ม Derix ชั่วคราว", Duration = 2, Icon = "pause" })
+        end
+    end
+})
+
+TabDerix:Dropdown({
+    Title = "🎯 Derix Round Selection (เลือกรอบที่จะประลอง)",
+    Values = {
+        "Auto All Rounds (รอบ 1 - 4 วนลูป)",
+        "Round 1 (R1676 - ไวสุด 3.1 km)",
+        "Round 2 (R1678 - 4.3 km)",
+        "Round 3 (R1679 - 2.3 km สั้นสุด!)",
+        "Round 4 (R1680 - 3.9 km)"
+    },
+    Value = Config.DerixRound,
+    Callback = function(val)
+        Config.DerixRound = val
+    end
+})
+
+TabDerix:Toggle({
+    Title = "🎲 Auto Roll Dice (ทอยเต๋าออโต้เมื่อชนะ)",
+    Desc = "กดทอยลูกเต๋าให้อัตโนมัติทันทีที่จบการแข่งขันเพื่อรับของรางวัล ไม่ต้องกดมือ",
+    Value = Config.AutoRollDice,
+    Callback = function(val)
+        Config.AutoRollDice = val
+    end
+})
+
+TabDerix:Toggle({
+    Title = "💰 Auto Open 1.5M Box (เปิดกล่องเงิน 1.5M อัตโนมัติ)",
+    Desc = "ตรวจหากล่อง Power Jet Box 3 (1.5M Rain) ในกระเป๋า และกดใช้งานทันที (+1,500,000 Rain/กล่อง)",
+    Value = Config.AutoOpen15MBox,
+    Callback = function(val)
+        Config.AutoOpen15MBox = val
+    end
+})
+
+TabDerix:Toggle({
+    Title = "💵 Auto Open All Cash Boxes (เปิดกล่อง 500k & 700k ด้วย)",
+    Desc = "เปิดกล่องเงิน Power Jet Box 1 (500k) และ Power Jet Box 2 (700k) ให้อัตโนมัติ",
+    Value = Config.AutoOpenAllCashBoxes,
+    Callback = function(val)
+        Config.AutoOpenAllCashBoxes = val
+    end
+})
+
+TabDerix:Button({
+    Title = "🚀 Teleport Directly to Derix (วาร์ปไปหน้า Derix)",
+    Desc = "พารถวาร์ปไปจอดหน้า NPC Derix ที่จุดพิกัด Gangnam ทันที",
+    Callback = function()
+        teleportCar(DERIX_COORDS)
+        WindUI:Notify({ Title = "Teleported", Content = "มาถึงหน้า NPC Derix เรียบร้อยแล้ว!", Duration = 2, Icon = "map-pin" })
+    end
+})
+
+TabDerix:Button({
+    Title = "📦 Open All Cash Boxes Now (เปิดกล่องเงินทั้งหมดในกระเป๋า)",
+    Desc = "กดสแกนและเปิดกล่องเงิน 1.5M, 700k, 500k ที่มีในกระเป๋าตอนนี้ทั้งหมดทันที",
+    Callback = function()
+        autoOpenCashBoxes()
+        WindUI:Notify({ Title = "Boxes Processed", Content = "ตรวจสอบและกดเปิดกล่องเงินในกระเป๋าเรียบร้อย!", Duration = 2, Icon = "check-circle" })
     end
 })
 
@@ -1353,6 +1461,19 @@ local function pressReturnKey()
 end
 
 -- ==============================================================================
+-- 💰 4.9. CONTINUOUS BACKGROUND 1.5M CASH BOX OPENER & DICE ROLLER
+task.spawn(function()
+    while isAlive() do
+        task.wait(1.5)
+        if Config.AutoOpen15MBox or Config.AutoOpenAllCashBoxes or Config.AutoFarmDerix then
+            pcall(autoOpenCashBoxes)
+        end
+        if Config.AutoRollDice or Config.AutoFarmDerix then
+            pcall(handleDiceRollAndRewards)
+        end
+    end
+end)
+
 -- 💬 5.0. CONTINUOUS BACKGROUND AUTO DIALOGUE SKIP & QUEST ACCEPT ENGINE
 -- ==============================================================================
 task.spawn(function()
@@ -1500,6 +1621,187 @@ local function getSkillQuestState()
     return qq
 end
 
+
+-- ==============================================================================
+-- 🎲 5.3. DERIX ROAD FIGHT & 1.5M CASH BOX ENGINE
+-- ==============================================================================
+autoOpenCashBoxes = function()
+    if not (Config.AutoOpen15MBox or Config.AutoOpenAllCashBoxes or Config.AutoFarmDerix) then return end
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local pcMod = rep:FindFirstChild("RaycityProfile") and rep.RaycityProfile:FindFirstChild("ProfileClient")
+        local iuReq = rep:FindFirstChild("RaycityItemUse") and rep.RaycityItemUse:FindFirstChild("Remotes") and rep.RaycityItemUse.Remotes:FindFirstChild("ItemUseRequest")
+        if not pcMod or not iuReq then return end
+
+        local pc = require(pcMod)
+        local data = pc.get and pc.get()
+        if not data or not data.inventory then
+            data = pc.request and pc.request("get")
+            data = data and (data.profile or data)
+        end
+        if not data or not data.inventory then return end
+
+        for cell, item in pairs(data.inventory) do
+            local itemId = tonumber(item.id) or 0
+            -- Item 19309 = Power Jet Box 3 (1,500,000 Rain / 1.5M)
+            -- Item 18270 = Power Jet Box 2 (700,000 Rain)
+            -- Item 15182 = Power Jet Box 1 (500,000 Rain)
+            local is15M = (itemId == 19309)
+            local isCashBox = (itemId == 18270 or itemId == 15182)
+            local isDice = (itemId == 15559 or itemId == 16812 or itemId == 16813 or itemId == 16814 or itemId == 14653 or itemId == 14654)
+
+            if (is15M and Config.AutoOpen15MBox) or (isCashBox and Config.AutoOpenAllCashBoxes) or (isDice and Config.AutoRollDice) then
+                pcall(function()
+                    local res = iuReq:InvokeServer("use", { cell = tonumber(cell), id = itemId })
+                    if res and res.ok then
+                        if is15M then
+                            DerixStats.boxesOpened15M = DerixStats.boxesOpened15M + 1
+                            DerixStats.rainEarned = DerixStats.rainEarned + 1500000
+                            pcall(function()
+                                WindUI:Notify({
+                                    Title = "🎉 ได้รับเงิน 1,500,000 Rain!",
+                                    Content = "เปิดกล่องเงิน Power Jet Box 3 สำเร็จ! (+1.5M)",
+                                    Duration = 4,
+                                    Icon = "sparkles"
+                                })
+                            end)
+                        elseif isCashBox then
+                            DerixStats.rainEarned = DerixStats.rainEarned + (itemId == 18270 and 700000 or 500000)
+                        end
+                    end
+                end)
+                task.wait(0.15)
+            end
+        end
+    end)
+end
+
+handleDiceRollAndRewards = function()
+    if not (Config.AutoRollDice or Config.AutoFarmDerix) then return end
+    pcall(function()
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        if not pGui then return end
+
+        for _, gui in ipairs(pGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled then
+                for _, obj in ipairs(gui:GetDescendants()) do
+                    if obj:IsA("GuiButton") and obj.Visible then
+                        local btnText = (obj:IsA("TextButton") and obj.Text or ""):lower()
+                        local btnName = obj.Name:lower()
+                        if btnName:find("dice") or btnName:find("roll") or btnName:find("throw")
+                            or btnText:find("เต๋า") or btnText:find("dice") or btnText:find("ทอย")
+                            or btnText:find("สุ่ม") or btnText:find("roll") or btnText:find("throw") then
+                            if firesignal then firesignal(obj.Activated) end
+                            DerixStats.diceRolled = DerixStats.diceRolled + 1
+                        end
+                    end
+                end
+            end
+        end
+
+        local merMod = ReplicatedStorage:FindFirstChild("RaycityMissionExtra") and ReplicatedStorage.RaycityMissionExtra:FindFirstChild("MissionExtraRules")
+        if merMod then
+            local ok, mer = pcall(require, merMod)
+            if ok and mer and type(mer.roll2d6) == "function" then
+                pcall(mer.roll2d6)
+            end
+        end
+    end)
+end
+
+challengeDerix = function(preferredRound)
+    local root = getCarRoot()
+    if not root then return false end
+
+    local now = os.clock()
+    if (now - DerixStats.lastChallengeTime) < 1.5 then return false end
+    DerixStats.lastChallengeTime = now
+
+    local questId = "R1676"
+    if preferredRound == "Round 1 (R1676)" then
+        questId = "R1676"
+    elseif preferredRound == "Round 2 (R1678)" then
+        questId = "R1678"
+    elseif preferredRound == "Round 3 (R1679)" then
+        questId = "R1679"
+    elseif preferredRound == "Round 4 (R1680)" then
+        questId = "R1680"
+    else
+        local rfc = nil
+        pcall(function()
+            local renv = getrenv and getrenv() or { shared = shared }
+            rfc = renv.shared and renv.shared.RBRCRoadFightClient
+        end)
+        local st = rfc and rfc.state and rfc.state()
+        local rfd = nil
+        pcall(function() rfd = require(ReplicatedStorage.RBRCQuest.RoadFightData) end)
+
+        if rfd and st and rfd.fights and rfd.fights[2] then
+            local fight = rfd.fights[2]
+            for _, m in ipairs(fight.missions) do
+                local ok, can = pcall(rfd.canAccept, st, fight, m)
+                if ok and can and m.questId then
+                    questId = m.questId
+                    break
+                end
+            end
+        end
+    end
+
+    DerixStats.activeFightRound = questId
+
+    -- 1. Native UI prompt button click if open
+    pcall(function()
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local rfGui = pGui and pGui:FindFirstChild("RBRCRoadFightUi")
+        if rfGui then
+            local dlg = rfGui:FindFirstChild("RoadFightDlg")
+            if dlg and dlg.Visible then
+                local btn = dlg:FindFirstChild("btChallenge", true)
+                if btn and firesignal then
+                    firesignal(btn.Activated)
+                end
+            end
+        end
+    end)
+
+    -- 2. Native RBRCRoadFightClient handler
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rfc = renv.shared and renv.shared.RBRCRoadFightClient
+        if rfc and rfc.talk then
+            rfc.talk(1676)
+        end
+    end)
+
+    -- 3. Network Remote Function: RoadFightRequest & QuestRequest
+    pcall(function()
+        local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+        local rfReq = qRemotes and qRemotes:FindFirstChild("RoadFightRequest")
+        if rfReq then
+            rfReq:InvokeServer({
+                op = "accept",
+                questId = questId,
+                carPos = root.Position
+            })
+        end
+    end)
+    pcall(function()
+        local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+        local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+        if qReq then
+            qReq:InvokeServer({
+                op = "accept",
+                questId = questId,
+                carPos = root.Position,
+                carLook = root.CFrame.LookVector
+            })
+        end
+    end)
+
+    return true
+end
+
 local function ensureInventorySpace(minFree)
     if not Config.AutoCleanInventory then return end
     minFree = minFree or 10
@@ -1576,6 +1878,9 @@ local function getNpcWorldPos(target)
     local numId = tonumber(cleanName:match("(%d+)$"))
 
     -- 1. Static known key coordinates
+    if cleanName:find("derix") or cleanName:find("เดอร์ริก") or cleanName:find("เดริก") or numId == 1676 or numId == 931676 then
+        return DERIX_COORDS
+    end
     if cleanName:find("welcome") or cleanName:find("newbie") or numId == 9900 or numId == 939900 then
         return Vector3.new(-531.45, 42.89, -5564.04)
     end
@@ -2486,6 +2791,11 @@ task.spawn(function()
 
                             -- 4. Advance completion dialogues, close result popups, and claim rewards
                             pressReturnKey()
+                            if Config.AutoFarmDerix or Config.AutoRollDice then
+                                handleDiceRollAndRewards()
+                                autoOpenCashBoxes()
+                                DerixStats.wins = DerixStats.wins + 1
+                            end
                             task.wait(0.35)
                         end
 
@@ -2619,7 +2929,26 @@ task.spawn(function()
                     -- ==========================================================
                     -- C. NO ACTIVE QUEST IN PROGRESS: FIND AVAILABLE QUEST GIVER NPC
                     -- ==========================================================
-                    if Config.LoopNextQuest or Config.AutoStoryProgression then
+                    if Config.AutoFarmDerix then
+                        questFarmState = "DERIX_FARM"
+                        local distToDerix = (root.Position - DERIX_COORDS).Magnitude
+                        if distToDerix > 24 then
+                            executeMoveStep(DERIX_COORDS, "derix_npc", Config.QuestDriveSpeed)
+                        else
+                            stopAutoDrive()
+                            if rcd and rcd.phys then
+                                rcd.phys.v = Vector3.zero
+                                rcd.phys.throttle = 0
+                                rcd.phys.brake = 1
+                            end
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                            challengeDerix(Config.DerixRound)
+                            pressReturnKey()
+                            handleDiceRollAndRewards()
+                            task.wait(0.3)
+                        end
+                    elseif Config.LoopNextQuest or Config.AutoStoryProgression then
                         questFarmState = "SEARCHING"
 
                         -- 0. Check Skill/Story Quests available to auto-accept:
