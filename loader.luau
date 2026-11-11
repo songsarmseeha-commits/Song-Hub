@@ -318,6 +318,60 @@ local Window = WindUI:CreateWindow({
     Resizable = false
 })
 
+-- ==============================================================================
+-- 🖱️ UI CLICKABILITY & MODAL ENHANCER (FIX UNCLICKABLE UI BUG)
+-- Ensures WindUI is always topmost (DisplayOrder 999999) and mouse cursor is
+-- permanently freed from vehicle camera LockCenter so all buttons/dropdowns work.
+-- ==============================================================================
+pcall(function()
+    local UserInputService = game:GetService("UserInputService")
+    local roots = {
+        (typeof(gethui) == "function" and gethui()) or nil,
+        game:GetService("CoreGui"),
+        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    }
+
+    local function elevateGui(sg)
+        if sg:IsA("ScreenGui") then
+            local name = sg.Name
+            if name:find("WindUI") or name:find("RaycityHub") or name:find("SongHub") then
+                sg.DisplayOrder = 999999
+                sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+                if not sg:FindFirstChild("_MouseUnlockerModal") then
+                    local modalBtn = Instance.new("TextButton")
+                    modalBtn.Name = "_MouseUnlockerModal"
+                    modalBtn.Size = UDim2.new(0, 0, 0, 0)
+                    modalBtn.Position = UDim2.new(0, 0, 0, 0)
+                    modalBtn.BackgroundTransparency = 1
+                    modalBtn.Text = ""
+                    modalBtn.Modal = true
+                    modalBtn.Active = false
+                    modalBtn.Selectable = false
+                    modalBtn.Parent = sg
+                end
+            end
+        end
+    end
+
+    for _, root in ipairs(roots) do
+        if root then
+            for _, desc in ipairs(root:GetDescendants()) do
+                elevateGui(desc)
+            end
+            root.DescendantAdded:Connect(function(desc)
+                task.wait(0.02)
+                elevateGui(desc)
+            end)
+        end
+    end
+
+    UserInputService.MouseIconEnabled = true
+    if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end
+end)
+
 local TabKey = Window:Tab({ Title = "Key Verification", Icon = "key" })
 
 TabKey:Paragraph({
