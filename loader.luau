@@ -222,10 +222,13 @@ local function startSessionHeartbeat(sessionToken, activeKey)
     end)
 end
 
-local function launchGameScript()
-    print(string.format("[Song Hub] 🚀 Launching %s directly from GitHub...", gameTitle))
+local function launchGameScript(sessionToken, activeKey)
+    print(string.format("[Song Hub] 🚀 Launching %s securely...", gameTitle))
     local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+    local tokenQuery = (sessionToken and #sessionToken > 0) and ("&token=" .. sessionToken) or ""
+    local keyQuery = (activeKey and #activeKey > 0) and ("&key=" .. activeKey) or ""
     local urls = {
+        CLOUDFLARE_URL .. "/scripts/" .. cleanFileName .. "?v=" .. cacheBuster .. tokenQuery .. keyQuery,
         "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. cleanFileName .. "?v=" .. cacheBuster,
         "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. cleanFileName .. "?v=" .. cacheBuster
     }
@@ -256,9 +259,7 @@ local function launchGameScript()
                 writefile("autoexec/SongHub.luau", 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()')
             end
         end)
-        pcall(function()
-            if writefile then pcall(writefile, "games/" .. cleanFileName, scriptCode) end
-        end)
+-- [Security] Local file dump removed to prevent code leak
 
         local fn, err = loadstring(scriptCode)
         if fn then
@@ -282,7 +283,7 @@ end
 local wlOk, wlData = sendVerifyRequest("")
 if wlOk and wlData.whitelisted then
     print(string.format("[Song Hub] ✅ Direct Whitelist passed! Welcome %s (%s)", LocalPlayer.Name, wlData.role or "VIP/Owner"))
-    launchGameScript()
+    launchGameScript(wlData.sessionToken or "", "")
     return
 end
 
@@ -296,7 +297,7 @@ if isfile and isfile(KEY_SAVE_PATH) then
         if keyOk then
             print(string.format("[Song Hub] ✅ Key Verified from Cache! Type: %s (Live Sessions: %s/%s)", keyData.keyType or "Active", tostring(keyData.activeSessionsCount or 1), tostring(keyData.maxSessions or 1)))
             startSessionHeartbeat(keyData.sessionToken, cleanSavedKey)
-            launchGameScript()
+            launchGameScript(keyData.sessionToken, cleanSavedKey)
             return
         end
     end
@@ -366,7 +367,7 @@ TabKey:Button({
 
             task.wait(1.2)
             pcall(function() Window:Destroy() end)
-            launchGameScript()
+            launchGameScript(result.sessionToken, inputKey)
         else
             WindUI:Notify({
                 Title = "Access Denied ❌",
