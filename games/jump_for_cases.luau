@@ -3,17 +3,17 @@
 -- Game: [🎲] Jump for Cases
 -- PlaceId: 93545804988403 | UniverseId: 10767621216
 -- Features:
---     - 🦘 Auto Farm / Kick (Auto Charge + Perfect Kick, Wave Hit, Return Home)
+--     - 🦘 Smart Auto Farm (Automated KickZone Warp, Power Lock, Case Collect & Return)
+--     - ⚡ Native AutoKick + Sprint Booster (Assists Built-in AutoKick with 48 WS)
 --     - 🎲 Fast Case Opener (Instant Cutscene Skip via _ShowCasesOpening)
 --     - 📦 Auto Open All Cases (Multi-Open 3x/2x/1x for all owned cases)
 --     - 🎯 Auto Open Selected Case (Configurable case target)
---     - ⚡ Auto Speed Upgrades (Auto buy speed tiers when affordable)
+--     - ⚡ Auto Speed Upgrades (Auto buy speed tiers with Cash attribute)
 --     - 🏋️ Auto Buy & Equip Best Weight (Barbell progression from WeightsConfig)
 --     - 🔁 Auto Rebirth (Automatic prestige multiplier upgrade)
 --     - 💎 Auto Claim Index Gems (RequestClaimAllIndexGems)
 --     - 🎁 Auto Daily & Free Rewards (Daily claim, Free Wheel spin, Offline cash, Forever reward)
---     - 💰 Auto Sell Junk Brainrots (Low rarity brainrot selling)
---     - 📍 Teleports (Runway, Base, Sell Shop, Main Shop, Speed Shop, Cave, Tunnel)
+--     - 📍 Teleports (Runway, Collect Zone, Base, Sell Shop, Main Shop, Speed Shop, Cave, Tunnel)
 --     - 🏃 Player Physics (WalkSpeed, JumpPower, InfJump, NoClip, Fly)
 --     - 🛡️ 24/7 Anti-AFK
 -- ==============================================================================
@@ -96,6 +96,7 @@ local RequestEquipBrainrot = Remotes and Remotes:FindFirstChild("RequestEquipBra
 local RequestSpeedUpgrade = Remotes and Remotes:FindFirstChild("RequestSpeedUpgrade")
 local RequestBuyWeight = Remotes and Remotes:FindFirstChild("RequestBuyWeight")
 local RequestEquipWeight = Remotes and Remotes:FindFirstChild("RequestEquipWeight")
+local WeightShopStateSync = Remotes and Remotes:FindFirstChild("WeightShopStateSync")
 local RequestRebirth = Remotes and Remotes:FindFirstChild("RequestRebirth")
 local RequestClaimAllIndexGems = Remotes and Remotes:FindFirstChild("RequestClaimAllIndexGems")
 local RequestDailyClaim = Remotes and Remotes:FindFirstChild("RequestDailyClaim")
@@ -143,10 +144,9 @@ end
 -- ==============================================================================
 local Config = {
     -- Auto Kick / Farm
-    AutoKickFarm = false,
-    KickDelay = 1.5,
-    AutoReturnHome = true,
-    BuiltinAutoKick = false,
+    MasterAutoFarm = false,
+    NativeAutoKickSync = false,
+    ReturnSprintBoost = false,
     
     -- Auto Case Opening
     FastOpenSkip = false,
@@ -169,9 +169,6 @@ local Config = {
     AutoClaimOffline = false,
     AutoForeverRewards = false,
 
-    -- Auto Sell
-    AutoSellCommons = false,
-
     -- Player Mods
     WalkSpeedEnabled = false,
     WalkSpeedValue = 32,
@@ -183,13 +180,19 @@ local Config = {
     FlySpeed = 50,
 }
 
--- Teleport Locations
+-- Target Key Positions
+local POS_KICK_ZONE = Vector3.new(207.25, 27.8, 104.95)
+local POS_COLLECT_ZONE = Vector3.new(199.87, 24.0, 81.01)
+local POS_BASE_SPAWN = Vector3.new(269.22, 34.22, -19.42)
+
+-- Teleport Locations Map
 local TeleportLocations = {
-    ["🦘 Runway / Jump Zone"] = Vector3.new(207.25, 25.0, 104.95),
-    ["🏠 Base / Spawn"] = Vector3.new(145.44, 35.0, -20.01),
-    ["💰 Sell Shop"] = Vector3.new(325.32, 25.0, 83.00),
-    ["🛒 Main Shop"] = Vector3.new(300.04, 25.0, 82.64),
-    ["⚡ Speed Shop"] = Vector3.new(276.13, 25.0, 81.73),
+    ["🦘 Runway / Kick Zone"] = POS_KICK_ZONE,
+    ["📦 Collect Zone"] = POS_COLLECT_ZONE,
+    ["🏠 Base / Spawn"] = POS_BASE_SPAWN,
+    ["💰 Sell Shop"] = Vector3.new(325.32, 23.85, 83.00),
+    ["🛒 Main Shop"] = Vector3.new(300.04, 23.87, 82.64),
+    ["⚡ Speed Shop"] = Vector3.new(276.13, 23.71, 81.73),
     ["🕳️ Secret Cave"] = Vector3.new(-15109.9, 57836.0, 109.1),
     ["🚇 Tunnel"] = Vector3.new(408.2, 12.0, -262.7),
 }
@@ -216,14 +219,14 @@ end
 local function teleportTo(targetPos)
     local hrp = getHRP()
     if hrp then
-        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 2, 0))
     end
 end
 
 local function parseCash(val)
     if type(val) == "number" then return val end
     if type(val) ~= "string" then return 0 end
-    local clean = val:gsub(",", ""):gsub("%$", ""):lower()
+    local clean = val:gsub(",", ""):gsub("%$", ""):lower():gsub("%s+", "")
     local num = tonumber(clean:match("[%d%.]+")) or 0
     if clean:find("k") then return num * 1e3
     elseif clean:find("m") then return num * 1e6
@@ -231,11 +234,21 @@ local function parseCash(val)
     elseif clean:find("t") then return num * 1e12
     elseif clean:find("qa") then return num * 1e15
     elseif clean:find("qi") then return num * 1e18
+    elseif clean:find("sx") then return num * 1e21
+    elseif clean:find("sp") then return num * 1e24
+    elseif clean:find("oc") then return num * 1e27
+    elseif clean:find("no") then return num * 1e30
+    elseif clean:find("dc") then return num * 1e33
     end
     return num
 end
 
+-- Jump for Cases stores Cash as an Attribute on LocalPlayer
 local function getPlayerCash()
+    local attr = LocalPlayer:GetAttribute("Cash")
+    if attr ~= nil then
+        return parseCash(attr)
+    end
     if LocalPlayer:FindFirstChild("leaderstats") and LocalPlayer.leaderstats:FindFirstChild("Cash") then
         return parseCash(LocalPlayer.leaderstats.Cash.Value)
     end
@@ -245,6 +258,15 @@ end
 local function getCaseCount(caseName)
     local attr = LocalPlayer:GetAttribute("Cases_" .. caseName)
     return tonumber(attr) or 0
+end
+
+local function isHoldingCase()
+    local attr = LocalPlayer:GetAttribute("_HoldingCase")
+    return type(attr) == "string" and attr ~= ""
+end
+
+local function isInKickSession()
+    return LocalPlayer:GetAttribute("_InKickSession") == true or LocalPlayer:GetAttribute("_IsKicking") == true
 end
 
 -- ==============================================================================
@@ -258,7 +280,6 @@ end)
 if okWind and errWind then
     WindUI = errWind
 else
-    -- Fallback WindUI
     local okWind2, errWind2 = pcall(function()
         return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
     end)
@@ -307,46 +328,25 @@ local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 -- ==============================================================================
 -- 🦘 TAB: AUTO FARM / JUMP
 -- ==============================================================================
-TabFarm:Section({ Title = "🦘 Auto Jump / Kick Farm" })
+TabFarm:Section({ Title = "🚀 Smart Master Auto Farm" })
 
 TabFarm:Toggle({
-    Title = "Auto Perfect Kick Farm",
-    Desc = "Continuously charges and executes Perfect jumps down the track",
+    Title = "Master Auto Farm (Full Automation)",
+    Desc = "Auto warps to Kick Zone, locks perfect jump, collects cases & returns",
     Default = false,
     Callback = function(v)
-        Config.AutoKickFarm = v
+        Config.MasterAutoFarm = v
     end,
 })
 
-TabFarm:Toggle({
-    Title = "Auto Return Home / Runway",
-    Desc = "Teleports back to Runway after completing wave flight",
-    Default = false,
-    Callback = function(v)
-        Config.AutoReturnHome = v
-    end,
-})
-
-TabFarm:Slider({
-    Title = "Farm Loop Delay (s)",
-    Desc = "Delay between launch cycles",
-    Min = 0.5,
-    Max = 5.0,
-    Step = 0.25,
-    Default = 1.5,
-    Callback = function(v)
-        Config.KickDelay = v
-    end,
-})
-
-TabFarm:Section({ Title = "⚙️ Built-in Auto Kick Sync" })
+TabFarm:Section({ Title = "⚙️ Built-in AutoKick & Sprint Return" })
 
 TabFarm:Toggle({
-    Title = "Enable Built-in AutoKick",
-    Desc = "Toggles the game's built-in AutoKick feature",
+    Title = "Native AutoKick Sync",
+    Desc = "Toggles the game's official AutoKick feature",
     Default = false,
     Callback = function(v)
-        Config.BuiltinAutoKick = v
+        Config.NativeAutoKickSync = v
         if RequestAutoKick then
             pcall(function()
                 RequestAutoKick:FireServer({ on = v })
@@ -360,53 +360,132 @@ TabFarm:Toggle({
     end,
 })
 
--- Auto Kick Farm Background Worker
+TabFarm:Toggle({
+    Title = "Return Sprint Boost (Safe Speed)",
+    Desc = "Accelerates walk back speed to 48 WS when returning with a case",
+    Default = false,
+    Callback = function(v)
+        Config.ReturnSprintBoost = v
+    end,
+})
+
+-- Kick Minigame Auto-Lock Helper (Hooks into RenderStepped)
+RunService.RenderStepped:Connect(function()
+    if Config.MasterAutoFarm then
+        local renv = getrenv and getrenv()
+        local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
+        if type(KickAuto) == "table" and type(KickAuto.state) == "function" and type(KickAuto.lock) == "function" then
+            local state = KickAuto.state()
+            if state and state.minigameActive and not state.locked then
+                -- Lock jump timing
+                KickAuto.lock()
+            end
+        end
+    end
+end)
+
+-- Safe Sprint Booster for Case Return (Bypasses the 75-second slow walk safely)
 task.spawn(function()
     while true do
-        task.wait(0.2)
-        if Config.AutoKickFarm then
+        task.wait(0.25)
+        if Config.ReturnSprintBoost or Config.MasterAutoFarm then
+            local hum = getHumanoid()
+            if hum and isHoldingCase() and not Config.WalkSpeedEnabled then
+                -- Anti-cheat safe speed cap is 48-50 WS
+                hum.WalkSpeed = 48
+            end
+        end
+    end
+end)
+
+-- Master Auto Farm Main Loop
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if Config.MasterAutoFarm then
             local hrp = getHRP()
-            if hrp and RequestKick then
-                -- Step 1: Charge
-                pcall(function()
-                    RequestKick:FireServer({ action = "charge" })
-                end)
-                task.wait(0.12)
+            local hum = getHumanoid()
+            local renv = getrenv and getrenv()
+            local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
 
-                -- Step 2: Perfect Kick
-                pcall(function()
-                    RequestKick:FireServer({ tier = "Perfect" })
-                end)
+            if hrp and hum then
+                -- Phase 1: Case Return / Deposit
+                if isHoldingCase() then
+                    -- Guide character towards CollectZone
+                    hum:MoveTo(Vector3.new(POS_COLLECT_ZONE.X, hrp.Position.Y, POS_COLLECT_ZONE.Z))
+                    hum.WalkSpeed = 48
 
-                -- Wait during flight or wait for kick session
-                local tStart = tick()
-                while (tick() - tStart) < 2.0 do
-                    task.wait(0.1)
-                end
+                    local tDeposit = tick()
+                    while isHoldingCase() and (tick() - tDeposit) < 15 and Config.MasterAutoFarm do
+                        task.wait(0.2)
+                        -- If close enough to CollectZone, touch it
+                        local dist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
+                        if dist < 12 then
+                            task.wait(0.3)
+                        end
+                    end
 
-                -- Step 3: Trigger Wave Hit and Cutscene Done if available
-                if FallRewardEvent then
-                    pcall(function()
-                        FallRewardEvent:FireServer({ kind = "waveHit" })
-                    end)
-                    task.wait(0.1)
-                    pcall(function()
-                        FallRewardEvent:FireServer({ kind = "waveCutsceneDone" })
-                    end)
-                end
-
-                -- Step 4: Return Home / Runway
-                if Config.AutoReturnHome then
-                    if RequestFreeTpHome then
-                        pcall(function()
-                            RequestFreeTpHome:FireServer()
-                        end)
-                    else
-                        teleportTo(TeleportLocations["🦘 Runway / Jump Zone"])
+                    -- Once deposited, fire server auto return to runway
+                    if not isHoldingCase() and RequestAutoReturn then
+                        pcall(function() RequestAutoReturn:FireServer() end)
+                        task.wait(0.5)
                     end
                 end
 
-                task.wait(Config.KickDelay)
+                -- Phase 2: Flight / In Kick Session Wait
+                if isInKickSession() then
+                    -- Wait until flight finishes and player lands
+                    local tFlight = tick()
+                    while isInKickSession() and (tick() - tFlight) < 25 and Config.MasterAutoFarm do
+                        task.wait(0.3)
+                        -- Dismiss wave cutscene if stuck
+                        if FallRewardEvent and LocalPlayer:GetAttribute("_IsKicking") == false then
+                            pcall(function()
+                                FallRewardEvent:FireServer({ kind = "waveCutsceneDone" })
+                            end)
+                        end
+                    end
+                end
+
+                -- Phase 3: Initiate Kick from KickZone
+                if not isInKickSession() and not isHoldingCase() and Config.MasterAutoFarm then
+                    local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
+                    if distToKick > 8 then
+                        teleportTo(POS_KICK_ZONE)
+                        task.wait(0.35)
+                    end
+
+                    -- Check zone readiness
+                    local inZone = false
+                    if type(KickAuto) == "table" and type(KickAuto.state) == "function" then
+                        local st = KickAuto.state()
+                        inZone = st and st.inZone
+                    else
+                        inZone = true
+                    end
+
+                    if inZone then
+                        -- Start kick charge
+                        if type(KickAuto) == "table" and type(KickAuto.press) == "function" then
+                            KickAuto.press()
+                            task.wait(0.15)
+                            if type(KickAuto.lock) == "function" then
+                                KickAuto.lock()
+                            end
+                        elseif RequestKick then
+                            pcall(function() RequestKick:FireServer({ action = "charge" }) end)
+                            task.wait(0.12)
+                            pcall(function() RequestKick:FireServer({ tier = "Perfect" }) end)
+                        end
+
+                        -- Wait for launch to initiate
+                        task.wait(1.0)
+                    else
+                        -- Re-align position
+                        teleportTo(POS_KICK_ZONE)
+                        task.wait(0.5)
+                    end
+                end
             end
         end
     end
@@ -419,13 +498,18 @@ TabCases:Section({ Title = "⚡ Fast Case Opening" })
 
 TabCases:Toggle({
     Title = "Fast Open (Skip Animation)",
-    Desc = "Instantly skips case opening animation and cutscenes",
+    Desc = "Completely skips case opening animations and popups",
     Default = false,
     Callback = function(v)
         Config.FastOpenSkip = v
         pcall(function()
             LocalPlayer:SetAttribute("_ShowCasesOpening", not v)
         end)
+        if RequestSetSetting then
+            pcall(function()
+                RequestSetSetting:FireServer({ key = "ShowCasesOpening", value = not v })
+            end)
+        end
     end,
 })
 
@@ -442,8 +526,8 @@ TabCases:Toggle({
 
 TabCases:Slider({
     Title = "Open Delay (s)",
-    Desc = "Delay between case opens",
-    Min = 0.1,
+    Desc = "Delay between opening batches",
+    Min = 0.15,
     Max = 2.0,
     Step = 0.05,
     Default = 0.35,
@@ -477,15 +561,20 @@ local function openCaseInstance(caseName)
     local count = getCaseCount(caseName)
     if count <= 0 then return false end
 
-    -- Equip case first
+    -- Cannot open cases mid-flight or during kick session
+    if isInKickSession() then
+        return false
+    end
+
+    -- Equip case
     if RequestEquipBrainrot then
         pcall(function()
             RequestEquipBrainrot:FireServer("case::" .. caseName)
         end)
     end
-    task.wait(0.05)
+    task.wait(0.08)
 
-    -- Open with multi if >= 2
+    -- Multi-open 3x if count >= 3, 2x if count == 2, else 1x
     if count >= 3 and RequestOpenCaseMulti then
         pcall(function()
             RequestOpenCaseMulti:FireServer({ case = caseName, count = 3 })
@@ -500,6 +589,18 @@ local function openCaseInstance(caseName)
         end)
     end
 
+    -- Dismiss reveal popup if Fast Open is enabled
+    if Config.FastOpenSkip then
+        pcall(function()
+            local renv = getrenv and getrenv()
+            local g = (renv and renv._G) or _G
+            if g then
+                if type(g.StopCaseReveal) == "function" then g.StopCaseReveal() end
+                if type(g.StopCaseOpening) == "function" then g.StopCaseOpening() end
+            end
+        end)
+    end
+
     return true
 end
 
@@ -507,30 +608,32 @@ end
 task.spawn(function()
     while true do
         task.wait(0.15)
-        if Config.AutoOpenSelected and Config.SelectedCase then
-            if openCaseInstance(Config.SelectedCase) then
-                task.wait(Config.CaseOpenDelay)
-            else
-                task.wait(0.5)
-            end
-        elseif Config.AutoOpenAll then
-            local openedAny = false
-            for _, caseName in ipairs(CaseNamesList) do
-                if not Config.AutoOpenAll then break end
-                if getCaseCount(caseName) > 0 then
-                    openCaseInstance(caseName)
-                    openedAny = true
+        if (Config.AutoOpenSelected or Config.AutoOpenAll) and not isInKickSession() then
+            if Config.AutoOpenSelected and Config.SelectedCase then
+                if openCaseInstance(Config.SelectedCase) then
                     task.wait(Config.CaseOpenDelay)
+                else
+                    task.wait(0.4)
                 end
-            end
-            if not openedAny then
-                task.wait(0.8)
+            elseif Config.AutoOpenAll then
+                local openedAny = false
+                for _, caseName in ipairs(CaseNamesList) do
+                    if not Config.AutoOpenAll or isInKickSession() then break end
+                    if getCaseCount(caseName) > 0 then
+                        openCaseInstance(caseName)
+                        openedAny = true
+                        task.wait(Config.CaseOpenDelay)
+                    end
+                end
+                if not openedAny then
+                    task.wait(0.6)
+                end
             end
         end
     end
 end)
 
--- Keep Fast Open active if enabled
+-- Fast Open Attribute Enforcer
 task.spawn(function()
     while true do
         task.wait(1.5)
@@ -551,7 +654,7 @@ TabUpgrades:Section({ Title = "⚡ Speed Upgrades" })
 
 TabUpgrades:Toggle({
     Title = "Auto Buy Speed Upgrades",
-    Desc = "Automatically buys speed upgrades with cash",
+    Desc = "Automatically buys speed upgrades with Cash attribute",
     Default = false,
     Callback = function(v)
         Config.AutoSpeedUpgrade = v
@@ -560,8 +663,8 @@ TabUpgrades:Toggle({
 
 TabUpgrades:Dropdown({
     Title = "Speed Upgrade Tier",
-    Values = { "+1 Speed (Tile 1)", "+5 Speed (Tile 2)", "+12 Speed (Tile 3)" },
-    Default = "+1 Speed (Tile 1)",
+    Values = { "+1 Speed (Tier 1)", "+5 Speed (Tier 2)", "+12 Speed (Tier 3)" },
+    Default = "+1 Speed (Tier 1)",
     Callback = function(v)
         if v:find("+5") then
             Config.SpeedUpgradeTier = 2
@@ -577,7 +680,7 @@ TabUpgrades:Section({ Title = "🏋️ Weight Training (Power)" })
 
 TabUpgrades:Toggle({
     Title = "Auto Buy Best Affordable Weight",
-    Desc = "Automatically purchases the highest barbell you can afford",
+    Desc = "Automatically buys the strongest barbell your Cash can afford",
     Default = false,
     Callback = function(v)
         Config.AutoBuyWeight = v
@@ -586,7 +689,7 @@ TabUpgrades:Toggle({
 
 TabUpgrades:Toggle({
     Title = "Auto Equip Best Weight",
-    Desc = "Automatically equips your strongest owned barbell",
+    Desc = "Automatically equips your strongest barbell",
     Default = false,
     Callback = function(v)
         Config.AutoEquipWeight = v
@@ -606,8 +709,10 @@ TabUpgrades:Toggle({
 
 -- Auto Upgrades Worker
 task.spawn(function()
+    local lastSync = 0
     while true do
-        task.wait(1.0)
+        task.wait(1.2)
+
         -- Auto Speed Upgrade
         if Config.AutoSpeedUpgrade and RequestSpeedUpgrade then
             pcall(function()
@@ -617,13 +722,19 @@ task.spawn(function()
 
         -- Auto Weight Upgrades
         if (Config.AutoBuyWeight or Config.AutoEquipWeight) and WeightsConfig and WeightsConfig.Weights then
+            -- Sync state periodically
+            if tick() - lastSync > 10 and WeightShopStateSync then
+                lastSync = tick()
+                pcall(function() WeightShopStateSync:FireServer() end)
+            end
+
             local currentCash = getPlayerCash()
             local bestAffordable = nil
             local highestGain = 0
 
             for name, wData in pairs(WeightsConfig.Weights) do
                 local price = tonumber(wData.Price) or 0
-                local gain = tonumber(wData.StrengthGain) or 0
+                local gain = tonumber(wData.StrengthGain or wData.Power) or 0
                 if price <= currentCash and gain > highestGain then
                     highestGain = gain
                     bestAffordable = name
@@ -747,9 +858,11 @@ task.spawn(function()
 
         -- Daily Claim
         if Config.AutoClaimDaily and RequestDailyClaim then
-            pcall(function()
-                RequestDailyClaim:FireServer()
-            end)
+            if LocalPlayer:GetAttribute("Daily_Claimable") == true then
+                pcall(function()
+                    RequestDailyClaim:FireServer()
+                end)
+            end
         end
 
         -- Wheel Spin
@@ -1029,9 +1142,12 @@ TabSettings:Button({
 TabSettings:Button({
     Title = "Unload Script",
     Callback = function()
-        Config.AutoKickFarm = false
+        Config.MasterAutoFarm = false
+        Config.NativeAutoKickSync = false
+        Config.ReturnSprintBoost = false
         Config.AutoOpenAll = false
         Config.AutoOpenSelected = false
+        Config.FastOpenSkip = false
         Config.AutoSpeedUpgrade = false
         Config.AutoBuyWeight = false
         Config.AutoEquipWeight = false
