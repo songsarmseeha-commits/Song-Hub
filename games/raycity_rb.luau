@@ -208,7 +208,7 @@ local Config = {
     AutoFarmQuests = false,
     AutoStoryProgression = false,
     AutoCleanInventory = false,
-    QuestDriveMode = "Realistic Road Drive", -- "Realistic Road Drive" | "Instant Warp" | "Hyper Sonic Glide" | "Hybrid Cruise"
+    QuestDriveMode = "Instant Warp", -- "Instant Warp" | "Realistic Road Drive" | "Hyper Sonic Glide" | "Hybrid Cruise"
     QuestDriveSpeed = 260, -- km/h
     AutoSkipDialogue = false,
     AutoAcceptQuest = false,
@@ -599,6 +599,22 @@ TabDerix:Toggle({
 })
 
 TabDerix:Dropdown({
+    Title = "⚡ Derix Drive Mode (โหมดการขับฟาร์มเต๋า)",
+    Desc = "เลือก Instant Warp (วาร์ปผ่านเช็คพอยต์ไวสุด จบใน 2 วิ) หรือ Realistic Road Drive (ขับตามถนน)",
+    Values = {
+        "Instant Warp",
+        "Realistic Road Drive",
+        "Hyper Sonic Glide",
+        "Hybrid Cruise"
+    },
+    Value = Config.QuestDriveMode,
+    Callback = function(val)
+        Config.QuestDriveMode = val
+        WindUI:Notify({ Title = "Mode Updated", Content = "เปลี่ยนโหมดเป็น: " .. val, Duration = 2, Icon = "zap" })
+    end
+})
+
+TabDerix:Dropdown({
     Title = "🎯 Derix Round Selection (เลือกรอบที่จะประลอง)",
     Values = {
         "Auto All Rounds (รอบ 1 - 4 วนลูป)",
@@ -705,6 +721,22 @@ TabLevel:Dropdown({
         if info then
             WindUI:Notify({ Title = "Target Selected", Content = info.name .. " (" .. tostring(info.cx) .. " Car EXP / " .. tostring(info.ux) .. " User EXP)", Duration = 3, Icon = "target" })
         end
+    end
+})
+
+TabLevel:Dropdown({
+    Title = "⚡ Farm Drive Mode (โหมดการขับฟาร์มเวล)",
+    Desc = "เลือก Instant Warp (วาร์ปผ่านเช็คพอยต์ไวสุด จบใน 2 วิ) หรือ Realistic Road Drive (ขับตามถนน)",
+    Values = {
+        "Instant Warp",
+        "Realistic Road Drive",
+        "Hyper Sonic Glide",
+        "Hybrid Cruise"
+    },
+    Value = Config.QuestDriveMode,
+    Callback = function(val)
+        Config.QuestDriveMode = val
+        WindUI:Notify({ Title = "Mode Updated", Content = "เปลี่ยนโหมดเป็น: " .. val, Duration = 2, Icon = "zap" })
     end
 })
 
@@ -2972,11 +3004,339 @@ local function executeMoveStep(targetPos, destType, speedKmh)
     end
 end
 
+
+-- ==============================================================================
+-- ⚡ DEDICATED ROAD FIGHT RUNNER (LEVEL & DERIX 1.5M FARM ENGINE)
+-- ==============================================================================
+local isRoadFightRunning = false
+
+local function runDedicatedRoadFight()
+    if isRoadFightRunning then return end
+    isRoadFightRunning = true
+
+    local root = getCarRoot()
+    local rcd = getRCDrive()
+    if not root then
+        isRoadFightRunning = false
+        return
+    end
+
+    local targetBoss = nil
+    local targetQuestId = "R1779"
+    local targetNpcId = 1779
+    local targetCoords = Vector3.new(3962, 50.83, 7952)
+
+    if Config.AutoFarmLevel then
+        local t = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
+        targetBoss = t
+        targetQuestId = t.questId or "R1779"
+        targetNpcId = t.npcId or 1779
+        targetCoords = t.coords or Vector3.new(3962, 50.83, 7952)
+    elseif Config.AutoFarmDerix then
+        targetQuestId = "R1676"
+        if Config.DerixRound == "Round 2 (R1678)" then
+            targetQuestId = "R1678"
+        elseif Config.DerixRound == "Round 3 (R1679)" then
+            targetQuestId = "R1679"
+        elseif Config.DerixRound == "Round 4 (R1680)" then
+            targetQuestId = "R1680"
+        end
+        targetNpcId = 1676
+        targetCoords = DERIX_COORDS
+    end
+
+    questFarmState = Config.AutoFarmLevel and "LEVEL_FARM" or "DERIX_FARM"
+
+    -- 1. APPROACH & SYNCHRONIZE AT BOSS NPC (BYPASS ANTI-CHEAT QUARANTINE / UNTRUSTED CHECK)
+    local distToBoss = (root.Position - targetCoords).Magnitude
+    if distToBoss > 25 then
+        local approachCF = CFrame.new(targetCoords + Vector3.new(0, 1.2, 12), targetCoords)
+        teleportCarWithVelocity(approachCF, approachCF.LookVector * 15)
+        pcall(function()
+            local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+            if qt then qt:FireServer({ pos = root.Position, speed = 25, stopped = false, gear = 2 }) end
+        end)
+        task.wait(0.25)
+    end
+
+    -- Complete stop at boss NPC
+    stopAutoDrive()
+    teleportCarWithVelocity(CFrame.new(targetCoords + Vector3.new(0, 1.2, 0), targetCoords + root.CFrame.LookVector), Vector3.zero)
+    if rcd and type(rcd.phys) == "table" then
+        rcd.phys.v = Vector3.zero
+        rcd.phys.throttle = 0
+        rcd.phys.brake = 1
+        rcd.phys.handbrake = 1
+    end
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    pcall(function()
+        local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+        if qt then qt:FireServer({ pos = root.Position, speed = 0, stopped = true, gear = 1 }) end
+    end)
+    task.wait(0.25)
+
+    -- 2. INITIATE CHALLENGE & ACCEPT ROAD FIGHT
+    local qRemotes = ReplicatedStorage:FindFirstChild("RBRCQuest") and ReplicatedStorage.RBRCQuest:FindFirstChild("Remotes")
+    local rfReq = qRemotes and qRemotes:FindFirstChild("RoadFightRequest")
+    local qReq = qRemotes and qRemotes:FindFirstChild("QuestRequest")
+
+    if rfReq then
+        pcall(function()
+            rfReq:InvokeServer({
+                op = "accept",
+                questId = targetQuestId,
+                carPos = root.Position
+            })
+        end)
+    end
+    if qReq then
+        pcall(function()
+            qReq:InvokeServer({
+                op = "accept",
+                questId = targetQuestId,
+                carPos = root.Position,
+                carLook = root.CFrame.LookVector
+            })
+        end)
+    end
+
+    pcall(function()
+        local renv = getrenv and getrenv() or { shared = shared }
+        local rfc = renv.shared and renv.shared.RBRCRoadFightClient
+        if rfc and rfc.talk then rfc.talk(targetNpcId) end
+    end)
+    pcall(function()
+        local pGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local rfGui = pGui and pGui:FindFirstChild("RBRCRoadFightUi")
+        if rfGui then
+            local dlg = rfGui:FindFirstChild("RoadFightDlg")
+            if dlg and dlg.Visible then
+                local btn = dlg:FindFirstChild("btChallenge", true)
+                if btn and firesignal then firesignal(btn.Activated) end
+            end
+        end
+    end)
+    pressReturnKey()
+    task.wait(0.35)
+
+    -- 3. LOAD ROAD FIGHT GATES
+    local rfd = nil
+    pcall(function() rfd = require(ReplicatedStorage.RBRCQuest.RoadFightData) end)
+    local qData = rfd and rfd.questRows and (rfd.questRows[targetQuestId] or rfd.questRows[tostring(targetQuestId)])
+    if not qData and rfd and rfd.questRows then
+        for _, row in pairs(rfd.questRows) do
+            if type(row) == "table" and (row.id == targetQuestId or row.mid == targetQuestId or tostring(row.mid) == tostring(targetQuestId)) then
+                qData = row
+                break
+            end
+        end
+    end
+
+    local gates = {}
+    if qData and type(qData.obj) == "table" and #qData.obj > 0 then
+        for idx, gate in ipairs(qData.obj) do
+            local coords = gate[11]
+            if type(coords) == "table" and #coords >= 6 then
+                local gx = (coords[1] + coords[4]) / 2
+                local gy = (coords[2] + coords[5]) / 2
+                local gz = (coords[3] + coords[6]) / 2
+                table.insert(gates, {
+                    idx = idx,
+                    pos = Vector3.new(gx, gy, gz),
+                    coords = coords,
+                    isFinish = (idx == #qData.obj)
+                })
+            end
+        end
+    end
+
+    -- 4. EXECUTE RACE (INSTANT WARP VS ROAD DRIVE)
+    local mode = Config.QuestDriveMode or "Instant Warp"
+
+    if #gates > 0 then
+        if mode == "Instant Warp" then
+            -- ⚡ INSTANT WARP: Sequentially teleport through each gate with physics & telemetry
+            for i, g in ipairs(gates) do
+                if not isAlive() or not (Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
+
+                local gatePos = g.pos
+                local nextGate = gates[i + 1]
+                local dir = nextGate and (nextGate.pos - gatePos).Unit or root.CFrame.LookVector
+                if dir.Magnitude < 0.1 then dir = root.CFrame.LookVector end
+
+                if not g.isFinish then
+                    -- Intermediate Gate: Warp directly into gate with forward velocity
+                    local gateCF = CFrame.new(gatePos - dir * 4, gatePos + dir * 15)
+                    teleportCarWithVelocity(gateCF, dir * 85)
+
+                    pcall(function()
+                        local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                        if qt then qt:FireServer({ pos = gatePos, speed = 85, stopped = false, gear = 4 }) end
+                    end)
+
+                    pcall(function()
+                        if firetouchinterest then
+                            local parts = workspace:GetPartBoundsInRadius(gatePos, 35)
+                            for _, p in ipairs(parts) do
+                                if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                    firetouchinterest(root, p, 0)
+                                    task.wait(0.01)
+                                    firetouchinterest(root, p, 1)
+                                end
+                            end
+                        end
+                    end)
+
+                    task.wait(0.12)
+                else
+                    -- Finish Line Gate: Stop completely and fire completion
+                    local finishCF = CFrame.new(gatePos + Vector3.new(0, 1.2, 0), gatePos + dir * 5)
+                    teleportCarWithVelocity(finishCF, Vector3.zero)
+
+                    local rcd2 = getRCDrive()
+                    if rcd2 and type(rcd2.phys) == "table" then
+                        rcd2.phys.v = Vector3.zero
+                        rcd2.phys.throttle = 0
+                        rcd2.phys.brake = 1
+                        rcd2.phys.handbrake = 1
+                    end
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+
+                    task.wait(0.15) -- Essential stationary verification time
+
+                    pcall(function()
+                        local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                        if qt then qt:FireServer({ pos = gatePos, speed = 0, stopped = true, gear = 1 }) end
+                    end)
+
+                    pcall(function()
+                        if firetouchinterest then
+                            local parts = workspace:GetPartBoundsInRadius(gatePos, 25)
+                            for _, p in ipairs(parts) do
+                                if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                    firetouchinterest(root, p, 0)
+                                    task.wait(0.01)
+                                    firetouchinterest(root, p, 1)
+                                end
+                            end
+                        end
+                    end)
+
+                    pcall(function()
+                        local qRemotes2 = ReplicatedStorage.RBRCQuest.Remotes
+                        if qRemotes2 and qRemotes2:FindFirstChild("QuestEventUp") then
+                            qRemotes2.QuestEventUp:FireServer("GoalReached", "Goal")
+                        end
+                    end)
+
+                    pcall(function()
+                        local qDeliver = require(ReplicatedStorage.RBRCQuest.QuestDeliver)
+                        if qDeliver and qDeliver.finish then qDeliver.finish() end
+                    end)
+
+                    task.wait(0.25)
+                end
+            end
+        else
+            -- Realistic Road Drive / Hyper Sonic Glide
+            for i, g in ipairs(gates) do
+                if not isAlive() or not (Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
+                local gatePos = g.pos
+                local gateReached = false
+                local gateTimeout = os.clock() + 25
+
+                while isAlive() and (Config.AutoFarmLevel or Config.AutoFarmDerix) and not gateReached and os.clock() < gateTimeout do
+                    task.wait(0.05)
+                    local curRoot = getCarRoot()
+                    if not curRoot then break end
+                    local d = (curRoot.Position - gatePos).Magnitude
+
+                    if g.isFinish then
+                        if d <= 18 then
+                            gateReached = true
+                            stopAutoDrive()
+                            local rcd3 = getRCDrive()
+                            if rcd3 and rcd3.phys then
+                                rcd3.phys.v = Vector3.zero
+                                rcd3.phys.brake = 1
+                            end
+                            curRoot.AssemblyLinearVelocity = Vector3.zero
+                            task.wait(0.15)
+                            pcall(function()
+                                local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                                if qt then qt:FireServer({ pos = gatePos, speed = 0, stopped = true, gear = 1 }) end
+                            end)
+                            pcall(function()
+                                local qRemotes2 = ReplicatedStorage.RBRCQuest.Remotes
+                                if qRemotes2 and qRemotes2:FindFirstChild("QuestEventUp") then
+                                    qRemotes2.QuestEventUp:FireServer("GoalReached", "Goal")
+                                end
+                            end)
+                        else
+                            executeMoveStep(gatePos, "mission_finish", Config.QuestDriveSpeed)
+                        end
+                    else
+                        if d <= 22 then
+                            gateReached = true
+                            pcall(function()
+                                local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
+                                if qt then qt:FireServer({ pos = gatePos, speed = 80, stopped = false, gear = 3 }) end
+                            end)
+                        else
+                            executeMoveStep(gatePos, "checkpoint", Config.QuestDriveSpeed)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 5. REWARDS, DICE ROLL & 1.5M CASH BOX OPENING
+    pressReturnKey()
+    task.wait(0.2)
+    handleDiceRollAndRewards()
+    autoOpenCashBoxes()
+
+    if Config.AutoFarmLevel then
+        LevelFarmStats.runsCompleted = LevelFarmStats.runsCompleted + 1
+        local ux = targetBoss and targetBoss.ux or 3533
+        local cx = targetBoss and targetBoss.cx or 2840
+        LevelFarmStats.totalUserExp = LevelFarmStats.totalUserExp + ux
+        LevelFarmStats.totalCarExp = LevelFarmStats.totalCarExp + cx
+        pcall(function()
+            WindUI:Notify({
+                Title = "🎉 จบรอบ Road Fight เลเวล!",
+                Content = string.format("จบรอบที่ %d | +%d EXP (รถ +%d)", LevelFarmStats.runsCompleted, ux, cx),
+                Duration = 3,
+                Icon = "award"
+            })
+        end)
+    elseif Config.AutoFarmDerix then
+        DerixStats.wins = DerixStats.wins + 1
+        pcall(function()
+            WindUI:Notify({
+                Title = "🎲 ชนะ Derix สำเร็จ! (รอบ " .. DerixStats.wins .. ")",
+                Content = "ทอยเต๋าและเปิดกล่องเงิน 1.5M Rain เรียบร้อย!",
+                Duration = 3,
+                Icon = "trophy"
+            })
+        end)
+    end
+
+    task.wait(0.4)
+    isRoadFightRunning = false
+end
+
 task.spawn(function()
     while isAlive() do
         task.wait(0.06)
-        local anyFarmActive = Config.AutoFarmLevel or Config.AutoFarmDerix or Config.AutoFarmQuests
-        if anyFarmActive then
+        if Config.AutoFarmLevel or Config.AutoFarmDerix then
+            runDedicatedRoadFight()
+            task.wait(0.15)
+        elseif Config.AutoFarmQuests then
             pcall(function()
                 local root = getCarRoot()
             local rcd = getRCDrive()
@@ -3278,53 +3638,7 @@ task.spawn(function()
                     -- ==========================================================
                     -- C. NO ACTIVE QUEST IN PROGRESS: FIND AVAILABLE QUEST GIVER NPC
                     -- ==========================================================
-                    if Config.AutoFarmLevel then
-                        questFarmState = "LEVEL_FARM"
-                        local curTarget = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
-                        local targetCoords = curTarget.coords
-                        local distToBoss = (root.Position - targetCoords).Magnitude
-                        if distToBoss > 40 then
-                            teleportCar(targetCoords)
-                            task.wait(0.5)
-                        else
-                            stopAutoDrive()
-                            if rcd and rcd.phys then
-                                rcd.phys.v = Vector3.zero
-                                rcd.phys.throttle = 0
-                                rcd.phys.brake = 1
-                            end
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                            LevelFarmStats.clearedGates = {}
-                            challengeBoss(curTarget.bossId, curTarget.questId, curTarget.npcId, Config.LevelFarmOnlyRound1 and "Round 1" or nil)
-                            pressReturnKey()
-                            handleDiceRollAndRewards()
-                            autoOpenCashBoxes()
-                            task.wait(0.35)
-                        end
-                    elseif Config.AutoFarmDerix then
-                        questFarmState = "DERIX_FARM"
-                        local distToDerix = (root.Position - DERIX_COORDS).Magnitude
-                        if distToDerix > 40 then
-                            teleportCar(DERIX_COORDS)
-                            task.wait(0.5)
-                        else
-                            stopAutoDrive()
-                            if rcd and rcd.phys then
-                                rcd.phys.v = Vector3.zero
-                                rcd.phys.throttle = 0
-                                rcd.phys.brake = 1
-                            end
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                            DerixStats.clearedGates = {}
-                            challengeDerix(Config.DerixRound)
-                            pressReturnKey()
-                            handleDiceRollAndRewards()
-                            autoOpenCashBoxes()
-                            task.wait(0.35)
-                        end
-                    elseif Config.LoopNextQuest or Config.AutoStoryProgression then
+                    if Config.LoopNextQuest or Config.AutoStoryProgression then
                         questFarmState = "SEARCHING"
 
                         -- 0. Check Skill/Story Quests available to auto-accept:
