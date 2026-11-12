@@ -57,13 +57,20 @@ local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camer
 -- ==============================================================================
 -- 🛡️ STRICT SINGLETON & MULTI-EXECUTE PREVENTION
 -- ==============================================================================
+local EXEC_ID = tick()
 if getgenv then
     if getgenv()._JumpForCasesRunning and getgenv()._JFC_Window then
         pcall(function()
             getgenv()._JFC_Window:Destroy()
         end)
     end
-    getgenv()._JumpForCasesRunning = true
+    getgenv()._JumpForCasesRunning = EXEC_ID
+    getgenv()._JFC_BlockWaveHit = false
+    getgenv()._JFC_ForcePerfectKick = false
+end
+
+local function isScriptAlive()
+    return (not getgenv) or (getgenv()._JumpForCasesRunning == EXEC_ID)
 end
 
 -- ==============================================================================
@@ -168,6 +175,8 @@ end
 local Config = {
     -- Auto Kick / Farm
     MasterAutoFarm = false,
+    InstantPerfectKick = false,
+    SafeAntiWave = false,
     NativeAutoKickSync = false,
     ReturnSprintBoost = false,
     InstantWarpReturn = false,
@@ -293,6 +302,86 @@ local function isFlightActive()
     return LocalPlayer:GetAttribute("_IsKicking") == true
 end
 
+local function isSpinActive()
+    return LocalPlayer:GetAttribute("_FallSpinning") == true
+end
+
+local function isInKickSession()
+    return LocalPlayer:GetAttribute("_InKickSession") == true
+end
+
+local function isRespawnOffer()
+    return LocalPlayer:GetAttribute("_RespawnOffer") == true
+end
+
+local function getNormalWalkSpeed()
+    local speedAttr = tonumber(LocalPlayer:GetAttribute("Speed")) or 14
+    local baseSpd = (SpeedUpgradesConfig and tonumber(SpeedUpgradesConfig.BaseSpeed)) or 14
+    return math.clamp(40 + math.max(0, speedAttr - baseSpd), 40, 50)
+end
+
+-- Server-safe return WalkSpeed while holding a case (tested live: ~80-92 survives cleanly, >=105 triggers anti-cheat)
+local function getSafeReturnSpeed()
+    local normal = getNormalWalkSpeed()
+    return math.clamp(math.floor(normal * 2.04), 80, 90)
+end
+
+local function closeRespawnPopup()
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local rf = pg and pg:FindFirstChild("RespawnFrame", true)
+        if rf and rf.Visible then
+            local eb = rf:FindFirstChild("ExitButton", true)
+            if eb and typeof(firesignal) == "function" then
+                pcall(firesignal, eb.Activated)
+                pcall(firesignal, eb.MouseButton1Click)
+            else
+                rf.Visible = false
+            end
+        end
+    end)
+end
+
+local function syncNetworkGuardFlags()
+    if getgenv then
+        getgenv()._JFC_FallRewardEvent = FallRewardEvent
+        getgenv()._JFC_RequestKick = RequestKick
+        getgenv()._JFC_BlockWaveHit = (Config.MasterAutoFarm or Config.SafeAntiWave) == true
+        getgenv()._JFC_ForcePerfectKick = (Config.MasterAutoFarm or Config.InstantPerfectKick) == true
+    end
+end
+
+local function ensureNetworkHooks()
+    syncNetworkGuardFlags()
+    if not (getgenv and typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function") then
+        return
+    end
+    if getgenv()._JFC_HookInstalled then
+        return
+    end
+    getgenv()._JFC_HookInstalled = true
+    local origNamecall
+    origNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if method == "FireServer" or method == "fireServer" then
+            if getgenv()._JFC_BlockWaveHit and self == getgenv()._JFC_FallRewardEvent then
+                local arg1 = ...
+                if type(arg1) == "table" and arg1.kind == "waveHit" then
+                    return nil
+                end
+            elseif getgenv()._JFC_ForcePerfectKick and self == getgenv()._JFC_RequestKick then
+                local arg1 = ...
+                if type(arg1) == "table" and arg1.tier ~= nil and arg1.tier ~= "Perfect" then
+                    return origNamecall(self, { tier = "Perfect" })
+                end
+            end
+        end
+        return origNamecall(self, ...)
+    end)
+end
+
+ensureNetworkHooks()
+
 -- ==============================================================================
 -- 🎨 WINDUI INITIALIZATION
 -- ==============================================================================
@@ -355,15 +444,36 @@ local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 TabFarm:Section({ Title = "🚀 Smart Master Auto Farm" })
 
 TabFarm:Toggle({
-    Title = "Master Auto Farm (Full Automation)",
-    Desc = "Auto warps to Kick Zone, locks perfect jump, collects cases & returns",
+    Title = "Master Auto Farm (Instant Perfect + Safe Return)",
+    Desc = "Instant Perfect kick, anti-wave protection, fastest safe return (~88 WS) & loop",
     Default = false,
     Callback = function(v)
         Config.MasterAutoFarm = v
+        syncNetworkGuardFlags()
     end,
 })
 
-TabFarm:Section({ Title = "⚙️ Built-in AutoKick & Sprint Return" })
+TabFarm:Toggle({
+    Title = "Instant Perfect Kick",
+    Desc = "Automatically locks/upgrades every kick to Perfect tier (no waiting for the bar)",
+    Default = false,
+    Callback = function(v)
+        Config.InstantPerfectKick = v
+        syncNetworkGuardFlags()
+    end,
+})
+
+TabFarm:Toggle({
+    Title = "Safe Anti-Wave (No Wave Death)",
+    Desc = "Blocks tsunami wave hit reports so you never die or lose a case mid-return",
+    Default = false,
+    Callback = function(v)
+        Config.SafeAntiWave = v
+        syncNetworkGuardFlags()
+    end,
+})
+
+TabFarm:Section({ Title = "⚙️ Built-in AutoKick & Return Speed" })
 
 TabFarm:Toggle({
     Title = "Native AutoKick Sync",
@@ -385,8 +495,8 @@ TabFarm:Toggle({
 })
 
 TabFarm:Toggle({
-    Title = "Return Sprint Boost (Safe Speed)",
-    Desc = "Accelerates walk back speed to 48 WS when returning with a case",
+    Title = "Return Sprint Boost (Fastest Safe Speed)",
+    Desc = "Accelerates walk back speed to max server-safe limit (~81-90 WS) while carrying a case",
     Default = false,
     Callback = function(v)
         Config.ReturnSprintBoost = v
@@ -395,48 +505,176 @@ TabFarm:Toggle({
 
 TabFarm:Toggle({
     Title = "Instant Warp Return",
-    Desc = "Instantly warps back to Kick Zone the moment a case is deposited into inventory",
+    Desc = "Instantly warps back to Kick Zone the moment a case finishes depositing in Safezone",
     Default = false,
     Callback = function(v)
         Config.InstantWarpReturn = v
     end,
 })
 
--- Kick Minigame Auto-Lock Helper (Hooks into RenderStepped)
-RunService.RenderStepped:Connect(function()
-    if Config.MasterAutoFarm then
-        local renv = getrenv and getrenv()
-        local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
-        if type(KickAuto) == "table" and type(KickAuto.state) == "function" and type(KickAuto.lock) == "function" then
-            local state = KickAuto.state()
-            if state and state.minigameActive and not state.locked then
-                -- Lock jump timing
+-- Kick Minigame Smart Auto-Lock (Waits for Perfect fraction >= 0.925 when minigame opens)
+local rsFarmLockConn
+rsFarmLockConn = RunService.RenderStepped:Connect(function()
+    if not isScriptAlive() then
+        if rsFarmLockConn then
+            rsFarmLockConn:Disconnect()
+            rsFarmLockConn = nil
+        end
+        return
+    end
+    if not (Config.MasterAutoFarm or Config.InstantPerfectKick) then
+        return
+    end
+    local renv = getrenv and getrenv()
+    local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
+    if type(KickAuto) == "table" and type(KickAuto.state) == "function" and type(KickAuto.lock) == "function" then
+        local state = KickAuto.state()
+        if state and state.minigameActive and not state.locked then
+            local oscFreq = tonumber(state.oscFreq) or 0.55
+            local period = oscFreq * 2
+            local elapsed = os.clock() - (tonumber(state.startTime) or os.clock())
+            local phase = period > 0 and (elapsed % period) or 0
+            local frac = phase < oscFreq and (phase / oscFreq) or (1 - (phase - oscFreq) / oscFreq)
+            if frac >= 0.925 then
                 KickAuto.lock()
             end
         end
     end
 end)
 
--- Safe Sprint Booster & Instant Warp Return for Case Deposit
-task.spawn(function()
-    while true do
-        task.wait(0.2)
+-- Fastest Server-Safe Return Helper while carrying a case (never warps mid-run to avoid anti-cheat kill)
+local function performReturnWalk(shouldContinue)
+    local startT = os.clock()
+    local lastProgressZ = nil
+    local lastProgressT = os.clock()
+
+    while isScriptAlive() and isHoldingCase() and shouldContinue() and (os.clock() - startT) < 120 do
+        syncNetworkGuardFlags()
         local hum = getHumanoid()
         local hrp = getHRP()
-        if hum and hrp then
-            -- While carrying case, apply safe sprint speed
-            if (Config.ReturnSprintBoost or Config.MasterAutoFarm) and isHoldingCase() and not Config.WalkSpeedEnabled then
-                hum.WalkSpeed = 48
+        if not hum or not hrp or hum.Health <= 0 or isRespawnOffer() then
+            break
+        end
+
+        if not Config.WalkSpeedEnabled then
+            hum.WalkSpeed = getSafeReturnSpeed()
+        end
+
+        -- Aim directly at KickZone (inside Safezone Z < 122.75 & CollectZone), re-issuing MoveTo to bypass 8s timeout
+        hum:MoveTo(Vector3.new(POS_KICK_ZONE.X, hrp.Position.Y, POS_KICK_ZONE.Z))
+
+        if hrp.Position.Z < 122.75 and FallRewardEvent then
+            pcall(function()
+                FallRewardEvent:FireServer({ kind = "safeClaim" })
+            end)
+        end
+
+        -- Unstick / hop over stairs if forward progress stalls while far out
+        local curZ = hrp.Position.Z
+        if not lastProgressZ or (lastProgressZ - curZ) >= 2 then
+            lastProgressZ = curZ
+            lastProgressT = os.clock()
+        elseif curZ > 125 and (os.clock() - lastProgressT) > 1.2 then
+            hum.Jump = true
+            lastProgressT = os.clock()
+        end
+
+        task.wait(0.1)
+    end
+
+    local hum = getHumanoid()
+    if hum and hum.Health > 0 and not Config.WalkSpeedEnabled then
+        hum.WalkSpeed = getNormalWalkSpeed()
+    end
+end
+
+-- Instant Perfect Kick Helper (~0.05s charge -> Perfect launch without waiting for bar)
+local function performInstantPerfectKick()
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum or hum.Health <= 0 then
+        return false
+    end
+    if isHoldingCase() or isFlightActive() or isSpinActive() or isInKickSession() then
+        return false
+    end
+    if isRespawnOffer() then
+        closeRespawnPopup()
+        task.wait(0.35)
+        if isRespawnOffer() then
+            return false
+        end
+    end
+
+    local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
+    if distToKick > 10 then
+        teleportTo(POS_KICK_ZONE)
+        task.wait(0.25)
+    end
+
+    local renv = getrenv and getrenv()
+    local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
+    local ready = true
+    if type(KickAuto) == "table" and type(KickAuto.state) == "function" then
+        local tZone = os.clock()
+        while (os.clock() - tZone) < 0.6 do
+            local st = KickAuto.state()
+            if st and st.inZone then
+                ready = true
+                break
+            end
+            ready = false
+            task.wait(0.05)
+        end
+    end
+
+    if not ready then
+        teleportTo(POS_KICK_ZONE)
+        task.wait(0.25)
+    end
+
+    if RequestKick then
+        pcall(function()
+            RequestKick:FireServer({ action = "charge" })
+        end)
+        task.wait(0.05)
+        pcall(function()
+            RequestKick:FireServer({ tier = "Perfect" })
+        end)
+        local tWait = os.clock()
+        while isScriptAlive() and (os.clock() - tWait) < 1.5 do
+            if isFlightActive() or isInKickSession() then
+                break
+            end
+            task.wait(0.05)
+        end
+        return true
+    end
+    return false
+end
+
+-- Standalone Return Sprint Boost & Instant Warp Return (when MasterAutoFarm is OFF)
+task.spawn(function()
+    while isScriptAlive() do
+        task.wait(0.2)
+        syncNetworkGuardFlags()
+        if not Config.MasterAutoFarm then
+            if Config.ReturnSprintBoost and isHoldingCase() then
+                performReturnWalk(function()
+                    return (not Config.MasterAutoFarm) and Config.ReturnSprintBoost
+                end)
             end
 
-            -- Instant Warp back the moment the case is deposited into inventory
-            if (Config.InstantWarpReturn or Config.MasterAutoFarm) and not isHoldingCase() and not isFlightActive() then
-                local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
-                local distToCollect = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
-                -- If near Collect Zone or runway end, instant warp straight to Kick Zone
-                if distToCollect < 35 and distToKick > 15 then
-                    teleportTo(POS_KICK_ZONE)
-                    task.wait(0.2)
+            if Config.InstantWarpReturn and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isInKickSession() and not isRespawnOffer() then
+                local hum = getHumanoid()
+                local hrp = getHRP()
+                if hum and hrp and hum.Health > 0 then
+                    local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
+                    local distToCollect = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
+                    if hrp.Position.Z < 122.75 and distToCollect < 95 and distToKick > 12 then
+                        teleportTo(POS_KICK_ZONE)
+                        task.wait(0.25)
+                    end
                 end
             end
         end
@@ -445,93 +683,49 @@ end)
 
 -- Master Auto Farm Main Loop
 task.spawn(function()
-    while true do
-        task.wait(0.3)
+    local boostFiredForFlight = false
+    while isScriptAlive() do
+        task.wait(0.15)
+        syncNetworkGuardFlags()
         if Config.MasterAutoFarm then
             local hrp = getHRP()
             local hum = getHumanoid()
-            local renv = getrenv and getrenv()
-            local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
-
-            if hrp and hum then
-                -- Phase 1: Case Return / Deposit
-                if isHoldingCase() then
-                    -- Guide character towards CollectZone
-                    hum:MoveTo(Vector3.new(POS_COLLECT_ZONE.X, hrp.Position.Y, POS_COLLECT_ZONE.Z))
-                    hum.WalkSpeed = 48
-
-                    local tDeposit = tick()
-                    while isHoldingCase() and (tick() - tDeposit) < 15 and Config.MasterAutoFarm do
-                        task.wait(0.2)
-                        -- If close enough to CollectZone, touch it
-                        local dist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
-                        if dist < 12 then
-                            task.wait(0.3)
-                        end
-                    end
-
-                    -- Once deposited, INSTANT WARP straight back to Runway / Kick Zone!
-                    if not isHoldingCase() then
-                        teleportTo(POS_KICK_ZONE)
-                        task.wait(0.15)
-                    end
-                end
-
-                -- Phase 2: Flight / In Kick Session Wait
-                if isFlightActive() then
-                    -- Wait until flight finishes and player lands
-                    local tFlight = tick()
-                    while isFlightActive() and (tick() - tFlight) < 25 and Config.MasterAutoFarm do
-                        task.wait(0.3)
-                        -- Dismiss wave cutscene if stuck
-                        if FallRewardEvent and LocalPlayer:GetAttribute("_IsKicking") == false then
-                            pcall(function()
-                                FallRewardEvent:FireServer({ kind = "waveCutsceneDone" })
-                            end)
-                        end
-                    end
-                end
-
-                -- Phase 3: Initiate Kick from KickZone
-                if not isFlightActive() and not isHoldingCase() and Config.MasterAutoFarm then
-                    local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
-                    if distToKick > 8 then
-                        teleportTo(POS_KICK_ZONE)
-                        task.wait(0.35)
-                    end
-
-                    -- Check zone readiness
-                    local inZone = false
-                    if type(KickAuto) == "table" and type(KickAuto.state) == "function" then
-                        local st = KickAuto.state()
-                        inZone = st and st.inZone
-                    else
-                        inZone = true
-                    end
-
-                    if inZone then
-                        -- Start kick charge
-                        if type(KickAuto) == "table" and type(KickAuto.press) == "function" then
-                            KickAuto.press()
+            if hrp and hum and hum.Health > 0 then
+                if isRespawnOffer() then
+                    closeRespawnPopup()
+                    task.wait(0.35)
+                elseif isHoldingCase() then
+                    boostFiredForFlight = false
+                    performReturnWalk(function()
+                        return Config.MasterAutoFarm
+                    end)
+                    -- Instant snap back to KickZone once safely deposited inside Safezone
+                    hrp = getHRP()
+                    if hrp and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isInKickSession() and not isRespawnOffer() then
+                        local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
+                        if hrp.Position.Z < 122.75 and distToKick > 10 then
+                            teleportTo(POS_KICK_ZONE)
                             task.wait(0.15)
-                            if type(KickAuto.lock) == "function" then
-                                KickAuto.lock()
-                            end
-                        elseif RequestKick then
-                            pcall(function() RequestKick:FireServer({ action = "charge" }) end)
-                            task.wait(0.12)
-                            pcall(function() RequestKick:FireServer({ tier = "Perfect" }) end)
                         end
-
-                        -- Wait for launch to initiate
-                        task.wait(1.0)
-                    else
-                        -- Re-align position
-                        teleportTo(POS_KICK_ZONE)
-                        task.wait(0.5)
                     end
+                elseif isFlightActive() or isSpinActive() or isInKickSession() then
+                    -- Wait cleanly through flight AND FallReward case spin until handOff sets _HoldingCase (never warp away early!)
+                    if isFlightActive() and not boostFiredForFlight then
+                        boostFiredForFlight = true
+                        local boostRem = Remotes and Remotes:FindFirstChild("BoostKick")
+                        if boostRem then
+                            pcall(function() boostRem:FireServer() end)
+                        end
+                    end
+                else
+                    boostFiredForFlight = false
+                    performInstantPerfectKick()
                 end
+            else
+                boostFiredForFlight = false
             end
+        else
+            boostFiredForFlight = false
         end
     end
 end)
@@ -572,10 +766,12 @@ TabCases:Toggle({
 TabCases:Slider({
     Title = "Open Delay (s)",
     Desc = "Delay between opening batches",
-    Min = 0.15,
-    Max = 2.0,
+    Value = {
+        Min = 0.15,
+        Max = 2.0,
+        Default = 0.35,
+    },
     Step = 0.05,
-    Default = 0.35,
     Callback = function(v)
         Config.CaseOpenDelay = v
     end,
@@ -971,10 +1167,12 @@ TabPlayer:Toggle({
 
 TabPlayer:Slider({
     Title = "WalkSpeed Value",
-    Min = 16,
-    Max = 250,
+    Value = {
+        Min = 16,
+        Max = 250,
+        Default = 32,
+    },
     Step = 2,
-    Default = 32,
     Callback = function(v)
         Config.WalkSpeedValue = v
     end,
@@ -994,10 +1192,12 @@ TabPlayer:Toggle({
 
 TabPlayer:Slider({
     Title = "JumpPower Value",
-    Min = 50,
-    Max = 350,
+    Value = {
+        Min = 50,
+        Max = 350,
+        Default = 75,
+    },
     Step = 5,
-    Default = 75,
     Callback = function(v)
         Config.JumpPowerValue = v
     end,
@@ -1034,10 +1234,12 @@ TabPlayer:Toggle({
 
 TabPlayer:Slider({
     Title = "Fly Speed",
-    Min = 20,
-    Max = 200,
+    Value = {
+        Min = 20,
+        Max = 200,
+        Default = 50,
+    },
     Step = 5,
-    Default = 50,
     Callback = function(v)
         Config.FlySpeed = v
     end,
