@@ -458,7 +458,7 @@ do
 end
 
 -- Target Key Positions
-local POS_KICK_ZONE = Vector3.new(207.25, 27.8, 104.95)
+local POS_KICK_ZONE = Vector3.new(207.25, 22.5, 104.95)
 local POS_COLLECT_ZONE = Vector3.new(199.87, 24.0, 81.01)
 local POS_BASE_SPAWN = Vector3.new(269.22, 34.22, -19.42)
 
@@ -1768,7 +1768,7 @@ local function performInstantPerfectKick()
     if not hrp or not hum or hum.Health <= 0 then
         return false
     end
-    if isHoldingCase() or isFlightActive() or isSpinActive() or isInKickSession() then
+    if isHoldingCase() or isFlightActive() or isSpinActive() then
         return false
     end
     if isRespawnOffer() then
@@ -1782,51 +1782,69 @@ local function performInstantPerfectKick()
     local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
     if distToKick > 10 then
         teleportTo(POS_KICK_ZONE)
-        task.wait(0.1)
+        task.wait(0.08)
     end
 
     local renv = getrenv and getrenv()
     local KickAuto = (renv and renv._G and renv._G.KickAuto) or _G.KickAuto
     local ready = true
-    if type(KickAuto) == "table" and type(KickAuto.state) == "function" then
+    if not isInKickSession() and type(KickAuto) == "table" and type(KickAuto.state) == "function" then
         local tZone = os.clock()
-        while (os.clock() - tZone) < 0.5 do
+        while (os.clock() - tZone) < 0.45 do
             local st = KickAuto.state()
             if st and st.inZone then
                 ready = true
                 break
             end
             ready = false
-            task.wait(0.04)
+            task.wait(0.03)
         end
     end
 
-    if not ready then
+    if not ready and not isInKickSession() then
         teleportTo(POS_KICK_ZONE)
-        task.wait(0.1)
+        task.wait(0.08)
     end
 
     if RequestKick then
         launchDispatchedForKick = false
-        pcall(function()
-            RequestKick:FireServer({ action = "charge" })
-        end)
-        task.wait(0.05)
+        if not isInKickSession() then
+            pcall(function()
+                RequestKick:FireServer({ action = "charge" })
+            end)
+            task.wait(0.06)
+        end
         pcall(function()
             RequestKick:FireServer({ tier = "Perfect" })
         end)
         local tWait = os.clock()
+        local lastRetry = os.clock()
         while isScriptAlive() and (os.clock() - tWait) < 1.2 do
             if isFlightActive() then
                 dispatchLaunchBypass()
-                break
+                return true
             end
-            if isInKickSession() then
-                break
+            if isHoldingCase() then
+                return true
+            end
+            if (os.clock() - lastRetry) >= 0.14 then
+                lastRetry = os.clock()
+                if not isInKickSession() then
+                    pcall(function()
+                        RequestKick:FireServer({ action = "charge" })
+                    end)
+                    task.wait(0.05)
+                end
+                pcall(function()
+                    RequestKick:FireServer({ tier = "Perfect" })
+                end)
             end
             task.wait(0.02)
         end
-        return true
+        if isFlightActive() then
+            dispatchLaunchBypass()
+            return true
+        end
     end
     return false
 end
@@ -1844,7 +1862,7 @@ task.spawn(function()
                 end)
             end
 
-            if Config.InstantWarpReturn and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isInKickSession() and not isRespawnOffer() then
+            if Config.InstantWarpReturn and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isRespawnOffer() then
                 local hum = getHumanoid()
                 local hrp = getHRP()
                 if hum and hrp and hum.Health > 0 then
@@ -1863,6 +1881,7 @@ end)
 -- Master Auto Farm Main Loop
 task.spawn(function()
     local boostFiredForFlight = false
+    local fieldWaitStart = 0
     local safeZ = getSafezoneZ()
     while isScriptAlive() do
         task.wait(0.05)
@@ -1876,34 +1895,57 @@ task.spawn(function()
                     task.wait(0.25)
                 elseif isHoldingCase() then
                     boostFiredForFlight = false
+                    fieldWaitStart = 0
                     performReturnWalk(function()
                         return Config.MasterAutoFarm
                     end)
                     -- Instant snap back to KickZone once safely deposited inside Safezone
                     hrp = getHRP()
-                    if hrp and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isInKickSession() and not isRespawnOffer() then
+                    if hrp and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isRespawnOffer() then
                         local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
                         if hrp.Position.Z < safeZ and distToKick > 10 then
                             teleportTo(POS_KICK_ZONE)
                         end
                     end
-                elseif isFlightActive() or isSpinActive() or isInKickSession() then
+                elseif isFlightActive() or isSpinActive() then
+                    fieldWaitStart = 0
                     -- Wait cleanly through flight until FallReward cutscene bypass hands off case
-                    if isFlightActive() and not boostFiredForFlight then
-                        boostFiredForFlight = true
-                        if BoostKick then
-                            pcall(function() BoostKick:FireServer() end)
+                    if isFlightActive() then
+                        dispatchLaunchBypass()
+                        if not boostFiredForFlight then
+                            boostFiredForFlight = true
+                            if BoostKick then
+                                pcall(function() BoostKick:FireServer() end)
+                            end
                         end
+                    end
+                elseif isInKickSession() and hrp.Position.Z > safeZ then
+                    -- Landed in field waiting for FallRewardEvent case handoff
+                    if fieldWaitStart == 0 then
+                        fieldWaitStart = os.clock()
+                    end
+                    if FallRewardEvent and (Config.CutsceneBypass or Config.MasterAutoFarm) then
+                        pcall(function()
+                            FallRewardEvent:FireServer({ kind = "waveCutsceneDone" })
+                        end)
+                    end
+                    if (os.clock() - fieldWaitStart) > 1.8 then
+                        fieldWaitStart = 0
+                        teleportTo(POS_KICK_ZONE)
+                        performInstantPerfectKick()
                     end
                 else
                     boostFiredForFlight = false
+                    fieldWaitStart = 0
                     performInstantPerfectKick()
                 end
             else
                 boostFiredForFlight = false
+                fieldWaitStart = 0
             end
         else
             boostFiredForFlight = false
+            fieldWaitStart = 0
         end
     end
 end)
