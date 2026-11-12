@@ -199,29 +199,29 @@ local Config = {
 
     -- 🎲 Derix 1.5M Dice Farm (Road Fight Boss)
     AutoFarmDerix = false,
-    DerixRound = "Auto All Rounds", -- "Auto All Rounds" | "Round 1 (R1676)" | "Round 2 (R1678)" | "Round 3 (R1679)" | "Round 4 (R1680)"
-    AutoRollDice = true,
-    AutoOpen15MBox = true,
-    AutoOpenAllCashBoxes = true,
+    DerixRound = "Round 1 (R1676)", -- "Round 1 (R1676)" | "Round 2 (R1678)" | "Round 3 (R1679)" | "Round 4 (R1680)" | "Auto All Rounds"
+    AutoRollDice = false,
+    AutoOpen15MBox = false,
+    AutoOpenAllCashBoxes = false,
 
     -- Autonomous Quest Farming
-    AutoFarmQuests = true,
-    AutoStoryProgression = true,
-    AutoCleanInventory = true,
+    AutoFarmQuests = false,
+    AutoStoryProgression = false,
+    AutoCleanInventory = false,
     QuestDriveMode = "Realistic Road Drive", -- "Realistic Road Drive" | "Instant Warp" | "Hyper Sonic Glide" | "Hybrid Cruise"
     QuestDriveSpeed = 260, -- km/h
-    AutoSkipDialogue = true,
-    AutoAcceptQuest = true,
-    AutoClaimRewards = true,
-    LoopNextQuest = true,
-    GhostTraffic = true,
+    AutoSkipDialogue = false,
+    AutoAcceptQuest = false,
+    AutoClaimRewards = false,
+    LoopNextQuest = false,
+    GhostTraffic = false,
 
     -- Speed & Driving
     SpeedBoostEnabled = false,
     TargetSpeedKmh = 250,
     AccelerationMultiplier = 2.0,
     InfiniteBoost = false,
-    AntiFlip = true,
+    AntiFlip = false,
     InstantBrakeKey = Enum.KeyCode.X,
 
     -- Car Flight
@@ -241,7 +241,7 @@ local Config = {
     PickupRadius = 150,
 
     -- Safety & Utility
-    AntiAfk = true,
+    AntiAfk = false,
     FastMode = false
 }
 
@@ -587,9 +587,12 @@ TabDerix:Toggle({
     Callback = function(val)
         Config.AutoFarmDerix = val
         if val then
-            Config.AutoFarmQuests = true
+            Config.AutoRollDice = true
+            Config.AutoOpen15MBox = true
+            Config.AutoOpenAllCashBoxes = true
             WindUI:Notify({ Title = "Derix Farm Started! 🎲", Content = "กำลังมุ่งหน้าไปหา Derix เพื่อเริ่มฟาร์มเต๋า & กล่อง 1.5M...", Duration = 3, Icon = "play" })
         else
+            stopAutoDrive()
             WindUI:Notify({ Title = "Derix Farm Stopped", Content = "หยุดการฟาร์ม Derix ชั่วคราว", Duration = 2, Icon = "pause" })
         end
     end
@@ -671,9 +674,12 @@ TabLevel:Toggle({
     Callback = function(val)
         Config.AutoFarmLevel = val
         if val then
-            Config.AutoFarmQuests = true
+            Config.AutoRollDice = true
+            Config.AutoOpen15MBox = true
+            Config.AutoOpenAllCashBoxes = true
             WindUI:Notify({ Title = "Level Farm Started! ⚡", Content = "เริ่มฟาร์มเลเวล: " .. Config.LevelFarmTarget .. "\n(โหมดวิ่งแต่อันแรกยาวๆ)", Duration = 3, Icon = "play" })
         else
+            stopAutoDrive()
             WindUI:Notify({ Title = "Level Farm Stopped", Content = "หยุดการฟาร์มเลเวลชั่วคราว", Duration = 2, Icon = "pause" })
         end
     end
@@ -1777,7 +1783,7 @@ end)
 task.spawn(function()
     while isAlive() do
         task.wait(0.12)
-        if Config.AutoSkipDialogue or Config.AutoAcceptQuest or Config.AutoFarmQuests then
+        if Config.AutoSkipDialogue or (Config.AutoFarmQuests and Config.AutoAcceptQuest) then
             pcall(function()
                 local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
                 if not pg then return end
@@ -1887,6 +1893,39 @@ end)
 -- ==============================================================================
 -- 📦 5.1. STATE & INVENTORY MANAGER FOR QUEST PROGRESSION
 -- ==============================================================================
+local function getRoadFightNextGate(questId, carPos, clearedGateSet)
+    clearedGateSet = clearedGateSet or {}
+    local rfd = nil
+    pcall(function() rfd = require(ReplicatedStorage.RBRCQuest.RoadFightData) end)
+    if not rfd or not rfd.questRows then return nil, false, nil end
+
+    local qData = rfd.questRows[questId] or rfd.questRows[tostring(questId)]
+    if not qData then
+        for _, row in pairs(rfd.questRows) do
+            if type(row) == "table" and (row.id == questId or row.mid == questId or tostring(row.mid) == tostring(questId)) then
+                qData = row
+                break
+            end
+        end
+    end
+    if not qData or type(qData.obj) ~= "table" then return nil, false, nil end
+
+    for idx, gate in ipairs(qData.obj) do
+        if not clearedGateSet[idx] then
+            local coords = gate[11]
+            if type(coords) == "table" and #coords >= 6 then
+                local gx = (coords[1] + coords[4]) / 2
+                local gy = (coords[2] + coords[5]) / 2
+                local gz = (coords[3] + coords[6]) / 2
+                local gatePos = Vector3.new(gx, gy, gz)
+                local isFinish = (idx == #qData.obj)
+                return gatePos, isFinish, idx
+            end
+        end
+    end
+    return nil, false, nil
+end
+
 local function getSkillQuestState()
     local qq = nil
     pcall(function()
@@ -2388,6 +2427,17 @@ end
 
 local function getActiveMissionTarget()
     local targetPos, missionObj, missionType, isFinishLine = nil, nil, nil, false
+
+    -- 0. Check Active Road Fight Checkpoints (Level Farm & Derix Farm)
+    local activeRId = (Config.AutoFarmLevel and LevelFarmStats.activeFightRound) or (Config.AutoFarmDerix and DerixStats.activeFightRound)
+    if activeRId then
+        local root = getCarRoot()
+        local clearedSet = Config.AutoFarmLevel and LevelFarmStats.clearedGates or DerixStats.clearedGates
+        local gPos, isFin, gIdx = getRoadFightNextGate(activeRId, root and root.Position, clearedSet)
+        if gPos then
+            return gPos, nil, "roadfight", isFin
+        end
+    end
 
     -- 1. Direct Server-Verified Quest State from QuestRequest (Guaranteed Live)
     local liveM = getLiveMissionState()
@@ -2925,7 +2975,8 @@ end
 task.spawn(function()
     while isAlive() do
         task.wait(0.06)
-        if Config.AutoFarmQuests then
+        local anyFarmActive = Config.AutoFarmLevel or Config.AutoFarmDerix or Config.AutoFarmQuests
+        if anyFarmActive then
             pcall(function()
                 local root = getCarRoot()
             local rcd = getRCDrive()
@@ -3232,8 +3283,9 @@ task.spawn(function()
                         local curTarget = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
                         local targetCoords = curTarget.coords
                         local distToBoss = (root.Position - targetCoords).Magnitude
-                        if distToBoss > 24 then
-                            executeMoveStep(targetCoords, "level_boss", Config.QuestDriveSpeed)
+                        if distToBoss > 40 then
+                            teleportCar(targetCoords)
+                            task.wait(0.5)
                         else
                             stopAutoDrive()
                             if rcd and rcd.phys then
@@ -3243,16 +3295,19 @@ task.spawn(function()
                             end
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
+                            LevelFarmStats.clearedGates = {}
                             challengeBoss(curTarget.bossId, curTarget.questId, curTarget.npcId, Config.LevelFarmOnlyRound1 and "Round 1" or nil)
                             pressReturnKey()
                             handleDiceRollAndRewards()
-                            task.wait(0.3)
+                            autoOpenCashBoxes()
+                            task.wait(0.35)
                         end
                     elseif Config.AutoFarmDerix then
                         questFarmState = "DERIX_FARM"
                         local distToDerix = (root.Position - DERIX_COORDS).Magnitude
-                        if distToDerix > 24 then
-                            executeMoveStep(DERIX_COORDS, "derix_npc", Config.QuestDriveSpeed)
+                        if distToDerix > 40 then
+                            teleportCar(DERIX_COORDS)
+                            task.wait(0.5)
                         else
                             stopAutoDrive()
                             if rcd and rcd.phys then
@@ -3262,10 +3317,12 @@ task.spawn(function()
                             end
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
+                            DerixStats.clearedGates = {}
                             challengeDerix(Config.DerixRound)
                             pressReturnKey()
                             handleDiceRollAndRewards()
-                            task.wait(0.3)
+                            autoOpenCashBoxes()
+                            task.wait(0.35)
                         end
                     elseif Config.LoopNextQuest or Config.AutoStoryProgression then
                         questFarmState = "SEARCHING"
