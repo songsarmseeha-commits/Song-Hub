@@ -36,6 +36,7 @@ if not game:IsLoaded() then
 end
 
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -134,6 +135,8 @@ local RequestSpinWheel = Remotes and Remotes:FindFirstChild("RequestSpinWheel")
 local RequestClaimOffline = Remotes and Remotes:FindFirstChild("RequestClaimOffline")
 local RequestCollectForeverReward = Remotes and Remotes:FindFirstChild("RequestCollectForeverReward")
 local FallRewardEvent = Remotes and Remotes:FindFirstChild("FallRewardEvent")
+local BoostKick = Remotes and Remotes:FindFirstChild("BoostKick")
+local RespawnPrompt = Remotes and Remotes:FindFirstChild("RespawnPrompt")
 local RedeemCode = Remotes and Remotes:FindFirstChild("RedeemCode")
 local SellShopRequest = Remotes and Remotes:FindFirstChild("SellShopRequest")
 local RequestSetSetting = Remotes and Remotes:FindFirstChild("RequestSetSetting")
@@ -179,6 +182,7 @@ local Config = {
     -- Auto Kick / Farm
     MasterAutoFarm = false,
     InstantPerfectKick = false,
+    CutsceneBypass = false,
     SafeAntiWave = false,
     NativeAutoKickSync = false,
     ReturnSprintBoost = false,
@@ -257,6 +261,8 @@ end
 local function teleportTo(targetPos)
     local hrp = getHRP()
     if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 2, 0))
     end
 end
@@ -325,24 +331,37 @@ local function getNormalWalkSpeed()
     return math.clamp(40 + math.max(0, speedAttr - baseSpd), 40, 50)
 end
 
--- Server-safe return WalkSpeed while holding a case (tested live: ~80-92 survives cleanly, >=105 triggers anti-cheat)
+local TURBO_RETURN_SPEED = 500
+local SAFEZONE_Z_FALLBACK = 122.75
+
+local function getSafezoneZ()
+    local invis = Workspace:FindFirstChild("InvisWalls")
+    local sz = invis and invis:FindFirstChild("Safezone")
+    if sz and sz:IsA("BasePart") then
+        return sz.Position.Z
+    end
+    return SAFEZONE_Z_FALLBACK
+end
+
+-- Fastest verified anti-wave return WalkSpeed while carrying a case (outruns Zone 9-11 waves safely)
 local function getSafeReturnSpeed()
-    local normal = getNormalWalkSpeed()
-    return math.clamp(math.floor(normal * 2.04), 80, 90)
+    if Config.MasterAutoFarm or Config.ReturnSprintBoost then
+        return TURBO_RETURN_SPEED
+    end
+    return getNormalWalkSpeed()
 end
 
 local function closeRespawnPopup()
+    if RespawnPrompt then
+        pcall(function()
+            RespawnPrompt:FireServer({ kind = "decline" })
+        end)
+    end
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         local rf = pg and pg:FindFirstChild("RespawnFrame", true)
         if rf and rf.Visible then
-            local eb = rf:FindFirstChild("ExitButton", true)
-            if eb and typeof(firesignal) == "function" then
-                pcall(firesignal, eb.Activated)
-                pcall(firesignal, eb.MouseButton1Click)
-            else
-                rf.Visible = false
-            end
+            rf.Visible = false
         end
     end)
 end
@@ -449,8 +468,8 @@ local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 TabFarm:Section({ Title = "🚀 Smart Master Auto Farm" })
 
 TabFarm:Toggle({
-    Title = "Master Auto Farm (Instant Perfect + Safe Return)",
-    Desc = "Instant Perfect kick, anti-wave protection, fastest safe return (~88 WS) & loop",
+    Title = "Master Auto Farm (Turbo Bypass)",
+    Desc = "Launch bypass + cutscene skip (~8.7s saved) + 500 WS anti-wave return + instant warp loop",
     Default = false,
     Callback = function(v)
         Config.MasterAutoFarm = v
@@ -459,12 +478,21 @@ TabFarm:Toggle({
 })
 
 TabFarm:Toggle({
-    Title = "Instant Perfect Kick",
-    Desc = "Automatically locks/upgrades every kick to Perfect tier (no waiting for the bar)",
+    Title = "Instant Perfect Kick (+ Launch Bypass)",
+    Desc = "Forces Perfect tier and fires launch bypass immediately (~0.13s instead of ~3.3s)",
     Default = false,
     Callback = function(v)
         Config.InstantPerfectKick = v
         syncNetworkGuardFlags()
+    end,
+})
+
+TabFarm:Toggle({
+    Title = "Cutscene & Spin Bypass (~8.7s Skip)",
+    Desc = "Skips FallReward wave/reveal cutscene immediately after landing so return starts at once",
+    Default = false,
+    Callback = function(v)
+        Config.CutsceneBypass = v
     end,
 })
 
@@ -500,8 +528,8 @@ TabFarm:Toggle({
 })
 
 TabFarm:Toggle({
-    Title = "Return Sprint Boost (Fastest Safe Speed)",
-    Desc = "Accelerates walk back speed to max server-safe limit (~81-90 WS) while carrying a case",
+    Title = "Turbo Return Bypass (500 WS Anti-Wave)",
+    Desc = "Skips wave cutscene and runs back at 500 WS via Heartbeat MoveTo + auto SafeClaim",
     Default = false,
     Callback = function(v)
         Config.ReturnSprintBoost = v
@@ -547,13 +575,108 @@ rsFarmLockConn = RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Fastest Server-Safe Return Helper while carrying a case (never warps mid-run to avoid anti-cheat kill)
+-- Kick Windup Launch Bypass + FallReward Cutscene Skipper (scoped cleanly to EXEC_ID)
+local kickingBypassConn
+local launchDispatchedForKick = false
+local function dispatchLaunchBypass()
+    if launchDispatchedForKick or not RequestKick or not isFlightActive() then
+        return false
+    end
+    if not (Config.MasterAutoFarm or Config.InstantPerfectKick) then
+        return false
+    end
+    launchDispatchedForKick = true
+    pcall(function()
+        RequestKick:FireServer({ action = "launch" })
+    end)
+    return true
+end
+
+kickingBypassConn = LocalPlayer:GetAttributeChangedSignal("_IsKicking"):Connect(function()
+    if not isScriptAlive() then
+        if kickingBypassConn then
+            kickingBypassConn:Disconnect()
+            kickingBypassConn = nil
+        end
+        return
+    end
+    if isFlightActive() then
+        dispatchLaunchBypass()
+    else
+        launchDispatchedForKick = false
+    end
+end)
+
+local fallRewardSkipConn
+if FallRewardEvent then
+    fallRewardSkipConn = FallRewardEvent.OnClientEvent:Connect(function(data)
+        if not isScriptAlive() then
+            if fallRewardSkipConn then
+                fallRewardSkipConn:Disconnect()
+                fallRewardSkipConn = nil
+            end
+            return
+        end
+        if not (Config.MasterAutoFarm or Config.CutsceneBypass or Config.ReturnSprintBoost) then
+            return
+        end
+        if type(data) == "table" and data.kind == "begin" and (data.player == nil or data.player == LocalPlayer) then
+            task.defer(function()
+                if isScriptAlive() and FallRewardEvent then
+                    pcall(function()
+                        FallRewardEvent:FireServer({ kind = "waveCutsceneDone" })
+                    end)
+                end
+            end)
+        end
+    end)
+end
+
+-- Fastest Server-Safe Turbo Return Helper (500 WS via Heartbeat MoveTo + Camera/SafeClaim Guard)
 local function performReturnWalk(shouldContinue)
     local startT = os.clock()
     local lastProgressZ = nil
     local lastProgressT = os.clock()
+    local safeZ = getSafezoneZ()
+    local safeClaimed = false
 
-    while isScriptAlive() and isHoldingCase() and shouldContinue() and (os.clock() - startT) < 120 do
+    local hbConn
+    hbConn = RunService.Heartbeat:Connect(function()
+        if not isScriptAlive() or not isHoldingCase() or not shouldContinue() then
+            return
+        end
+        local hum = getHumanoid()
+        local hrp = getHRP()
+        if not hum or not hrp or hum.Health <= 0 or isRespawnOffer() then
+            return
+        end
+
+        local cam = Workspace.CurrentCamera
+        if cam and cam.CameraType ~= Enum.CameraType.Custom then
+            cam.CameraType = Enum.CameraType.Custom
+        end
+
+        local targetPos = Vector3.new(POS_KICK_ZONE.X, hrp.Position.Y, POS_KICK_ZONE.Z)
+        if hrp.Position.Z >= safeZ then
+            if not Config.WalkSpeedEnabled then
+                hum.WalkSpeed = getSafeReturnSpeed()
+            end
+            hum:MoveTo(targetPos)
+        else
+            if not Config.WalkSpeedEnabled then
+                hum.WalkSpeed = getNormalWalkSpeed()
+            end
+            hum:MoveTo(targetPos)
+            if not safeClaimed and FallRewardEvent then
+                safeClaimed = true
+                pcall(function()
+                    FallRewardEvent:FireServer({ kind = "safeClaim" })
+                end)
+            end
+        end
+    end)
+
+    while isScriptAlive() and isHoldingCase() and shouldContinue() and (os.clock() - startT) < 90 do
         syncNetworkGuardFlags()
         local hum = getHumanoid()
         local hrp = getHRP()
@@ -561,30 +684,30 @@ local function performReturnWalk(shouldContinue)
             break
         end
 
-        if not Config.WalkSpeedEnabled then
-            hum.WalkSpeed = getSafeReturnSpeed()
-        end
-
-        -- Aim directly at KickZone (inside Safezone Z < 122.75 & CollectZone), re-issuing MoveTo to bypass 8s timeout
-        hum:MoveTo(Vector3.new(POS_KICK_ZONE.X, hrp.Position.Y, POS_KICK_ZONE.Z))
-
-        if hrp.Position.Z < 122.75 and FallRewardEvent then
+        -- Re-issue safeClaim rapidly once inside Safezone until _HoldingCase clears
+        local curZ = hrp.Position.Z
+        if curZ < safeZ and FallRewardEvent then
+            safeClaimed = true
             pcall(function()
                 FallRewardEvent:FireServer({ kind = "safeClaim" })
             end)
+        else
+            -- Unstick / hop over stairs if forward progress stalls while far out
+            if not lastProgressZ or (lastProgressZ - curZ) >= 2 then
+                lastProgressZ = curZ
+                lastProgressT = os.clock()
+            elseif curZ > safeZ and (os.clock() - lastProgressT) > 1.0 then
+                hum.Jump = true
+                lastProgressT = os.clock()
+            end
         end
 
-        -- Unstick / hop over stairs if forward progress stalls while far out
-        local curZ = hrp.Position.Z
-        if not lastProgressZ or (lastProgressZ - curZ) >= 2 then
-            lastProgressZ = curZ
-            lastProgressT = os.clock()
-        elseif curZ > 125 and (os.clock() - lastProgressT) > 1.2 then
-            hum.Jump = true
-            lastProgressT = os.clock()
-        end
+        task.wait(0.05)
+    end
 
-        task.wait(0.1)
+    if hbConn then
+        hbConn:Disconnect()
+        hbConn = nil
     end
 
     local hum = getHumanoid()
@@ -593,7 +716,7 @@ local function performReturnWalk(shouldContinue)
     end
 end
 
--- Instant Perfect Kick Helper (~0.05s charge -> Perfect launch without waiting for bar)
+-- Instant Perfect Kick Bypass (~0.13s charge -> Perfect -> launch skip)
 local function performInstantPerfectKick()
     local hrp = getHRP()
     local hum = getHumanoid()
@@ -605,7 +728,7 @@ local function performInstantPerfectKick()
     end
     if isRespawnOffer() then
         closeRespawnPopup()
-        task.wait(0.35)
+        task.wait(0.25)
         if isRespawnOffer() then
             return false
         end
@@ -614,7 +737,7 @@ local function performInstantPerfectKick()
     local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
     if distToKick > 10 then
         teleportTo(POS_KICK_ZONE)
-        task.wait(0.25)
+        task.wait(0.1)
     end
 
     local renv = getrenv and getrenv()
@@ -622,23 +745,24 @@ local function performInstantPerfectKick()
     local ready = true
     if type(KickAuto) == "table" and type(KickAuto.state) == "function" then
         local tZone = os.clock()
-        while (os.clock() - tZone) < 0.6 do
+        while (os.clock() - tZone) < 0.5 do
             local st = KickAuto.state()
             if st and st.inZone then
                 ready = true
                 break
             end
             ready = false
-            task.wait(0.05)
+            task.wait(0.04)
         end
     end
 
     if not ready then
         teleportTo(POS_KICK_ZONE)
-        task.wait(0.25)
+        task.wait(0.1)
     end
 
     if RequestKick then
+        launchDispatchedForKick = false
         pcall(function()
             RequestKick:FireServer({ action = "charge" })
         end)
@@ -647,11 +771,15 @@ local function performInstantPerfectKick()
             RequestKick:FireServer({ tier = "Perfect" })
         end)
         local tWait = os.clock()
-        while isScriptAlive() and (os.clock() - tWait) < 1.5 do
-            if isFlightActive() or isInKickSession() then
+        while isScriptAlive() and (os.clock() - tWait) < 1.2 do
+            if isFlightActive() then
+                dispatchLaunchBypass()
                 break
             end
-            task.wait(0.05)
+            if isInKickSession() then
+                break
+            end
+            task.wait(0.02)
         end
         return true
     end
@@ -660,8 +788,9 @@ end
 
 -- Standalone Return Sprint Boost & Instant Warp Return (when MasterAutoFarm is OFF)
 task.spawn(function()
+    local safeZ = getSafezoneZ()
     while isScriptAlive() do
-        task.wait(0.2)
+        task.wait(0.1)
         syncNetworkGuardFlags()
         if not Config.MasterAutoFarm then
             if Config.ReturnSprintBoost and isHoldingCase() then
@@ -676,9 +805,9 @@ task.spawn(function()
                 if hum and hrp and hum.Health > 0 then
                     local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
                     local distToCollect = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
-                    if hrp.Position.Z < 122.75 and distToCollect < 95 and distToKick > 12 then
+                    if hrp.Position.Z < safeZ and distToCollect < 95 and distToKick > 12 then
                         teleportTo(POS_KICK_ZONE)
-                        task.wait(0.25)
+                        task.wait(0.15)
                     end
                 end
             end
@@ -689,8 +818,9 @@ end)
 -- Master Auto Farm Main Loop
 task.spawn(function()
     local boostFiredForFlight = false
+    local safeZ = getSafezoneZ()
     while isScriptAlive() do
-        task.wait(0.15)
+        task.wait(0.05)
         syncNetworkGuardFlags()
         if Config.MasterAutoFarm then
             local hrp = getHRP()
@@ -698,7 +828,7 @@ task.spawn(function()
             if hrp and hum and hum.Health > 0 then
                 if isRespawnOffer() then
                     closeRespawnPopup()
-                    task.wait(0.35)
+                    task.wait(0.25)
                 elseif isHoldingCase() then
                     boostFiredForFlight = false
                     performReturnWalk(function()
@@ -708,18 +838,16 @@ task.spawn(function()
                     hrp = getHRP()
                     if hrp and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isInKickSession() and not isRespawnOffer() then
                         local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
-                        if hrp.Position.Z < 122.75 and distToKick > 10 then
+                        if hrp.Position.Z < safeZ and distToKick > 10 then
                             teleportTo(POS_KICK_ZONE)
-                            task.wait(0.15)
                         end
                     end
                 elseif isFlightActive() or isSpinActive() or isInKickSession() then
-                    -- Wait cleanly through flight AND FallReward case spin until handOff sets _HoldingCase (never warp away early!)
+                    -- Wait cleanly through flight until FallReward cutscene bypass hands off case
                     if isFlightActive() and not boostFiredForFlight then
                         boostFiredForFlight = true
-                        local boostRem = Remotes and Remotes:FindFirstChild("BoostKick")
-                        if boostRem then
-                            pcall(function() boostRem:FireServer() end)
+                        if BoostKick then
+                            pcall(function() BoostKick:FireServer() end)
                         end
                     end
                 else
@@ -1659,8 +1787,12 @@ TabSettings:Button({
     Title = "Unload Script",
     Callback = function()
         Config.MasterAutoFarm = false
+        Config.InstantPerfectKick = false
+        Config.CutsceneBypass = false
+        Config.SafeAntiWave = false
         Config.NativeAutoKickSync = false
         Config.ReturnSprintBoost = false
+        Config.InstantWarpReturn = false
         Config.AutoOpenAll = false
         Config.AutoOpenSelected = false
         Config.FastOpenSkip = false
@@ -1675,11 +1807,20 @@ TabSettings:Button({
         Config.InfiniteJump = false
         Config.NoClip = false
         Config.FlyEnabled = false
+        syncNetworkGuardFlags()
 
         if getgenv then
             getgenv()._JumpForCasesRunning = false
         end
 
+        if kickingBypassConn then
+            pcall(function() kickingBypassConn:Disconnect() end)
+            kickingBypassConn = nil
+        end
+        if fallRewardSkipConn then
+            pcall(function() fallRewardSkipConn:Disconnect() end)
+            fallRewardSkipConn = nil
+        end
         if trainBonusConn then
             pcall(function() trainBonusConn:Disconnect() end)
             trainBonusConn = nil
@@ -1692,7 +1833,7 @@ TabSettings:Button({
 
         local hum = getHumanoid()
         if hum then
-            hum.WalkSpeed = 16
+            hum.WalkSpeed = getNormalWalkSpeed()
             hum.JumpPower = 50
         end
 
