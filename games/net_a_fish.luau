@@ -122,33 +122,42 @@ end
 local Config = {
     -- Auto Fishing
     MasterAutoFishing = false,
-    AutoThrowNet = true,
-    AutoReelIn = true,
-    ReelThreshold = 100, -- percentage of NetCap (50% to 100%)
+    AutoThrowNet = false,
+    AutoReelIn = false,
+    ReelThreshold = 95, -- percentage of NetCap (50% to 100%)
     FastReelCount = 0,    -- 0 = full, >0 = reel after X catches
-    AutoPerfectTap = true,
-    AutoDockReturn = true, -- Teleport back to dock if displaced
+    AutoPerfectTap = false,
+    AutoDockReturn = false, -- Teleport back to dock if displaced
 
-    -- Catch Resolver
-    AutoResolveCatch = true,
-    KeepNewFish = true,
-    KeepMutations = true,
+    -- 🪱 Bait Automation (Auto Buy & Use Best Bait)
+    AutoBuyBestBait = false,
+    AutoUseBestBait = false,
+
+    -- 🐟 Catch Resolver & Showcase
+    AutoResolveCatch = false,
+    KeepNewFish = false,
+    KeepMutations = false,
     MinKeepRarity = "Legendary", -- Sell below this rarity
-    AutoBestShowcase = true,
+    AutoBestShowcase = false,
+    AutoEquipBestFish = false, -- Auto equip best $/sec fish
 
-    -- Economics
-    AutoCollectCash = true,
-    AutoBuyUpgrades = false,
+    -- 💰 Economics & Comprehensive Upgrades (Image 1, 3, 4)
+    AutoCollectCash = false,
+    AutoBuyUpgrades = false, -- Master toggle for all upgrades
+    AutoUpgradeNets = false, -- Image 1: Auto Buy & Equip Next Tier Nets
+    AutoUpgradeFisherman = false, -- Image 3: Auto Buy Rod, Bucket, Hands, Range
+    AutoUpgradeSpear = false, -- Image 4: Auto Buy Tips, Multi, Reload, Range
+    AutoUpgradeStats = false, -- Image 1: Auto Buy Fishing & Market Stats
     AutoRebirth = false,
 
-    -- Spear Gun
+    -- 🏹 Spear Gun
     AutoSpearGun = false,
 
-    -- Rewards
-    AutoClaimGifts = true,
-    AutoClaimDaily = true,
+    -- 🎁 Rewards
+    AutoClaimGifts = false,
+    AutoClaimDaily = false,
 
-    -- Player Mobility
+    -- ⚡ Player Mobility
     SpeedBoost = false,
     SpeedValue = 16,
     JumpBoost = false,
@@ -201,7 +210,319 @@ local RebirthRequestRemote = Remotes:WaitForChild("RebirthRequest", 10)
 local RewardsRemote = Remotes:WaitForChild("Rewards", 10)
 local SpearShotRemote = Remotes:FindFirstChild("SpearShot")
 local SpearActionRemote = Remotes:FindFirstChild("SpearAction")
+local HelperActionRemote = Remotes:FindFirstChild("HelperAction")
+local TackleRemote = Remotes:FindFirstChild("Tackle")
+local OpenTackleRemote = Remotes:FindFirstChild("OpenTackle")
+local OpenHelperRemote = Remotes:FindFirstChild("OpenHelper")
+local OpenSpearRemote = Remotes:FindFirstChild("OpenSpear")
+local GetDataRemote = Remotes:FindFirstChild("GetData")
 local GoHomeRemote = Remotes:FindFirstChild("GoHome")
+
+-- ==============================================================================
+-- 🔨 ADVANCED AUTOMATION ENGINES (UPGRADES, BAIT, BEST FISH)
+-- ==============================================================================
+
+-- 1. Upgrade Nets & Auto Equip Best Net (Image 1)
+local function autoUpgradeNets()
+    pcall(function()
+        -- A. Remote Invocations
+        if BuyItemRemote then
+            local curTier = 1
+            pcall(function()
+                local data = GetDataRemote and GetDataRemote:InvokeServer()
+                if data and (data.NetTier or data.Net) then
+                    curTier = tonumber(data.NetTier or data.Net) or 1
+                end
+            end)
+            for t = curTier + 1, curTier + 6 do
+                BuyItemRemote:FireServer("Net", t)
+                BuyItemRemote:FireServer("Nets", t)
+                BuyItemRemote:FireServer("Net", t, true)
+            end
+        end
+
+        -- B. Direct PlayerGui UI Automation (Image 1)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:find("Upgrade") or gui.Name:find("Net") or gui:FindFirstChild("UPGRADES", true)) then
+                for _, btn in ipairs(gui:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local btnText = ""
+                        pcall(function()
+                            if btn:IsA("TextButton") then btnText = btn.Text end
+                            local lbl = btn:FindFirstChildOfClass("TextLabel")
+                            if lbl then btnText = btnText .. " " .. lbl.Text end
+                        end)
+
+                        -- Click BUY buttons for Nets
+                        if btnText:upper():find("BUY") and (btnText:find("$") or btnText:find("Qa") or btnText:find("Qi") or btnText:find("Sx") or btnText:find("Sp") or btnText:find("T") or btnText:find("B")) then
+                            pcall(function()
+                                if firesignal then firesignal(btn.MouseButton1Click) end
+                                if firesignal then firesignal(btn.Activated) end
+                            end)
+                        end
+                        -- Click EQUIP buttons if a higher tier net is owned
+                        if btnText:upper() == "EQUIP" or btnText:upper() == "EQUIP NET" then
+                            pcall(function()
+                                if firesignal then firesignal(btn.MouseButton1Click) end
+                                if firesignal then firesignal(btn.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 2. Upgrade Fisherman (Image 3: Fishing Rod, Bigger Bucket, Quick Hands, Range)
+local function autoUpgradeFisherman()
+    pcall(function()
+        -- A. Remote Invocations
+        if HelperActionRemote then
+            local helperStats = {"Rod", "Line", "Speed", "Range", "Bucket", "Hands", "Fishing Rod", "Bigger Bucket", "Quick Hands"}
+            for _, stat in ipairs(helperStats) do
+                HelperActionRemote:InvokeServer("buy", stat)
+                HelperActionRemote:InvokeServer("upgrade", stat)
+            end
+            for id = 1, 4 do
+                HelperActionRemote:InvokeServer("buy", id)
+                HelperActionRemote:InvokeServer("upgrade", id)
+            end
+        end
+
+        -- B. Direct PlayerGui UI Automation (Image 3)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:find("Helper") or gui.Name:find("Fisherman") or gui:FindFirstChild("FISHERMAN", true)) then
+                for _, btn in ipairs(gui:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local btnText = ""
+                        pcall(function()
+                            if btn:IsA("TextButton") then btnText = btn.Text end
+                            local lbl = btn:FindFirstChildOfClass("TextLabel")
+                            if lbl then btnText = btnText .. " " .. lbl.Text end
+                        end)
+                        if btnText:upper():find("BUY") then
+                            pcall(function()
+                                if firesignal then firesignal(btn.MouseButton1Click) end
+                                if firesignal then firesignal(btn.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 3. Upgrade Spear Gun (Image 4: Sharper Tips, Multi-Spear, Fast Reload, Range)
+local function autoUpgradeSpearGun()
+    pcall(function()
+        -- A. Remote Invocations
+        if SpearActionRemote then
+            for id = 1, 15 do
+                SpearActionRemote:InvokeServer("buy", id)
+            end
+            local spearStats = {"Tips", "Multi", "Reload", "Range", "Sharper Tips", "Multi-Spear", "Fast Reload"}
+            for _, s in ipairs(spearStats) do
+                SpearActionRemote:InvokeServer("buy", s)
+            end
+        end
+
+        -- B. Direct PlayerGui UI Automation (Image 4)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:find("Spear") or gui:FindFirstChild("SPEAR GUN", true)) then
+                for _, btn in ipairs(gui:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local btnText = ""
+                        pcall(function()
+                            if btn:IsA("TextButton") then btnText = btn.Text end
+                            local lbl = btn:FindFirstChildOfClass("TextLabel")
+                            if lbl then btnText = btnText .. " " .. lbl.Text end
+                        end)
+                        if btnText:upper():find("BUY") then
+                            pcall(function()
+                                if firesignal then firesignal(btn.MouseButton1Click) end
+                                if firesignal then firesignal(btn.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 4. Upgrade Fishing & Market Stats (Image 1: Fishing & Market tabs)
+local function autoUpgradeStats()
+    pcall(function()
+        if BuyItemRemote then
+            local kinds = {
+                "Luck", "Reel", "Sell", "Golden", "Twin", "Weave", "Treasure", "Walk", "BigBait", "Bulk",
+                "Sense", "Momentum", "Lure", "RareTwin",
+                "Income", "Storage", "Showroom", "Monger", "Slots", "Fleet", "Crown", "Colossus", "Titan", "Ascendant"
+            }
+            for _, k in ipairs(kinds) do
+                BuyItemRemote:FireServer(k, 1)
+                BuyItemRemote:FireServer(k, 10)
+            end
+        end
+
+        -- Direct UI clicker
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local upGui = pg:FindFirstChild("UpgradeMenuUI")
+        if upGui then
+            for _, btn in ipairs(upGui:GetDescendants()) do
+                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                    local btnText = ""
+                    pcall(function()
+                        if btn:IsA("TextButton") then btnText = btn.Text end
+                        local lbl = btn:FindFirstChildOfClass("TextLabel")
+                        if lbl then btnText = btnText .. " " .. lbl.Text end
+                    end)
+                    if btnText:upper():find("BUY") and (btnText:find("$") or btnText:find("T") or btnText:find("Qa") or btnText:find("Qi")) then
+                        pcall(function()
+                            if firesignal then firesignal(btn.MouseButton1Click) end
+                            if firesignal then firesignal(btn.Activated) end
+                        end)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 5. Auto Buy & Use Best Bait Engine (Image 2: Bait Shop)
+local BAIT_TIERS = {
+    "Kraken Ink",
+    "Starlight Worm",
+    "Abyss Shrimp",
+    "Golden Grub",
+    "Glitter Lure"
+}
+
+local function autoBuyAndUseBestBait()
+    pcall(function()
+        -- A. Remote Invocations
+        if TackleRemote then
+            for _, bName in ipairs(BAIT_TIERS) do
+                TackleRemote:InvokeServer("buyMax", bName)
+                TackleRemote:InvokeServer("buy", bName, 500)
+                TackleRemote:InvokeServer("buy", bName, 10)
+                TackleRemote:InvokeServer("equip", bName)
+                TackleRemote:InvokeServer("use", bName)
+            end
+        end
+        if BuyItemRemote then
+            for _, bName in ipairs(BAIT_TIERS) do
+                BuyItemRemote:FireServer("Bait", bName, 500)
+                BuyItemRemote:FireServer("Tackle", bName, 500)
+            end
+        end
+
+        -- B. Direct PlayerGui UI Automation (Image 2)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:find("Tackle") or gui.Name:find("Bait") or gui:FindFirstChild("BAIT SHOP", true)) then
+                for _, bName in ipairs(BAIT_TIERS) do
+                    local rowFound = nil
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if d:IsA("TextLabel") and d.Text:find(bName) then
+                            rowFound = d.Parent
+                            while rowFound and not rowFound:IsA("Frame") and rowFound ~= gui do
+                                rowFound = rowFound.Parent
+                            end
+                            break
+                        end
+                    end
+
+                    if rowFound then
+                        local isLocked = false
+                        for _, child in ipairs(rowFound:GetDescendants()) do
+                            if child:IsA("TextLabel") and child.Text:find("Rebirth") and child.Text:find("Unlocks") then
+                                isLocked = true
+                                break
+                            end
+                            if child:IsA("ImageLabel") and (child.Image:find("lock") or child.Name:find("Lock")) then
+                                isLocked = true
+                                break
+                            end
+                        end
+
+                        if not isLocked then
+                            -- Unlocked bait found! Buy max and equip it
+                            for _, btn in ipairs(rowFound:GetDescendants()) do
+                                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                    local txt = ""
+                                    pcall(function()
+                                        if btn:IsA("TextButton") then txt = btn.Text end
+                                        local lbl = btn:FindFirstChildOfClass("TextLabel")
+                                        if lbl then txt = txt .. " " .. lbl.Text end
+                                    end)
+
+                                    if txt:find("MAX") or txt:find("Buy 10") or txt:find("Buy 1") then
+                                        pcall(function()
+                                            if firesignal then firesignal(btn.MouseButton1Click) end
+                                            if firesignal then firesignal(btn.Activated) end
+                                        end)
+                                    end
+
+                                    if txt:upper():find("EQUIP") and not txt:upper():find("UNEQUIP") and not txt:upper():find("IN USE") then
+                                        pcall(function()
+                                            if firesignal then firesignal(btn.MouseButton1Click) end
+                                            if firesignal then firesignal(btn.Activated) end
+                                        end)
+                                    end
+                                end
+                            end
+                            break -- Finished with best unlocked bait
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- 6. Auto Equip Best Fish Engine (CoolerMenu & BestSetup)
+local function autoEquipBestFish()
+    pcall(function()
+        if BestSetupRemote then
+            BestSetupRemote:FireServer()
+        end
+
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name:find("Cooler") or gui.Name:find("Fish") or gui:FindFirstChild("BEST SETUP", true) or gui:FindFirstChild("EQUIP BEST", true)) then
+                for _, btn in ipairs(gui:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local txt = ""
+                        pcall(function()
+                            if btn:IsA("TextButton") then txt = btn.Text end
+                            local lbl = btn:FindFirstChildOfClass("TextLabel")
+                            if lbl then txt = txt .. " " .. lbl.Text end
+                        end)
+                        if txt:upper():find("BEST SETUP") or txt:upper():find("EQUIP BEST") or txt:upper() == "BEST" then
+                            pcall(function()
+                                if firesignal then firesignal(btn.MouseButton1Click) end
+                                if firesignal then firesignal(btn.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
 
 -- Base Helper
 local function getMyBase()
@@ -387,6 +708,37 @@ TabFishing:Toggle({
     end
 })
 
+TabFishing:Divider()
+
+TabFishing:Paragraph({
+    Title = "🪱 Bait Automation Engine (ซื้อและใส่เหยื่อเทพ)",
+    Desc = "ระบบจะตรวจสอบเงินและเลเวล Rebirth เพื่อเลือกซื้อเหยื่อที่ดีที่สุด (Kraken Ink, Starlight Worm, Abyss Shrimp, Golden Grub, Glitter Lure) และกดสวมใส่ให้อัตโนมัติทุกครั้งที่เหวี่ยงแห เพื่อเพิ่มความจุแห, ปลาตัวใหญ่, โอกาสกลายพันธุ์ และลุ้นปลาหายากระดับ Divine/Genesis!",
+    Image = "sparkles"
+})
+
+TabFishing:Toggle({
+    Title = "🪱 Auto Buy & Use Best Bait (ซื้อและใส่เหยื่อที่ดีที่สุด)",
+    Desc = "ซื้อเหยื่อที่ดีที่สุดเท่าที่ปลดล็อกอัตโนมัติ และสวมใส่ไว้ตลอดเวลา (รูปที่ 2)",
+    Value = Config.AutoBuyBestBait,
+    Callback = function(val)
+        Config.AutoBuyBestBait = val
+        Config.AutoUseBestBait = val
+        if val then
+            autoBuyAndUseBestBait()
+            WindUI:Notify({ Title = "Best Bait Active 🪱", Content = "ซื้อและสวมใส่เหยื่อที่ดีที่สุดให้อัตโนมัติ", Duration = 3, Icon = "zap" })
+        end
+    end
+})
+
+TabFishing:Button({
+    Title = "🛒 Buy & Equip Best Bait Now (กดซื้อและใส่เหยื่อทันที)",
+    Desc = "ซื้อเหยื่อที่ดีที่สุดในร้าน Bait Shop แล้วสวมใส่ใช้งานทันทีหนึ่งรอบ",
+    Callback = function()
+        autoBuyAndUseBestBait()
+        WindUI:Notify({ Title = "Bait Applied 🪱", Content = "ซื้อและสวมใส่เหยื่อที่ดีที่สุดเรียบร้อยแล้ว!", Duration = 2, Icon = "check" })
+    end
+})
+
 -- ==============================================================================
 -- 🐟 TAB 2: SMART CATCH & SHOWCASE (คัดแยกปลา & จัดแสดง)
 -- ==============================================================================
@@ -442,6 +794,30 @@ TabCatch:Toggle({
     Value = Config.AutoBestShowcase,
     Callback = function(val)
         Config.AutoBestShowcase = val
+        Config.AutoEquipBestFish = val
+    end
+})
+
+TabCatch:Toggle({
+    Title = "🏆 Auto Equip Best Fish (จัดปลาที่ดีที่สุดลงบ่อตลอดเวลา)",
+    Desc = "ส่งคำสั่ง BestSetup และกดปุ่ม Best Setup ใน Cooler Menu ให้ตลอดเวลา",
+    Value = Config.AutoEquipBestFish,
+    Callback = function(val)
+        Config.AutoEquipBestFish = val
+        Config.AutoBestShowcase = val
+        if val then
+            autoEquipBestFish()
+            WindUI:Notify({ Title = "Best Fish Active 🏆", Content = "จัดปลาที่ทำเงินสูงสุดลงแท่นโชว์และบ่อเรียบร้อย", Duration = 2, Icon = "check" })
+        end
+    end
+})
+
+TabCatch:Button({
+    Title = "🏆 Equip Best Fish Now (กดจัดปลาที่ดีที่สุดทันที)",
+    Desc = "สแกนคูลเลอร์และจัดปลาตัวที่ทำเงินได้สูงสุดลงแท่นโชว์เดี๋ยวนี้",
+    Callback = function()
+        autoEquipBestFish()
+        WindUI:Notify({ Title = "Best Fish Applied 🏆", Content = "ปลาตัวที่ทำเงินสูงสุดถูกจัดลงบ่อเรียบร้อย!", Duration = 2, Icon = "award" })
     end
 })
 
@@ -449,6 +825,12 @@ TabCatch:Toggle({
 -- 💰 TAB 3: ECONOMICS & UPGRADES (ฟาร์มเงิน & อัปเกรด)
 -- ==============================================================================
 local TabEcon = Window:Tab({ Title = "Money & Upgrades", Icon = "dollar-sign" })
+
+TabEcon:Paragraph({
+    Title = "💰 Money & Comprehensive Auto Upgrades",
+    Desc = "ระบบดูดเงินอัตโนมัติและซื้ออัปเกรดทุกหมวดหมู่ตามรูปที่ส่งมา: อัปเกรดแห (Nets), คนตกปลา (Fisherman), ปืนฉมวก (Spear Gun) และสเตตัสการตกปลา/ตลาด",
+    Image = "coins"
+})
 
 TabEcon:Toggle({
     Title = "💰 Auto Collect Showcase Cash (ดูดเงินจากแท่นโชว์ปลา)",
@@ -460,20 +842,83 @@ TabEcon:Toggle({
 })
 
 TabEcon:Toggle({
-    Title = "🔨 Auto Buy Upgrades (ซื้ออัปเกรดอัตโนมัติเมื่อเงินพอ)",
-    Desc = "ซื้ออัปเกรด Luck, Reel, Sell, Golden, Twin, Weave, Treasure และแหใหม่ให้เอง",
-    Value = Config.AutoBuyUpgrades,
-    Callback = function(val)
-        Config.AutoBuyUpgrades = val
-    end
-})
-
-TabEcon:Toggle({
     Title = "🔁 Auto Rebirth (เกิดใหม่อัตโนมัติเมื่อครบเงื่อนไข)",
     Desc = "กด Rebirth ให้อัตโนมัติเพื่อปลดล็อกโลกใหม่และตัวคูณเงินมหาศาล",
     Value = Config.AutoRebirth,
     Callback = function(val)
         Config.AutoRebirth = val
+    end
+})
+
+TabEcon:Divider()
+
+TabEcon:Paragraph({
+    Title = "🔨 Auto Upgrades Suite (อัปเกรดตามรูปที่ 1, 3, 4)",
+    Desc = "เลือกเปิดการอัปเกรดอัตโนมัติเฉพาะส่วน หรือเปิด Master Toggle เพื่อให้อัปเกรดทุกอย่างพร้อมกัน",
+    Image = "wrench"
+})
+
+TabEcon:Toggle({
+    Title = "🔨 Master Auto Buy All Upgrades (เปิดอัปเกรดทุกอย่าง)",
+    Desc = "ซื้ออัปเกรดทุกหมวดหมู่พร้อมกันทันทีเมื่อเงินพอ (แห, คนตกปลา, ปืนฉมวก, สเตตัส)",
+    Value = Config.AutoBuyUpgrades,
+    Callback = function(val)
+        Config.AutoBuyUpgrades = val
+        Config.AutoUpgradeNets = val
+        Config.AutoUpgradeFisherman = val
+        Config.AutoUpgradeSpear = val
+        Config.AutoUpgradeStats = val
+        if val then
+            WindUI:Notify({ Title = "All Auto Upgrades Active! 🔨", Content = "เปิดระบบซื้ออัปเกรดทุกชนิดให้อัตโนมัติ", Duration = 3, Icon = "zap" })
+        end
+    end
+})
+
+TabEcon:Toggle({
+    Title = "🥅 Auto Upgrade Nets (ซื้อและใส่แหใหม่ตามเทียร์)",
+    Desc = "ซื้อแหเทียร์ถัดไปอัตโนมัติ (Sanctum Net, Hadal Net ฯลฯ) และสวมใส่แหที่ดีที่สุดให้ทันที (รูปที่ 1)",
+    Value = Config.AutoUpgradeNets,
+    Callback = function(val)
+        Config.AutoUpgradeNets = val
+    end
+})
+
+TabEcon:Toggle({
+    Title = "🧑‍🌾 Auto Upgrade Fisherman (อัปเกรดคนตกปลา)",
+    Desc = "ซื้ออัปเกรด Fishing Rod, Bigger Bucket, Quick Hands, Range ของคนตกปลาอัตโนมัติ (รูปที่ 3)",
+    Value = Config.AutoUpgradeFisherman,
+    Callback = function(val)
+        Config.AutoUpgradeFisherman = val
+    end
+})
+
+TabEcon:Toggle({
+    Title = "🔫 Auto Upgrade Spear Gun (อัปเกรดปืนฉมวก)",
+    Desc = "ซื้ออัปเกรด Sharper Tips, Multi-Spear, Fast Reload, Range ของปืนฉมวกอัตโนมัติ (รูปที่ 4)",
+    Value = Config.AutoUpgradeSpear,
+    Callback = function(val)
+        Config.AutoUpgradeSpear = val
+    end
+})
+
+TabEcon:Toggle({
+    Title = "🎣 Auto Upgrade Fishing & Market Stats (อัปเกรดสเตตัสทั่วไป)",
+    Desc = "ซื้ออัปเกรด Luck, Reel, Sell, Golden, Twin, Weave, Treasure, Income, Storage, Showroom ฯลฯ (รูปที่ 1)",
+    Value = Config.AutoUpgradeStats,
+    Callback = function(val)
+        Config.AutoUpgradeStats = val
+    end
+})
+
+TabEcon:Button({
+    Title = "⚡ Force Buy All Upgrades Once (กดซื้ออัปเกรดทั้งหมดเดี๋ยวนี้)",
+    Desc = "กวาดซื้ออัปเกรดทุกชนิด (แห, สเตตัส, Fisherman, Spear Gun) ทันทีหนึ่งรอบ",
+    Callback = function()
+        autoUpgradeNets()
+        autoUpgradeFisherman()
+        autoUpgradeSpearGun()
+        autoUpgradeStats()
+        WindUI:Notify({ Title = "Upgrades Triggered ⚡", Content = "ส่งคำสั่งซื้ออัปเกรดทั้งหมดเรียบร้อย!", Duration = 2, Icon = "zap" })
     end
 })
 
@@ -488,19 +933,6 @@ TabEcon:Button({
                     CollectPadReqRemote:FireServer(slot)
                 end
                 WindUI:Notify({ Title = "Cash Collected! 💰", Content = "All pedestal cash harvested.", Duration = 2, Icon = "dollar-sign" })
-            end
-        end)
-    end
-})
-
-TabEcon:Button({
-    Title = "🏆 Equip Best Showcase Fish Now (จัดปลาลงบ่อทันที)",
-    Desc = "ใส่ปลาที่รวยที่สุดลงแท่นโชว์ตอนนี้",
-    Callback = function()
-        pcall(function()
-            if BestSetupRemote then
-                BestSetupRemote:FireServer()
-                WindUI:Notify({ Title = "Best Setup Applied! 🐟", Content = "Highest $/sec fish active in showcase.", Duration = 2, Icon = "check" })
             end
         end)
     end
@@ -801,9 +1233,14 @@ task.spawn(function()
                 end
 
                 -- Automatically apply Best Setup to showcase highest earning fish
-                if Config.AutoBestShowcase and BestSetupRemote then
-                    task.delay(0.5, function()
-                        pcall(function() BestSetupRemote:FireServer() end)
+                if Config.AutoEquipBestFish or Config.AutoBestShowcase then
+                    task.delay(0.4, function()
+                        autoEquipBestFish()
+                    end)
+                end
+                if Config.AutoBuyBestBait or Config.AutoUseBestBait then
+                    task.delay(0.6, function()
+                        autoBuyAndUseBestBait()
                     end)
                 end
             end)
@@ -811,12 +1248,12 @@ task.spawn(function()
     end
 end)
 
--- 3. Economics, Showcase Cash & Upgrades Worker
+-- 3. Economics, Showcase Cash, Comprehensive Upgrades & Bait Worker
 task.spawn(function()
     while isAlive() do
-        task.wait(2.5)
+        task.wait(2.0)
 
-        -- Collect Showcase Pad Cash
+        -- A. Collect Showcase Pad Cash
         if Config.AutoCollectCash and CollectPadReqRemote then
             pcall(function()
                 local myBase = getMyBase()
@@ -828,17 +1265,37 @@ task.spawn(function()
             end)
         end
 
-        -- Auto Buy Upgrades
-        if Config.AutoBuyUpgrades and BuyItemRemote then
-            pcall(function()
-                local upgradeKinds = {"Luck", "Reel", "Sell", "Golden", "Twin", "Weave", "Treasure", "Walk", "BigBait", "Bulk"}
-                for _, k in ipairs(upgradeKinds) do
-                    BuyItemRemote:FireServer(k, 1)
-                end
-            end)
+        -- B. Auto Upgrade Nets (Image 1)
+        if Config.AutoBuyUpgrades or Config.AutoUpgradeNets then
+            autoUpgradeNets()
         end
 
-        -- Auto Rebirth
+        -- C. Auto Upgrade Fisherman (Image 3)
+        if Config.AutoBuyUpgrades or Config.AutoUpgradeFisherman then
+            autoUpgradeFisherman()
+        end
+
+        -- D. Auto Upgrade Spear Gun (Image 4)
+        if Config.AutoBuyUpgrades or Config.AutoUpgradeSpear then
+            autoUpgradeSpearGun()
+        end
+
+        -- E. Auto Upgrade Fishing & Market Stats (Image 1)
+        if Config.AutoBuyUpgrades or Config.AutoUpgradeStats then
+            autoUpgradeStats()
+        end
+
+        -- F. Auto Buy & Use Best Bait (Image 2)
+        if Config.AutoBuyBestBait or Config.AutoUseBestBait then
+            autoBuyAndUseBestBait()
+        end
+
+        -- G. Auto Equip Best Fish (Showcase)
+        if Config.AutoEquipBestFish or Config.AutoBestShowcase then
+            autoEquipBestFish()
+        end
+
+        -- H. Auto Rebirth
         if Config.AutoRebirth and RebirthRequestRemote then
             pcall(function()
                 RebirthRequestRemote:FireServer()
