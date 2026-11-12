@@ -245,7 +245,217 @@ local Config = {
     UIAnimationStyle = "🌌 Aurora Flow (แสงเหนือไหลนุ่มๆ)",
     UIBackgroundAnimation = true,
     UIAnimationSpeed = 8,
+
+    -- Hotkey & Config Persistence
+    UIToggleKey = "RightControl",
+    AutoSaveConfig = true,
+    SpeedUpgradeTierLabel = "+1 Speed (Tier 1)",
 }
+
+-- Clone clean default config for Reset to Default
+local DefaultConfig = {}
+for k, v in pairs(Config) do
+    DefaultConfig[k] = v
+end
+
+-- ==============================================================================
+-- 💾 PERSISTENT CONFIG & AUTO-LOAD ENGINE (PRE-UI INITIALIZATION)
+-- ==============================================================================
+local CfgSys = {
+    ROOT_FOLDER = "SongHub_JumpForCases",
+    PROFILES_FOLDER = "SongHub_JumpForCases/configs",
+    AUTOLOAD_PATH = "SongHub_JumpForCases/autoload.txt",
+    loadedProfile = "default",
+    selectedProfile = "default",
+    inputProfile = "default",
+    isBatchApplying = false,
+    wasAutoLoaded = false,
+    autoSavePending = false,
+    RegisteredControls = {},
+}
+
+do
+    local function ensureConfigFolders()
+        if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
+            pcall(function()
+                if not isfolder(CfgSys.ROOT_FOLDER) then
+                    makefolder(CfgSys.ROOT_FOLDER)
+                end
+                if not isfolder(CfgSys.PROFILES_FOLDER) then
+                    makefolder(CfgSys.PROFILES_FOLDER)
+                end
+            end)
+        end
+    end
+    ensureConfigFolders()
+
+    function CfgSys.sanitizeProfileName(raw)
+        local s = tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("[^%w_%-%s]", "")
+        if s == "" or s:lower() == "none" then
+            return "default"
+        end
+        return s
+    end
+
+    function CfgSys.getSavedProfilesList()
+        ensureConfigFolders()
+        local list = {}
+        local seen = {}
+        if typeof(listfiles) == "function" and typeof(isfolder) == "function" and isfolder(CfgSys.PROFILES_FOLDER) then
+            local ok, files = pcall(function() return listfiles(CfgSys.PROFILES_FOLDER) end)
+            if ok and type(files) == "table" then
+                for _, filePath in ipairs(files) do
+                    local name = string.match(filePath, "([^\\/]+)%.json$")
+                    if name and name ~= "" and not seen[name] then
+                        seen[name] = true
+                        table.insert(list, name)
+                    end
+                end
+            end
+        end
+        if not seen["default"] then
+            table.insert(list, 1, "default")
+        end
+        table.sort(list, function(a, b)
+            if a == "default" then return true end
+            if b == "default" then return false end
+            return a:lower() < b:lower()
+        end)
+        return list
+    end
+
+    function CfgSys.getAutoLoadProfile()
+        if typeof(isfile) == "function" and typeof(readfile) == "function" then
+            if isfile(CfgSys.AUTOLOAD_PATH) then
+                local ok, txt = pcall(function() return readfile(CfgSys.AUTOLOAD_PATH) end)
+                if ok and txt then
+                    local trimmed = txt:gsub("^%s+", ""):gsub("%s+$", "")
+                    if trimmed ~= "" then
+                        return trimmed
+                    end
+                end
+            else
+                if typeof(writefile) == "function" then
+                    pcall(function() writefile(CfgSys.AUTOLOAD_PATH, "default") end)
+                end
+                return "default"
+            end
+        end
+        return "default"
+    end
+
+    function CfgSys.setAutoLoadProfile(profileName)
+        ensureConfigFolders()
+        if typeof(writefile) == "function" then
+            local val = (profileName and profileName ~= "" and profileName ~= "none") and CfgSys.sanitizeProfileName(profileName) or "none"
+            pcall(function() writefile(CfgSys.AUTOLOAD_PATH, val) end)
+        end
+    end
+
+    function CfgSys.syncTierFromConfig()
+        if Config.SpeedUpgradeTier == 2 then
+            Config.SpeedUpgradeTierLabel = "+5 Speed (Tier 2)"
+        elseif Config.SpeedUpgradeTier == 3 then
+            Config.SpeedUpgradeTierLabel = "+12 Speed (Tier 3)"
+        else
+            Config.SpeedUpgradeTier = 1
+            Config.SpeedUpgradeTierLabel = "+1 Speed (Tier 1)"
+        end
+    end
+
+    function CfgSys.saveProfileToDisk(profileName)
+        ensureConfigFolders()
+        local cleanName = CfgSys.sanitizeProfileName(profileName or CfgSys.selectedProfile)
+        CfgSys.syncTierFromConfig()
+        local payload = {}
+        for k, v in pairs(Config) do
+            local t = type(v)
+            if t == "boolean" or t == "number" or t == "string" then
+                payload[k] = v
+            end
+        end
+        local okEnc, jsonStr = pcall(function() return HttpService:JSONEncode(payload) end)
+        if okEnc and jsonStr and typeof(writefile) == "function" then
+            local filePath = CfgSys.PROFILES_FOLDER .. "/" .. cleanName .. ".json"
+            local okWrite = pcall(function() writefile(filePath, jsonStr) end)
+            if okWrite then
+                CfgSys.loadedProfile = cleanName
+                CfgSys.selectedProfile = cleanName
+                return true, cleanName
+            end
+        end
+        return false, cleanName
+    end
+
+    function CfgSys.loadProfileFromDisk(profileName)
+        ensureConfigFolders()
+        local cleanName = CfgSys.sanitizeProfileName(profileName)
+        local filePath = CfgSys.PROFILES_FOLDER .. "/" .. cleanName .. ".json"
+        if typeof(isfile) == "function" and isfile(filePath) and typeof(readfile) == "function" then
+            local okRead, raw = pcall(function() return readfile(filePath) end)
+            if okRead and raw and #raw > 2 then
+                local okDec, data = pcall(function() return HttpService:JSONDecode(raw) end)
+                if okDec and type(data) == "table" then
+                    for k, v in pairs(data) do
+                        if DefaultConfig[k] ~= nil and type(v) == type(DefaultConfig[k]) then
+                            Config[k] = v
+                        end
+                    end
+                    if Config.SpeedUpgradeTierLabel then
+                        if tostring(Config.SpeedUpgradeTierLabel):find("+5") then
+                            Config.SpeedUpgradeTier = 2
+                        elseif tostring(Config.SpeedUpgradeTierLabel):find("+12") then
+                            Config.SpeedUpgradeTier = 3
+                        else
+                            Config.SpeedUpgradeTier = 1
+                        end
+                    end
+                    CfgSys.syncTierFromConfig()
+                    CfgSys.loadedProfile = cleanName
+                    CfgSys.selectedProfile = cleanName
+                    CfgSys.inputProfile = cleanName
+                    return true, data
+                end
+            end
+        end
+        return false, nil
+    end
+
+    function CfgSys.scheduleAutoSave()
+        if CfgSys.isBatchApplying or not Config.AutoSaveConfig then return end
+        if CfgSys.autoSavePending then return end
+        CfgSys.autoSavePending = true
+        task.delay(0.4, function()
+            CfgSys.autoSavePending = false
+            if isScriptAlive() and Config.AutoSaveConfig and not CfgSys.isBatchApplying then
+                CfgSys.saveProfileToDisk(CfgSys.selectedProfile)
+            end
+        end)
+    end
+
+    function CfgSys.resolveKeyCode(keyNameOrItem)
+        if typeof(keyNameOrItem) == "EnumItem" then
+            return keyNameOrItem, keyNameOrItem.Name
+        elseif type(keyNameOrItem) == "string" and keyNameOrItem ~= "" then
+            local ok, kc = pcall(function() return Enum.KeyCode[keyNameOrItem] end)
+            if ok and kc then
+                return kc, keyNameOrItem
+            end
+        end
+        return Enum.KeyCode.RightControl, "RightControl"
+    end
+
+    local startupAutoProfile = CfgSys.getAutoLoadProfile()
+    if startupAutoProfile and startupAutoProfile ~= "none" then
+        local okLoaded = CfgSys.loadProfileFromDisk(startupAutoProfile)
+        if okLoaded then
+            CfgSys.wasAutoLoaded = true
+        else
+            CfgSys.selectedProfile = CfgSys.sanitizeProfileName(startupAutoProfile)
+            CfgSys.inputProfile = CfgSys.selectedProfile
+        end
+    end
+end
 
 -- Target Key Positions
 local POS_KICK_ZONE = Vector3.new(207.25, 27.8, 104.95)
@@ -667,6 +877,15 @@ pcall(function()
 end)
 
 local defaultThemeId = (WindUI and WindUI.Themes and WindUI.Themes["JFC_AuroraBorealis"]) and "JFC_AuroraBorealis" or "Dark"
+if Config.UITheme and UI_THEME_PRESETS[Config.UITheme] then
+    local savedThemeId = UI_THEME_PRESETS[Config.UITheme].Id
+    if WindUI and WindUI.Themes and WindUI.Themes[savedThemeId] then
+        defaultThemeId = savedThemeId
+    end
+end
+
+CfgSys.toggleKeyEnum, CfgSys.toggleKeyName = CfgSys.resolveKeyCode(Config.UIToggleKey)
+Config.UIToggleKey = CfgSys.toggleKeyName
 
 local Window = WindUI:CreateWindow({
     Title = "Song Hub  •  Jump for Cases",
@@ -677,6 +896,7 @@ local Window = WindUI:CreateWindow({
     SideBarWidth = 185,
     Transparent = true,
     Theme = defaultThemeId,
+    ToggleKey = CfgSys.toggleKeyEnum,
     OpenButton = {
         Title = "🎲 Song Hub | Jump for Cases",
         Icon = "sparkles",
@@ -696,6 +916,9 @@ if getgenv then
 end
 
 pcall(function()
+    if Window and typeof(Window.SetToggleKey) == "function" then
+        Window:SetToggleKey(CfgSys.toggleKeyEnum)
+    end
     if Window and typeof(Window.EditOpenButton) == "function" then
         Window:EditOpenButton({
             Title = "🎲 Song Hub | Jump for Cases",
@@ -1184,15 +1407,105 @@ WindUI:Notify({
 })
 
 -- ==============================================================================
--- 📑 TABS
+-- 📑 TABS & AUTOMATIC CONFIG BINDING WRAPPER
 -- ==============================================================================
-local TabFarm = Window:Tab({ Title = "Auto Farm", Icon = "zap" })
-local TabCases = Window:Tab({ Title = "Cases", Icon = "package" })
-local TabUpgrades = Window:Tab({ Title = "Upgrades", Icon = "trending-up" })
-local TabClaims = Window:Tab({ Title = "Claims & Codes", Icon = "gift" })
-local TabTeleports = Window:Tab({ Title = "Teleports", Icon = "map-pin" })
-local TabPlayer = Window:Tab({ Title = "Player", Icon = "user" })
-local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
+local function wrapTabForConfig(rawTab)
+    local TITLE_TO_CONFIG_KEY = {
+        ["Master Auto Farm (Turbo Bypass)"] = "MasterAutoFarm",
+        ["Instant Perfect Kick (+ Launch Bypass)"] = "InstantPerfectKick",
+        ["Cutscene & Spin Bypass (~8.7s Skip)"] = "CutsceneBypass",
+        ["Safe Anti-Wave (No Wave Death)"] = "SafeAntiWave",
+        ["Native AutoKick Sync"] = "NativeAutoKickSync",
+        ["Turbo Return Bypass (500 WS Anti-Wave)"] = "ReturnSprintBoost",
+        ["Instant Warp Return"] = "InstantWarpReturn",
+        ["Fast Open (Skip Animation)"] = "FastOpenSkip",
+        ["Auto Open All Owned Cases"] = "AutoOpenAll",
+        ["Open Delay (s)"] = "CaseOpenDelay",
+        ["Select Target Case"] = "SelectedCase",
+        ["Auto Open Selected Case"] = "AutoOpenSelected",
+        ["Auto Equip Best Units (Place Best)"] = "AutoEquipBest",
+        ["Auto Collect Money (Base Cash)"] = "AutoCollectMoney",
+        ["Auto Upgrade Units (Level Up Best)"] = "AutoUpgradeUnits",
+        ["Unit Upgrade Priority"] = "UnitUpgradePriority",
+        ["Auto Train (Auto Lift Barbell)"] = "AutoTrain",
+        ["Auto Train X2 (Claim X2 & Rush x5)"] = "AutoTrainX2",
+        ["Auto Buy Speed Upgrades"] = "AutoSpeedUpgrade",
+        ["Speed Upgrade Tier"] = "SpeedUpgradeTierLabel",
+        ["Auto Buy Best Affordable Weight"] = "AutoBuyWeight",
+        ["Auto Equip Best Weight"] = "AutoEquipWeight",
+        ["Auto Rebirth"] = "AutoRebirth",
+        ["Auto Claim Index Gems"] = "AutoClaimIndexGems",
+        ["Auto Claim Daily Reward"] = "AutoClaimDaily",
+        ["Auto Free Wheel Spin"] = "AutoSpinWheel",
+        ["Auto Claim Offline Cash"] = "AutoClaimOffline",
+        ["Auto Forever Rewards"] = "AutoForeverRewards",
+        ["Enable Custom WalkSpeed"] = "WalkSpeedEnabled",
+        ["WalkSpeed Value"] = "WalkSpeedValue",
+        ["Enable Custom JumpPower"] = "JumpPowerEnabled",
+        ["JumpPower Value"] = "JumpPowerValue",
+        ["Infinite Jump"] = "InfiniteJump",
+        ["NoClip"] = "NoClip",
+        ["Fly"] = "FlyEnabled",
+        ["Fly Speed"] = "FlySpeed",
+        ["UI Color Theme (โทนสีสบายตา)"] = "UITheme",
+        ["Animation Effect Style (รูปแบบเอฟเฟกต์)"] = "UIAnimationStyle",
+        ["Smooth Animated Effects (เปิดเอฟเฟกต์เคลื่อนไหว)"] = "UIBackgroundAnimation",
+        ["Animation Speed (ความเร็วการเคลื่อนไหว)"] = "UIAnimationSpeed",
+    }
+    return setmetatable({}, {
+        __index = function(_, method)
+            local origMethod = rawTab[method]
+            if type(origMethod) ~= "function" then
+                return origMethod
+            end
+            if method == "Toggle" or method == "Dropdown" or method == "Slider" then
+                return function(_, opts)
+                    local cfgKey = opts and opts.Title and TITLE_TO_CONFIG_KEY[opts.Title]
+                    local origCb = opts and opts.Callback
+                    if cfgKey and Config[cfgKey] ~= nil then
+                        if method == "Toggle" or method == "Dropdown" then
+                            opts.Default = Config[cfgKey]
+                            opts.Value = Config[cfgKey]
+                        elseif method == "Slider" and type(opts.Value) == "table" then
+                            opts.Value.Default = Config[cfgKey]
+                        end
+                    end
+                    if cfgKey and origCb then
+                        opts.Callback = function(val)
+                            if cfgKey == "SpeedUpgradeTierLabel" then
+                                Config.SpeedUpgradeTierLabel = val
+                            else
+                                Config[cfgKey] = val
+                            end
+                            origCb(val)
+                            CfgSys.scheduleAutoSave()
+                        end
+                    end
+                    local ctrl = origMethod(rawTab, opts)
+                    if cfgKey then
+                        CfgSys.RegisteredControls[cfgKey] = {
+                            elem = ctrl,
+                            kind = method,
+                            callback = origCb,
+                        }
+                    end
+                    return ctrl
+                end
+            end
+            return function(_, ...)
+                return origMethod(rawTab, ...)
+            end
+        end
+    })
+end
+
+local TabFarm = wrapTabForConfig(Window:Tab({ Title = "Auto Farm", Icon = "zap" }))
+local TabCases = wrapTabForConfig(Window:Tab({ Title = "Cases", Icon = "package" }))
+local TabUpgrades = wrapTabForConfig(Window:Tab({ Title = "Upgrades", Icon = "trending-up" }))
+local TabClaims = wrapTabForConfig(Window:Tab({ Title = "Claims & Codes", Icon = "gift" }))
+local TabTeleports = wrapTabForConfig(Window:Tab({ Title = "Teleports", Icon = "map-pin" }))
+local TabPlayer = wrapTabForConfig(Window:Tab({ Title = "Player", Icon = "user" }))
+local TabSettings = wrapTabForConfig(Window:Tab({ Title = "Settings", Icon = "settings" }))
 
 -- ==============================================================================
 -- 🦘 TAB: AUTO FARM / JUMP
@@ -2820,181 +3133,598 @@ task.spawn(function()
 end)
 
 -- ==============================================================================
--- ⚙️ TAB: SETTINGS & HUB
+-- ⚙️ TAB: SETTINGS, HOTKEYS & CONFIG MANAGER
 -- ==============================================================================
-TabSettings:Section({ Title = "🎨 UI Theme & Smooth Effects (สบายตา)" })
+local hotkeyInputConn = nil
+do
+    local ConfigStatusParagraph = nil
+    local SavedProfilesDropdown = nil
+    local ProfileNameInput = nil
+    local AutoLoadToggleCtrl = nil
+    local AutoSaveToggleCtrl = nil
+    local HotkeyKeybindCtrl = nil
+    local HotkeyDropdownCtrl = nil
+    local lastHotkeyToggleAt = 0
 
-TabSettings:Dropdown({
-    Title = "UI Color Theme (โทนสีสบายตา)",
-    Desc = "Choose from 5 curated soft pastel & midnight eye-care themes",
-    Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.ThemeNames) or { "🌌 Aurora Borealis (แสงเหนือออโรร่า)" },
-    Value = Config.UITheme,
-    Callback = function(v)
-        if Window._JFCThemeEngine and Window._JFCThemeEngine.ApplyTheme then
-            Window._JFCThemeEngine.ApplyTheme(v, true)
+    local HOTKEY_CHOICES = {
+        "RightControl",
+        "RightShift",
+        "LeftControl",
+        "LeftAlt",
+        "Insert",
+        "End",
+        "Home",
+        "F1",
+        "F2",
+        "F4",
+        "F8",
+        "K",
+        "M",
+        "Backquote",
+    }
+
+    local function updateConfigStatusDisplay()
+        if not ConfigStatusParagraph then return end
+        local autoProf = CfgSys.getAutoLoadProfile()
+        local autoText = (autoProf and autoProf ~= "none") and ("เปิดอยู่ (" .. tostring(autoProf) .. ")") or "ปิด (Disabled)"
+        local saveText = Config.AutoSaveConfig and "เปิด (Auto-Save ON)" or "ปิด (Manual Only)"
+        local desc = string.format(
+            "• โปรไฟล์ที่ใช้งานอยู่ (Active): %s\n• โปรไฟล์ที่เลือก (Selected): %s\n• โหลดอัตโนมัติ (Auto-Load): %s\n• บันทึกอัตโนมัติ (Auto-Save): %s\n• ปุ่มลัดพับหน้าต่าง (UI Hotkey): [%s]",
+            tostring(CfgSys.loadedProfile),
+            tostring(CfgSys.selectedProfile),
+            autoText,
+            saveText,
+            tostring(Config.UIToggleKey or "RightControl")
+        )
+        pcall(function()
+            if typeof(ConfigStatusParagraph.Set) == "function" then
+                ConfigStatusParagraph:Set({ Title = "📊 สถานะโปรไฟล์และการตั้งค่า (Config Status)", Desc = desc })
+            elseif typeof(ConfigStatusParagraph.SetDesc) == "function" then
+                ConfigStatusParagraph:SetDesc(desc)
+            end
+        end)
+    end
+
+    local function applyUIToggleKey(newKey, notifyUser)
+        local kc, kName = CfgSys.resolveKeyCode(newKey)
+        CfgSys.toggleKeyEnum = kc
+        CfgSys.toggleKeyName = kName
+        Config.UIToggleKey = kName
+        pcall(function()
+            if Window and typeof(Window.SetToggleKey) == "function" then
+                Window:SetToggleKey(kc)
+            end
+        end)
+        if HotkeyDropdownCtrl and table.find(HOTKEY_CHOICES, kName) then
+            pcall(function()
+                if HotkeyDropdownCtrl.Select then
+                    HotkeyDropdownCtrl:Select(kName)
+                elseif HotkeyDropdownCtrl.Set then
+                    HotkeyDropdownCtrl:Set(kName)
+                end
+            end)
         end
-    end,
-})
-
-TabSettings:Dropdown({
-    Title = "Animation Effect Style (รูปแบบเอฟเฟกต์)",
-    Desc = "Switch between Aurora Flow, Sakura Petals, Starlight Firefly, Bubbles, or Minimal Glow",
-    Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.StyleNames) or { "Auto (ตามธีมอัตโนมัติ)" },
-    Value = Config.UIAnimationStyle,
-    Callback = function(v)
-        Config.UIAnimationStyle = v
-        if Window._JFCThemeEngine and Window._JFCThemeEngine.UpdateParticles then
-            Window._JFCThemeEngine.UpdateParticles()
+        updateConfigStatusDisplay()
+        CfgSys.scheduleAutoSave()
+        if notifyUser and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "⌨️ ตั้งปุ่มลัด UI แล้ว",
+                Content = "กดปุ่ม [" .. kName .. "] เพื่อพับ/เปิดหน้าต่าง UI",
+                Duration = 2.5,
+                Icon = "keyboard",
+            })
         end
-    end,
-})
+    end
 
-TabSettings:Toggle({
-    Title = "Smooth Animated Effects (เปิดเอฟเฟกต์เคลื่อนไหว)",
-    Desc = "Soft breathing aurora glow, rotating pastel border, and gentle floating motes",
-    Default = true,
-    Callback = function(v)
-        if Window._JFCThemeEngine and Window._JFCThemeEngine.SetAnimEnabled then
-            Window._JFCThemeEngine.SetAnimEnabled(v)
+    hotkeyInputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not isScriptAlive() then return end
+        if UserInputService:GetFocusedTextBox() then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == CfgSys.toggleKeyEnum then
+            local now = os.clock()
+            if now - lastHotkeyToggleAt < 0.25 then return end
+            lastHotkeyToggleAt = now
+            local closedBefore = Window and Window.Closed
+            task.delay(0.04, function()
+                if not isScriptAlive() or not Window or Window.Destroyed then return end
+                if Window.Closed == closedBefore and typeof(Window.Toggle) == "function" then
+                    pcall(function() Window:Toggle() end)
+                end
+            end)
         end
-    end,
-})
+    end)
 
-TabSettings:Slider({
-    Title = "Animation Speed (ความเร็วการเคลื่อนไหว)",
-    Desc = "Adjust how fast the aurora & particles flow (Default: 8 = 0.8x Calm)",
-    Step = 1,
-    Value = {
-        Min = 2,
-        Max = 20,
-        Default = 8,
-    },
-    Callback = function(v)
-        Config.UIAnimationSpeed = tonumber(v) or 8
-    end,
-})
+    local function applyConfigToAllControls()
+        CfgSys.isBatchApplying = true
+        pcall(function()
+            for cfgKey, info in pairs(CfgSys.RegisteredControls) do
+                local val = Config[cfgKey]
+                if val ~= nil and info and info.elem then
+                    pcall(function()
+                        if info.kind == "Dropdown" then
+                            if info.elem.Select then
+                                info.elem:Select(val)
+                            elseif info.elem.Set then
+                                info.elem:Set(val)
+                            end
+                        else
+                            if info.elem.Set then
+                                info.elem:Set(val)
+                            elseif info.elem.SetValue then
+                                info.elem:SetValue(val)
+                            end
+                        end
+                    end)
+                    if info.callback then
+                        pcall(info.callback, val)
+                    end
+                end
+            end
+            if Config.UIToggleKey then
+                applyUIToggleKey(Config.UIToggleKey, false)
+            end
+            if AutoSaveToggleCtrl then
+                pcall(function()
+                    if AutoSaveToggleCtrl.Set then
+                        AutoSaveToggleCtrl:Set(Config.AutoSaveConfig)
+                    elseif AutoSaveToggleCtrl.SetValue then
+                        AutoSaveToggleCtrl:SetValue(Config.AutoSaveConfig)
+                    end
+                end)
+            end
+            syncNetworkGuardFlags()
+        end)
+        CfgSys.isBatchApplying = false
+        updateConfigStatusDisplay()
+    end
 
-TabSettings:Section({ Title = "🌐 Server Management" })
+    local function syncAutoLoadToggleUI()
+        if not AutoLoadToggleCtrl then return end
+        local autoProf = CfgSys.getAutoLoadProfile()
+        local isEnabledForSelected = (autoProf ~= "none" and autoProf == CfgSys.selectedProfile)
+        pcall(function()
+            if AutoLoadToggleCtrl.Set then
+                AutoLoadToggleCtrl:Set(isEnabledForSelected)
+            elseif AutoLoadToggleCtrl.SetValue then
+                AutoLoadToggleCtrl:SetValue(isEnabledForSelected)
+            end
+        end)
+    end
 
-TabSettings:Button({
-    Title = "Rejoin Server",
-    Callback = function()
-        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-    end,
-})
+    local function refreshProfilesDropdown(selectTarget)
+        local list = CfgSys.getSavedProfilesList()
+        if selectTarget and table.find(list, selectTarget) then
+            CfgSys.selectedProfile = selectTarget
+        elseif not table.find(list, CfgSys.selectedProfile) then
+            CfgSys.selectedProfile = list[1] or "default"
+        end
+        if SavedProfilesDropdown then
+            pcall(function()
+                if SavedProfilesDropdown.Refresh then
+                    SavedProfilesDropdown:Refresh(list)
+                elseif SavedProfilesDropdown.SetValues then
+                    SavedProfilesDropdown:SetValues(list)
+                end
+                if SavedProfilesDropdown.Select then
+                    SavedProfilesDropdown:Select(CfgSys.selectedProfile)
+                end
+            end)
+        end
+        syncAutoLoadToggleUI()
+        updateConfigStatusDisplay()
+    end
 
-TabSettings:Button({
-    Title = "Server Hop",
-    Callback = function()
-        local ts = game:GetService("TeleportService")
-        local servers = {}
-        local req = (syn and syn.request) or request or http_request
-        if req then
-            local res = req({ Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId) })
-            if res and res.Body then
-                local data = HttpService:JSONDecode(res.Body)
-                if data and data.data then
-                    for _, s in ipairs(data.data) do
-                        if s.playing < s.maxPlayers and s.id ~= game.JobId then
-                            table.insert(servers, s.id)
+    -- 1. UI HOTKEY SECTION
+    TabSettings:Section({ Title = "⌨️ UI Toggle Hotkey (ปุ่มลัดพับ/เปิดหน้าต่าง UI)" })
+
+    pcall(function()
+        if typeof(TabSettings.Keybind) == "function" then
+            HotkeyKeybindCtrl = TabSettings:Keybind({
+                Title = "Toggle UI Keybind (กดเพื่อเปลี่ยนปุ่มลัด)",
+                Desc = "Click and press any key on your keyboard to fold or reopen the Song Hub window",
+                Value = Config.UIToggleKey or "RightControl",
+                Callback = function(key)
+                    applyUIToggleKey(key, true)
+                end,
+            })
+        end
+    end)
+
+    HotkeyDropdownCtrl = TabSettings:Dropdown({
+        Title = "Quick Select Hotkey (เลือกปุ่มลัดด่วน)",
+        Desc = "Select a shortcut key to fold/unfold the UI window (Default: RightControl)",
+        Values = HOTKEY_CHOICES,
+        Value = table.find(HOTKEY_CHOICES, Config.UIToggleKey) and Config.UIToggleKey or "RightControl",
+        Callback = function(v)
+            if v and v ~= Config.UIToggleKey then
+                applyUIToggleKey(v, true)
+            end
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "🔽 Fold / Minimize UI Window Now (พับหน้าต่างตอนนี้)",
+        Desc = "Minimizes the UI window immediately (press [" .. tostring(Config.UIToggleKey or "RightControl") .. "] or click the floating button to reopen)",
+        Callback = function()
+            if Window and typeof(Window.Toggle) == "function" then
+                pcall(function() Window:Toggle() end)
+            end
+        end,
+    })
+
+    -- 2. SAVE CONFIG & AUTO-LOAD SECTION
+    TabSettings:Section({ Title = "💾 Save Config & Auto-Load (บันทึกและโหลดอัตโนมัติ)" })
+
+    ConfigStatusParagraph = TabSettings:Paragraph({
+        Title = "📊 สถานะโปรไฟล์และการตั้งค่า (Config Status)",
+        Desc = "Loading profile status...",
+    })
+
+    SavedProfilesDropdown = TabSettings:Dropdown({
+        Title = "Saved Config Profiles (เลือกโปรไฟล์ที่บันทึกไว้)",
+        Desc = "Select a saved configuration profile",
+        Values = CfgSys.getSavedProfilesList(),
+        Value = CfgSys.selectedProfile,
+        Callback = function(v)
+            if v and v ~= "" then
+                CfgSys.selectedProfile = CfgSys.sanitizeProfileName(v)
+                CfgSys.inputProfile = CfgSys.selectedProfile
+                syncAutoLoadToggleUI()
+                updateConfigStatusDisplay()
+            end
+        end,
+    })
+
+    ProfileNameInput = TabSettings:Input({
+        Title = "Profile Name (ชื่อโปรไฟล์สำหรับบันทึกใหม่)",
+        Desc = "Type a profile name (e.g. default, afk_farm, max_speed)",
+        Value = CfgSys.selectedProfile,
+        Placeholder = "default",
+        Callback = function(v)
+            local clean = CfgSys.sanitizeProfileName(v)
+            CfgSys.inputProfile = clean
+            CfgSys.selectedProfile = clean
+            updateConfigStatusDisplay()
+        end,
+    })
+
+    AutoLoadToggleCtrl = TabSettings:Toggle({
+        Title = "Auto-Load Selected Profile on Startup (โหลดอัตโนมัติเมื่อรันสคริปต์)",
+        Desc = "Automatically loads and activates this profile every time you execute the script",
+        Default = (CfgSys.getAutoLoadProfile() ~= "none"),
+        Callback = function(v)
+            if v then
+                local target = CfgSys.sanitizeProfileName(CfgSys.selectedProfile)
+                CfgSys.setAutoLoadProfile(target)
+                CfgSys.saveProfileToDisk(target)
+                WindUI:Notify({
+                    Title = "✅ เปิด Auto-Load แล้ว",
+                    Content = "จะโหลดโปรไฟล์ '" .. target .. "' อัตโนมัติทุกครั้งที่รันสคริปต์",
+                    Duration = 2.5,
+                    Icon = "check-circle",
+                })
+            else
+                CfgSys.setAutoLoadProfile("none")
+                WindUI:Notify({
+                    Title = "ℹ️ ปิด Auto-Load แล้ว",
+                    Content = "ยกเลิกการโหลดตั้งค่าอัตโนมัติตอนเริ่มรัน",
+                    Duration = 2,
+                    Icon = "x-circle",
+                })
+            end
+            updateConfigStatusDisplay()
+        end,
+    })
+
+    AutoSaveToggleCtrl = TabSettings:Toggle({
+        Title = "Auto-Save When Settings Change (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า)",
+        Desc = "Automatically saves your changes to the active profile whenever you toggle any option",
+        Default = Config.AutoSaveConfig,
+        Callback = function(v)
+            Config.AutoSaveConfig = v
+            if v then
+                CfgSys.saveProfileToDisk(CfgSys.selectedProfile)
+            end
+            updateConfigStatusDisplay()
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "💾 Save / Overwrite Profile (บันทึกการตั้งค่าปัจจุบัน)",
+        Desc = "Saves all current toggles, sliders, theme, and hotkey into the selected profile",
+        Callback = function()
+            local targetName = CfgSys.sanitizeProfileName((CfgSys.inputProfile ~= "" and CfgSys.inputProfile) or CfgSys.selectedProfile)
+            local ok, savedName = CfgSys.saveProfileToDisk(targetName)
+            refreshProfilesDropdown(savedName)
+            if ok then
+                WindUI:Notify({
+                    Title = "💾 บันทึก Config สำเร็จ!",
+                    Content = "บันทึกโปรไฟล์ '" .. savedName .. "' เรียบร้อยแล้ว",
+                    Duration = 3,
+                    Icon = "check-circle",
+                })
+            else
+                WindUI:Notify({
+                    Title = "❌ บันทึกไม่สำเร็จ",
+                    Content = "Executor ของคุณอาจไม่รองรับ writefile",
+                    Duration = 3,
+                    Icon = "alert-circle",
+                })
+            end
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "📂 Load Selected Profile (โหลดโปรไฟล์ที่เลือก)",
+        Desc = "Loads and applies all settings from the selected profile immediately",
+        Callback = function()
+            local ok = CfgSys.loadProfileFromDisk(CfgSys.selectedProfile)
+            if ok then
+                applyConfigToAllControls()
+                WindUI:Notify({
+                    Title = "📂 โหลด Config สำเร็จ!",
+                    Content = "ใช้งานโปรไฟล์ '" .. tostring(CfgSys.selectedProfile) .. "' เรียบร้อยแล้ว",
+                    Duration = 3,
+                    Icon = "check-circle",
+                })
+            else
+                WindUI:Notify({
+                    Title = "⚠️ ไม่พบไฟล์โปรไฟล์",
+                    Content = "ยังไม่ได้บันทึกโปรไฟล์ชื่อ '" .. tostring(CfgSys.selectedProfile) .. "' (กด Save ก่อนครับ)",
+                    Duration = 3,
+                    Icon = "alert-circle",
+                })
+            end
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "🗑️ Delete Selected Profile (ลบโปรไฟล์ที่เลือก)",
+        Desc = "Deletes the selected profile JSON file from disk",
+        Callback = function()
+            local target = CfgSys.sanitizeProfileName(CfgSys.selectedProfile)
+            local filePath = CfgSys.PROFILES_FOLDER .. "/" .. target .. ".json"
+            if typeof(isfile) == "function" and isfile(filePath) and typeof(delfile) == "function" then
+                pcall(function() delfile(filePath) end)
+                if CfgSys.getAutoLoadProfile() == target then
+                    CfgSys.setAutoLoadProfile("default")
+                end
+                CfgSys.selectedProfile = "default"
+                CfgSys.inputProfile = "default"
+                refreshProfilesDropdown("default")
+                WindUI:Notify({
+                    Title = "🗑️ ลบโปรไฟล์แล้ว",
+                    Content = "ลบโปรไฟล์ '" .. target .. "' เรียบร้อยแล้ว",
+                    Duration = 2.5,
+                    Icon = "trash",
+                })
+            else
+                WindUI:Notify({
+                    Title = "ℹ️ ไม่มีไฟล์ให้ลบ",
+                    Content = "ไม่พบไฟล์โปรไฟล์ '" .. target .. "' บนดิสก์",
+                    Duration = 2.5,
+                    Icon = "info",
+                })
+            end
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "🔄 Reset All Settings to Default (รีเซ็ตค่าเริ่มต้นทั้งหมด)",
+        Desc = "Turns off all farm toggles and restores default UI & player settings",
+        Callback = function()
+            for k, v in pairs(DefaultConfig) do
+                Config[k] = v
+            end
+            applyConfigToAllControls()
+            if Config.AutoSaveConfig then
+                CfgSys.saveProfileToDisk(CfgSys.selectedProfile)
+            end
+            WindUI:Notify({
+                Title = "🔄 รีเซ็ตค่าเริ่มต้นแล้ว",
+                Content = "คืนค่าปุ่มทั้งหมดกลับเป็นค่าเริ่มต้นเรียบร้อย",
+                Duration = 2.5,
+                Icon = "refresh-cw",
+            })
+        end,
+    })
+
+    -- 3. UI THEME & SMOOTH EFFECTS SECTION
+    TabSettings:Section({ Title = "🎨 UI Theme & Smooth Effects (สบายตา)" })
+
+    TabSettings:Dropdown({
+        Title = "UI Color Theme (โทนสีสบายตา)",
+        Desc = "Choose from 5 curated soft pastel & midnight eye-care themes",
+        Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.ThemeNames) or { "🌌 Aurora Borealis (แสงเหนือออโรร่า)" },
+        Value = Config.UITheme,
+        Callback = function(v)
+            if Window._JFCThemeEngine and Window._JFCThemeEngine.ApplyTheme then
+                Window._JFCThemeEngine.ApplyTheme(v, not CfgSys.isBatchApplying)
+            end
+        end,
+    })
+
+    TabSettings:Dropdown({
+        Title = "Animation Effect Style (รูปแบบเอฟเฟกต์)",
+        Desc = "Switch between Aurora Flow, Sakura Petals, Starlight Firefly, Bubbles, or Minimal Glow",
+        Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.StyleNames) or { "Auto (ตามธีมอัตโนมัติ)" },
+        Value = Config.UIAnimationStyle,
+        Callback = function(v)
+            Config.UIAnimationStyle = v
+            if Window._JFCThemeEngine and Window._JFCThemeEngine.UpdateParticles then
+                Window._JFCThemeEngine.UpdateParticles()
+            end
+        end,
+    })
+
+    TabSettings:Toggle({
+        Title = "Smooth Animated Effects (เปิดเอฟเฟกต์เคลื่อนไหว)",
+        Desc = "Soft breathing aurora glow, rotating pastel border, and gentle floating motes",
+        Default = Config.UIBackgroundAnimation,
+        Callback = function(v)
+            if Window._JFCThemeEngine and Window._JFCThemeEngine.SetAnimEnabled then
+                Window._JFCThemeEngine.SetAnimEnabled(v)
+            end
+        end,
+    })
+
+    TabSettings:Slider({
+        Title = "Animation Speed (ความเร็วการเคลื่อนไหว)",
+        Desc = "Adjust how fast the aurora & particles flow (Default: 8 = 0.8x Calm)",
+        Step = 1,
+        Value = {
+            Min = 2,
+            Max = 20,
+            Default = Config.UIAnimationSpeed or 8,
+        },
+        Callback = function(v)
+            Config.UIAnimationSpeed = tonumber(v) or 8
+        end,
+    })
+
+    TabSettings:Section({ Title = "🌐 Server Management" })
+
+    TabSettings:Button({
+        Title = "Rejoin Server",
+        Callback = function()
+            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end,
+    })
+
+    TabSettings:Button({
+        Title = "Server Hop",
+        Callback = function()
+            local ts = game:GetService("TeleportService")
+            local servers = {}
+            local req = (syn and syn.request) or request or http_request
+            if req then
+                local res = req({ Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId) })
+                if res and res.Body then
+                    local data = HttpService:JSONDecode(res.Body)
+                    if data and data.data then
+                        for _, s in ipairs(data.data) do
+                            if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                                table.insert(servers, s.id)
+                            end
                         end
                     end
                 end
             end
-        end
-        if #servers > 0 then
-            ts:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
-        else
-            ts:Teleport(game.PlaceId, LocalPlayer)
-        end
-    end,
-})
+            if #servers > 0 then
+                ts:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
+            else
+                ts:Teleport(game.PlaceId, LocalPlayer)
+            end
+        end,
+    })
 
-TabSettings:Button({
-    Title = "Unload Script",
-    Callback = function()
-        Config.MasterAutoFarm = false
-        Config.InstantPerfectKick = false
-        Config.CutsceneBypass = false
-        Config.SafeAntiWave = false
-        Config.NativeAutoKickSync = false
-        Config.ReturnSprintBoost = false
-        Config.InstantWarpReturn = false
-        Config.AutoOpenAll = false
-        Config.AutoOpenSelected = false
-        Config.FastOpenSkip = false
-        Config.AutoEquipBest = false
-        Config.AutoCollectMoney = false
-        Config.AutoUpgradeUnits = false
-        Config.AutoSpeedUpgrade = false
-        Config.AutoTrain = false
-        Config.AutoTrainX2 = false
-        Config.AutoBuyWeight = false
-        Config.AutoEquipWeight = false
-        Config.AutoRebirth = false
-        Config.WalkSpeedEnabled = false
-        Config.JumpPowerEnabled = false
-        Config.InfiniteJump = false
-        Config.NoClip = false
-        Config.FlyEnabled = false
-        Config.UIBackgroundAnimation = false
-        syncNetworkGuardFlags()
+    TabSettings:Button({
+        Title = "Unload Script",
+        Callback = function()
+            Config.MasterAutoFarm = false
+            Config.InstantPerfectKick = false
+            Config.CutsceneBypass = false
+            Config.SafeAntiWave = false
+            Config.NativeAutoKickSync = false
+            Config.ReturnSprintBoost = false
+            Config.InstantWarpReturn = false
+            Config.AutoOpenAll = false
+            Config.AutoOpenSelected = false
+            Config.FastOpenSkip = false
+            Config.AutoEquipBest = false
+            Config.AutoCollectMoney = false
+            Config.AutoUpgradeUnits = false
+            Config.AutoSpeedUpgrade = false
+            Config.AutoTrain = false
+            Config.AutoTrainX2 = false
+            Config.AutoBuyWeight = false
+            Config.AutoEquipWeight = false
+            Config.AutoRebirth = false
+            Config.WalkSpeedEnabled = false
+            Config.JumpPowerEnabled = false
+            Config.InfiniteJump = false
+            Config.NoClip = false
+            Config.FlyEnabled = false
+            Config.UIBackgroundAnimation = false
+            syncNetworkGuardFlags()
 
-        if getgenv then
-            getgenv()._JumpForCasesRunning = false
-        end
+            if getgenv then
+                getgenv()._JumpForCasesRunning = false
+            end
 
-        if uiAnimConn then
-            pcall(function() uiAnimConn:Disconnect() end)
-            uiAnimConn = nil
-        end
-        if slotSignSyncConn then
-            pcall(function() slotSignSyncConn:Disconnect() end)
-            slotSignSyncConn = nil
-        end
-        if baseLevelResultConn then
-            pcall(function() baseLevelResultConn:Disconnect() end)
-            baseLevelResultConn = nil
-        end
-        if basePadInfoConn then
-            pcall(function() basePadInfoConn:Disconnect() end)
-            basePadInfoConn = nil
-        end
-        for _, c in ipairs(equipTriggerConns) do
-            pcall(function() c:Disconnect() end)
-        end
-        table.clear(equipTriggerConns)
-        table.clear(slotSignCache)
-        if kickingBypassConn then
-            pcall(function() kickingBypassConn:Disconnect() end)
-            kickingBypassConn = nil
-        end
-        if fallRewardSkipConn then
-            pcall(function() fallRewardSkipConn:Disconnect() end)
-            fallRewardSkipConn = nil
-        end
-        if trainBonusConn then
-            pcall(function() trainBonusConn:Disconnect() end)
-            trainBonusConn = nil
-        end
-        if osuTrainConn then
-            pcall(function() osuTrainConn:Disconnect() end)
-            osuTrainConn = nil
-        end
-        table.clear(pendingOsuCircles)
+            if hotkeyInputConn then
+                pcall(function() hotkeyInputConn:Disconnect() end)
+                hotkeyInputConn = nil
+            end
+            if uiAnimConn then
+                pcall(function() uiAnimConn:Disconnect() end)
+                uiAnimConn = nil
+            end
+            if slotSignSyncConn then
+                pcall(function() slotSignSyncConn:Disconnect() end)
+                slotSignSyncConn = nil
+            end
+            if baseLevelResultConn then
+                pcall(function() baseLevelResultConn:Disconnect() end)
+                baseLevelResultConn = nil
+            end
+            if basePadInfoConn then
+                pcall(function() basePadInfoConn:Disconnect() end)
+                basePadInfoConn = nil
+            end
+            for _, c in ipairs(equipTriggerConns) do
+                pcall(function() c:Disconnect() end)
+            end
+            table.clear(equipTriggerConns)
+            table.clear(slotSignCache)
+            if kickingBypassConn then
+                pcall(function() kickingBypassConn:Disconnect() end)
+                kickingBypassConn = nil
+            end
+            if fallRewardSkipConn then
+                pcall(function() fallRewardSkipConn:Disconnect() end)
+                fallRewardSkipConn = nil
+            end
+            if trainBonusConn then
+                pcall(function() trainBonusConn:Disconnect() end)
+                trainBonusConn = nil
+            end
+            if osuTrainConn then
+                pcall(function() osuTrainConn:Disconnect() end)
+                osuTrainConn = nil
+            end
+            table.clear(pendingOsuCircles)
 
-        local hum = getHumanoid()
-        if hum then
-            hum.WalkSpeed = getNormalWalkSpeed()
-            hum.JumpPower = 50
-        end
+            local hum = getHumanoid()
+            if hum then
+                hum.WalkSpeed = getNormalWalkSpeed()
+                hum.JumpPower = 50
+            end
 
-        Window:Destroy()
-    end,
-})
+            Window:Destroy()
+        end,
+    })
 
-TabSettings:Section({ Title = "ℹ️ Information" })
-TabSettings:Paragraph({ Title = "Song Hub", Desc = "Jump for Cases🎲 v1.2 • Aurora Eye-Care Edition\nSmooth 60 FPS Ambient UI" })
+    TabSettings:Section({ Title = "ℹ️ Information" })
+    TabSettings:Paragraph({ Title = "Song Hub", Desc = "Jump for Cases🎲 v1.3 • Aurora Eye-Care Edition\nAuto-Save Config • Auto-Load • Custom UI Hotkey" })
+
+    updateConfigStatusDisplay()
+    if CfgSys.wasAutoLoaded then
+        task.defer(function()
+            applyConfigToAllControls()
+            WindUI:Notify({
+                Title = "📂 Auto-Loaded Config!",
+                Content = "โหลดตั้งค่าจากโปรไฟล์ '" .. tostring(CfgSys.loadedProfile) .. "' อัตโนมัติแล้ว (ปุ่มพับ UI: " .. tostring(Config.UIToggleKey) .. ")",
+                Duration = 3.5,
+                Icon = "check-circle",
+            })
+        end)
+    else
+        task.defer(function()
+            CfgSys.saveProfileToDisk(CfgSys.selectedProfile)
+            refreshProfilesDropdown(CfgSys.selectedProfile)
+        end)
+    end
+end
 
 pcall(function() Window:SelectTab(1) end)
 
