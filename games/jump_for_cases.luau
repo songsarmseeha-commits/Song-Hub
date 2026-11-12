@@ -81,6 +81,29 @@ task.spawn(function()
     end)
 end)
 
+-- Auto Dismiss Respawn / Lost Popups
+task.spawn(function()
+    while true do
+        task.wait(0.8)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local gameGui = pg and pg:FindFirstChild("Game")
+            local frames = gameGui and gameGui:FindFirstChild("Frames")
+            if frames then
+                local rf = frames:FindFirstChild("RespawnFrame")
+                if rf and rf.Visible then
+                    local eb = rf:FindFirstChild("ExitButton", true)
+                    if eb and typeof(firesignal) == "function" then
+                        firesignal(eb.Activated)
+                    else
+                        rf.Visible = false
+                    end
+                end
+            end
+        end)
+    end
+end)
+
 -- ==============================================================================
 -- 📦 REMOTES & GAME CONFIGS
 -- ==============================================================================
