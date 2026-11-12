@@ -137,6 +137,9 @@ local FallRewardEvent = Remotes and Remotes:FindFirstChild("FallRewardEvent")
 local RedeemCode = Remotes and Remotes:FindFirstChild("RedeemCode")
 local SellShopRequest = Remotes and Remotes:FindFirstChild("SellShopRequest")
 local RequestSetSetting = Remotes and Remotes:FindFirstChild("RequestSetSetting")
+local RequestSelectHotbar = Remotes and Remotes:FindFirstChild("RequestSelectHotbar")
+local StrengthBonus = Remotes and Remotes:FindFirstChild("StrengthBonus")
+local OsuTrain = Remotes and Remotes:FindFirstChild("OsuTrain")
 
 -- Load Game Configs safely
 local CasesConfig = nil
@@ -189,6 +192,8 @@ local Config = {
     CaseOpenDelay = 0.35,
 
     -- Auto Upgrades
+    AutoTrain = false,
+    AutoTrainX2 = false,
     AutoSpeedUpgrade = false,
     SpeedUpgradeTier = 1,
     AutoBuyWeight = false,
@@ -891,6 +896,246 @@ end)
 -- ==============================================================================
 -- ⚡ TAB: AUTO UPGRADES
 -- ==============================================================================
+local trainBonusConn = nil
+local osuTrainConn = nil
+local pendingOsuCircles = {}
+local lastOsuHitAt = 0
+local lastHotbarSelectAt = 0
+local sbOfferActive = false
+
+local function getEquippedWeightTool()
+    local char = LocalPlayer.Character
+    if not char then
+        return nil
+    end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and child:GetAttribute("_IsWeightTool") then
+            return child
+        end
+    end
+    return nil
+end
+
+local function findHotbarWeightSlot()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local gameGui = pg and pg:FindFirstChild("Game")
+    local hud = gameGui and gameGui:FindFirstChild("HUD")
+    local hudFrame = hud and hud:FindFirstChild("HUDFrame")
+    local invBottom = hudFrame and hudFrame:FindFirstChild("InventoryBottom")
+    local slotsLayout = invBottom and invBottom:FindFirstChild("SlotsLayout")
+    if not slotsLayout then
+        return nil
+    end
+
+    local slotButtons = {}
+    for _, child in ipairs(slotsLayout:GetChildren()) do
+        if child:IsA("GuiObject") then
+            table.insert(slotButtons, child)
+        end
+    end
+    table.sort(slotButtons, function(a, b)
+        return a.LayoutOrder < b.LayoutOrder
+    end)
+
+    for idx, btn in ipairs(slotButtons) do
+        local weightLabel = btn:FindFirstChild("WeightName", true)
+        if weightLabel and weightLabel:IsA("TextLabel") and weightLabel.Text ~= "" then
+            local orderLabel = btn:FindFirstChild("OrderNumber", true)
+            local orderNum = orderLabel and orderLabel:IsA("TextLabel") and tonumber(orderLabel.Text)
+            return orderNum or idx
+        end
+    end
+    return nil
+end
+
+local function equipWeightInHand()
+    local now = os.clock()
+    if now - lastHotbarSelectAt < 0.75 then
+        return false
+    end
+    lastHotbarSelectAt = now
+
+    local slot = findHotbarWeightSlot()
+    if RequestSelectHotbar and slot then
+        if LocalPlayer:GetAttribute("ActiveHotbar") == slot and not getEquippedWeightTool() then
+            pcall(function()
+                RequestSelectHotbar:FireServer(0)
+            end)
+            task.wait(0.08)
+        end
+        pcall(function()
+            RequestSelectHotbar:FireServer(slot)
+        end)
+        return true
+    end
+
+    if type(_G.HoldFirstWeight) == "function" then
+        local ok, res = pcall(_G.HoldFirstWeight)
+        if ok and res == true then
+            return true
+        end
+    end
+    return false
+end
+
+local function tryClaimStrengthBonus()
+    if not (isScriptAlive() and Config.AutoTrainX2 and StrengthBonus) then
+        return
+    end
+    sbOfferActive = false
+    pcall(function()
+        StrengthBonus:FireServer({ kind = "claim" })
+    end)
+end
+
+local function hasVisibleStrengthBonusButton()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local ku = pg and pg:FindFirstChild("KickUpgrades")
+    if not ku then
+        return false
+    end
+    for _, child in ipairs(ku:GetChildren()) do
+        if child:IsA("GuiObject") and child.Name ~= "Bonus" and child.Name ~= "PopBonus" and child.Name ~= "_PopBonusFly" and child.Visible then
+            return true
+        end
+    end
+    return false
+end
+
+local function scheduleOsuHit(circleId, spawnAt, life)
+    local id = tonumber(circleId)
+    local info = id and pendingOsuCircles[id]
+    if not info or info.scheduled or not OsuTrain then
+        return
+    end
+    info.scheduled = true
+    local safeLife = math.max(0.25, tonumber(life) or 1.5)
+    local elapsed = math.max(0, os.clock() - (spawnAt or os.clock()))
+    -- APPROACH_AT = 0.7 gives PERFECT! hits within PERFECT_WINDOW while guarding MIN_HIT_INTERVAL (0.09s)
+    local idealDelay = math.clamp(safeLife * 0.7 - elapsed, 0, math.max(0.05, safeLife - elapsed - 0.12))
+
+    task.delay(idealDelay, function()
+        if not isScriptAlive() or not Config.AutoTrainX2 or not OsuTrain then
+            if pendingOsuCircles[id] then
+                pendingOsuCircles[id].scheduled = false
+            end
+            return
+        end
+        if not pendingOsuCircles[id] then
+            return
+        end
+        local gap = os.clock() - lastOsuHitAt
+        if gap < 0.105 then
+            task.wait(0.105 - gap)
+        end
+        if not isScriptAlive() or not Config.AutoTrainX2 or not pendingOsuCircles[id] or not OsuTrain then
+            if pendingOsuCircles[id] then
+                pendingOsuCircles[id].scheduled = false
+            end
+            return
+        end
+        lastOsuHitAt = os.clock()
+        pendingOsuCircles[id] = nil
+        pcall(function()
+            OsuTrain:FireServer({ kind = "hit", id = id })
+        end)
+    end)
+end
+
+if StrengthBonus then
+    trainBonusConn = StrengthBonus.OnClientEvent:Connect(function(payload)
+        if not isScriptAlive() then
+            if trainBonusConn then
+                trainBonusConn:Disconnect()
+                trainBonusConn = nil
+            end
+            return
+        end
+        if type(payload) ~= "table" then
+            return
+        end
+        if payload.kind == "offer" then
+            sbOfferActive = true
+            if Config.AutoTrainX2 then
+                task.delay(0.05, function()
+                    if isScriptAlive() and Config.AutoTrainX2 and sbOfferActive then
+                        tryClaimStrengthBonus()
+                    end
+                end)
+            end
+        elseif payload.kind == "hide" or payload.kind == "claimed" then
+            sbOfferActive = false
+        end
+    end)
+end
+
+if OsuTrain then
+    osuTrainConn = OsuTrain.OnClientEvent:Connect(function(payload)
+        if not isScriptAlive() then
+            if osuTrainConn then
+                osuTrainConn:Disconnect()
+                osuTrainConn = nil
+            end
+            return
+        end
+        if type(payload) ~= "table" then
+            return
+        end
+        local kind = payload.kind
+        if kind == "start" or kind == "stop" then
+            table.clear(pendingOsuCircles)
+        elseif kind == "spawn" and payload.id then
+            local id = tonumber(payload.id)
+            if id then
+                local now = os.clock()
+                local life = tonumber(payload.life) or 1.5
+                pendingOsuCircles[id] = { spawnAt = now, life = life }
+                if Config.AutoTrainX2 then
+                    scheduleOsuHit(id, now, life)
+                end
+            end
+        elseif (kind == "hit" or kind == "miss") and payload.id then
+            local id = tonumber(payload.id)
+            if id then
+                pendingOsuCircles[id] = nil
+            end
+        end
+    end)
+end
+
+TabUpgrades:Section({ Title = "💪 Auto Train & X2 Bonus" })
+
+TabUpgrades:Toggle({
+    Title = "Auto Train (Auto Lift Barbell)",
+    Desc = "Auto-equips barbell & lifts rapidly for Strength and 3x Aura (auto-pauses while farming cases)",
+    Default = false,
+    Callback = function(v)
+        Config.AutoTrain = v
+    end,
+})
+
+TabUpgrades:Toggle({
+    Title = "Auto Train X2 (Claim X2 & Rush x5)",
+    Desc = "Auto-claims floating X2 Strength bonus and auto-hits Training Rush circles (PERFECT up to x5.0)",
+    Default = false,
+    Callback = function(v)
+        Config.AutoTrainX2 = v
+        if v then
+            if sbOfferActive or hasVisibleStrengthBonusButton() then
+                tryClaimStrengthBonus()
+            end
+            local now = os.clock()
+            for id, info in pairs(pendingOsuCircles) do
+                if now - info.spawnAt < info.life + 0.15 then
+                    scheduleOsuHit(id, info.spawnAt, info.life)
+                else
+                    pendingOsuCircles[id] = nil
+                end
+            end
+        end
+    end,
+})
+
 TabUpgrades:Section({ Title = "⚡ Speed Upgrades" })
 
 TabUpgrades:Toggle({
@@ -948,10 +1193,34 @@ TabUpgrades:Toggle({
     end,
 })
 
+-- Auto Train Worker (equips & lifts barbell cleanly)
+task.spawn(function()
+    while isScriptAlive() do
+        if Config.AutoTrain then
+            local farmBusy = Config.MasterAutoFarm and (isHoldingCase() or isFlightActive() or isSpinActive() or isInKickSession() or isRespawnOffer())
+            local safeToLift = not farmBusy and not isHoldingCase() and not isFlightActive() and not isSpinActive() and not isRespawnOffer()
+            if safeToLift then
+                local tool = getEquippedWeightTool()
+                if not tool then
+                    equipWeightInHand()
+                    task.wait(0.2)
+                else
+                    pcall(function()
+                        tool:Activate()
+                    end)
+                end
+            end
+            task.wait(0.14)
+        else
+            task.wait(0.35)
+        end
+    end
+end)
+
 -- Auto Upgrades Worker
 task.spawn(function()
     local lastSync = 0
-    while true do
+    while isScriptAlive() do
         task.wait(1.2)
 
         -- Auto Speed Upgrade
@@ -1396,6 +1665,8 @@ TabSettings:Button({
         Config.AutoOpenSelected = false
         Config.FastOpenSkip = false
         Config.AutoSpeedUpgrade = false
+        Config.AutoTrain = false
+        Config.AutoTrainX2 = false
         Config.AutoBuyWeight = false
         Config.AutoEquipWeight = false
         Config.AutoRebirth = false
@@ -1408,6 +1679,16 @@ TabSettings:Button({
         if getgenv then
             getgenv()._JumpForCasesRunning = false
         end
+
+        if trainBonusConn then
+            pcall(function() trainBonusConn:Disconnect() end)
+            trainBonusConn = nil
+        end
+        if osuTrainConn then
+            pcall(function() osuTrainConn:Disconnect() end)
+            osuTrainConn = nil
+        end
+        table.clear(pendingOsuCircles)
 
         local hum = getHumanoid()
         if hum then
