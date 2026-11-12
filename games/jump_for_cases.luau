@@ -170,6 +170,7 @@ local Config = {
     MasterAutoFarm = false,
     NativeAutoKickSync = false,
     ReturnSprintBoost = false,
+    InstantWarpReturn = false,
     
     -- Auto Case Opening
     FastOpenSkip = false,
@@ -392,6 +393,15 @@ TabFarm:Toggle({
     end,
 })
 
+TabFarm:Toggle({
+    Title = "Instant Warp Return",
+    Desc = "Instantly warps back to Kick Zone the moment a case is deposited into inventory",
+    Default = false,
+    Callback = function(v)
+        Config.InstantWarpReturn = v
+    end,
+})
+
 -- Kick Minigame Auto-Lock Helper (Hooks into RenderStepped)
 RunService.RenderStepped:Connect(function()
     if Config.MasterAutoFarm then
@@ -407,15 +417,27 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Safe Sprint Booster for Case Return (Bypasses the 75-second slow walk safely)
+-- Safe Sprint Booster & Instant Warp Return for Case Deposit
 task.spawn(function()
     while true do
-        task.wait(0.25)
-        if Config.ReturnSprintBoost or Config.MasterAutoFarm then
-            local hum = getHumanoid()
-            if hum and isHoldingCase() and not Config.WalkSpeedEnabled then
-                -- Anti-cheat safe speed cap is 48-50 WS
+        task.wait(0.2)
+        local hum = getHumanoid()
+        local hrp = getHRP()
+        if hum and hrp then
+            -- While carrying case, apply safe sprint speed
+            if (Config.ReturnSprintBoost or Config.MasterAutoFarm) and isHoldingCase() and not Config.WalkSpeedEnabled then
                 hum.WalkSpeed = 48
+            end
+
+            -- Instant Warp back the moment the case is deposited into inventory
+            if (Config.InstantWarpReturn or Config.MasterAutoFarm) and not isHoldingCase() and not isFlightActive() then
+                local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
+                local distToCollect = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_COLLECT_ZONE.X, 0, POS_COLLECT_ZONE.Z)).Magnitude
+                -- If near Collect Zone or runway end, instant warp straight to Kick Zone
+                if distToCollect < 35 and distToKick > 15 then
+                    teleportTo(POS_KICK_ZONE)
+                    task.wait(0.2)
+                end
             end
         end
     end
@@ -448,10 +470,10 @@ task.spawn(function()
                         end
                     end
 
-                    -- Once deposited, fire server auto return to runway
-                    if not isHoldingCase() and RequestAutoReturn then
-                        pcall(function() RequestAutoReturn:FireServer() end)
-                        task.wait(0.5)
+                    -- Once deposited, INSTANT WARP straight back to Runway / Kick Zone!
+                    if not isHoldingCase() then
+                        teleportTo(POS_KICK_ZONE)
+                        task.wait(0.15)
                     end
                 end
 
