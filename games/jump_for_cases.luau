@@ -288,8 +288,8 @@ local function isHoldingCase()
     return type(attr) == "string" and attr ~= ""
 end
 
-local function isInKickSession()
-    return LocalPlayer:GetAttribute("_InKickSession") == true or LocalPlayer:GetAttribute("_IsKicking") == true
+local function isFlightActive()
+    return LocalPlayer:GetAttribute("_IsKicking") == true
 end
 
 -- ==============================================================================
@@ -456,10 +456,10 @@ task.spawn(function()
                 end
 
                 -- Phase 2: Flight / In Kick Session Wait
-                if isInKickSession() then
+                if isFlightActive() then
                     -- Wait until flight finishes and player lands
                     local tFlight = tick()
-                    while isInKickSession() and (tick() - tFlight) < 25 and Config.MasterAutoFarm do
+                    while isFlightActive() and (tick() - tFlight) < 25 and Config.MasterAutoFarm do
                         task.wait(0.3)
                         -- Dismiss wave cutscene if stuck
                         if FallRewardEvent and LocalPlayer:GetAttribute("_IsKicking") == false then
@@ -471,7 +471,7 @@ task.spawn(function()
                 end
 
                 -- Phase 3: Initiate Kick from KickZone
-                if not isInKickSession() and not isHoldingCase() and Config.MasterAutoFarm then
+                if not isFlightActive() and not isHoldingCase() and Config.MasterAutoFarm then
                     local distToKick = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(POS_KICK_ZONE.X, 0, POS_KICK_ZONE.Z)).Magnitude
                     if distToKick > 8 then
                         teleportTo(POS_KICK_ZONE)
@@ -584,8 +584,8 @@ local function openCaseInstance(caseName)
     local count = getCaseCount(caseName)
     if count <= 0 then return false end
 
-    -- Cannot open cases mid-flight or during kick session
-    if isInKickSession() then
+    -- Cannot open cases mid-flight
+    if isFlightActive() then
         return false
     end
 
@@ -631,7 +631,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.15)
-        if (Config.AutoOpenSelected or Config.AutoOpenAll) and not isInKickSession() then
+        if (Config.AutoOpenSelected or Config.AutoOpenAll) and not isFlightActive() then
             if Config.AutoOpenSelected and Config.SelectedCase then
                 if openCaseInstance(Config.SelectedCase) then
                     task.wait(Config.CaseOpenDelay)
@@ -641,7 +641,7 @@ task.spawn(function()
             elseif Config.AutoOpenAll then
                 local openedAny = false
                 for _, caseName in ipairs(CaseNamesList) do
-                    if not Config.AutoOpenAll or isInKickSession() then break end
+                    if not Config.AutoOpenAll or isFlightActive() then break end
                     if getCaseCount(caseName) > 0 then
                         openCaseInstance(caseName)
                         openedAny = true
