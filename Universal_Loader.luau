@@ -47,6 +47,12 @@ local function detectGame()
         uId = game.GameId
     end
 
+    -- 0. Jump for Cases🎲
+    if uId == 10767621216 or pId == 93545804988403
+        or (game:GetService("ReplicatedStorage"):FindFirstChild("CasesConfig") and game:GetService("ReplicatedStorage"):FindFirstChild("Remotes") and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("RequestKick")) then
+        return "Jump for Cases🎲", "jump_for_cases.luau"
+    end
+
     -- 0. Net a Fish! 🐟
     if uId == 10771053183 or pId == 93898234979111
         or (game:GetService("ReplicatedStorage"):FindFirstChild("Remotes") and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("ThrowNet")) then
@@ -98,6 +104,7 @@ local function detectGame()
     local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(pId) end)
     if ok and info and info.Name then
         local t = info.Name:lower()
+        if t:find("jump for cases") or t:find("jump for case") then return "Jump for Cases🎲", "jump_for_cases.luau" end
         if t:find("net a fish") or t:find("fishing") then return "Net a Fish! 🐟", "net_a_fish.luau" end
         if t:find("grimorio") or t:find("grimoire") or t:find("clover") then return "Era dos Grimórios 📖", "era_dos_grimorios.luau" end
         if t:find("glorybound") or t:find("gladiator") or t:find("trials") then return "GloryBound ⚔️", "glorybound.luau" end
