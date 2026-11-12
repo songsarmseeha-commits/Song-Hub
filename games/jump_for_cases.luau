@@ -143,8 +143,23 @@ local RequestSetSetting = Remotes and Remotes:FindFirstChild("RequestSetSetting"
 local RequestSelectHotbar = Remotes and Remotes:FindFirstChild("RequestSelectHotbar")
 local StrengthBonus = Remotes and Remotes:FindFirstChild("StrengthBonus")
 local OsuTrain = Remotes and Remotes:FindFirstChild("OsuTrain")
+local BasePetsRequest = Remotes and Remotes:FindFirstChild("BasePetsRequest")
+local RequestBasePad = Remotes and Remotes:FindFirstChild("RequestBasePad")
+local BasePadInfo = Remotes and Remotes:FindFirstChild("BasePadInfo")
+local RequestCollect = Remotes and Remotes:FindFirstChild("RequestCollect")
+local RequestSlotLevel = Remotes and Remotes:FindFirstChild("RequestSlotLevel")
+local RequestSlotSignSync = Remotes and Remotes:FindFirstChild("RequestSlotSignSync")
+local SlotSignSync = Remotes and Remotes:FindFirstChild("SlotSignSync")
+local BaseLevelResult = Remotes and Remotes:FindFirstChild("BaseLevelResult")
+local CaseOpened = Remotes and Remotes:FindFirstChild("CaseOpened")
+local ItemObtained = Remotes and Remotes:FindFirstChild("ItemObtained")
 
 -- Load Game Configs safely
+local BrainrotData = nil
+pcall(function()
+    BrainrotData = require(ReplicatedStorage:WaitForChild("BrainrotData", 10))
+end)
+
 local CasesConfig = nil
 pcall(function()
     CasesConfig = require(ReplicatedStorage:WaitForChild("CasesConfig", 10))
@@ -195,7 +210,11 @@ local Config = {
     SelectedCase = CaseNamesList[1] or "Basic",
     CaseOpenDelay = 0.35,
 
-    -- Auto Upgrades
+    -- Auto Upgrades & Base
+    AutoEquipBest = false,
+    AutoCollectMoney = false,
+    AutoUpgradeUnits = false,
+    UnitUpgradePriority = "Best ROI ($/s per $)",
     AutoTrain = false,
     AutoTrainX2 = false,
     AutoSpeedUpgrade = false,
@@ -1231,6 +1250,302 @@ if OsuTrain then
     end)
 end
 
+-- ==============================================================================
+-- ⬆️ TAB: UPGRADES & STATS
+-- ==============================================================================
+local slotSignCache = {}
+local slotSignCachePlot = nil
+local pendingBaseCash = 0
+local lastUpgradedSlot = nil
+local upgradePendingUntil = 0
+local equipBestLastFire = 0
+
+local function getMyPlot()
+    local plotIdx = LocalPlayer:GetAttribute("BasePlot")
+    if plotIdx == nil then
+        return nil, nil
+    end
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then
+        local mapFolder = Workspace:FindFirstChild("Map")
+        plots = mapFolder and mapFolder:FindFirstChild("Plots")
+    end
+    local plot = plots and plots:FindFirstChild("Plot" .. tostring(plotIdx))
+    return plot, plotIdx
+end
+
+local function tryEquipBestUnits(force)
+    if not BasePetsRequest or not isScriptAlive() then
+        return false
+    end
+    local now = os.clock()
+    if not force and (now - equipBestLastFire) < 1.8 then
+        return false
+    end
+    equipBestLastFire = now
+    pcall(function()
+        BasePetsRequest:FireServer("PlaceBest")
+    end)
+    if RequestSlotSignSync then
+        task.delay(0.35, function()
+            if isScriptAlive() then
+                pcall(function()
+                    RequestSlotSignSync:FireServer()
+                end)
+            end
+        end)
+    end
+    return true
+end
+
+local function getPendingCollectCash(plot)
+    if pendingBaseCash > 0 then
+        return pendingBaseCash
+    end
+    if not plot then
+        return 0
+    end
+    local ca = plot:FindFirstChild("Collect All")
+    local infoGui = ca and ca:FindFirstChild("InfoGUI")
+    local textLabels = infoGui and infoGui:FindFirstChild("TextLabels")
+    local moneyLbl = textLabels and textLabels:FindFirstChild("Money")
+    if moneyLbl and moneyLbl:IsA("TextLabel") then
+        return parseCash(moneyLbl.Text)
+    end
+    return 0
+end
+
+local function performAutoCollectStep()
+    local plot, plotIdx = getMyPlot()
+    if not plot or not plotIdx then
+        return
+    end
+    if LocalPlayer:GetAttribute("Flag_AutoCollect") == true and RequestBasePad then
+        if getPendingCollectCash(plot) <= 0 then
+            return
+        end
+        pcall(function()
+            local renv = getrenv and getrenv()
+            local mc = (renv and renv._G and renv._G.MoneyController) or _G.MoneyController
+            if type(mc) == "table" and type(mc.SilenceCollects) == "function" then
+                mc.SilenceCollects(2.5)
+            end
+        end)
+        pcall(function()
+            RequestBasePad:FireServer("Collect", true)
+        end)
+        pendingBaseCash = 0
+        return
+    end
+
+    -- Fallback for players without Flag_AutoCollect: collect nearby non-$0 floor plates
+    if not RequestCollect then
+        return
+    end
+    local hrp = getHRP()
+    local floors = plot:FindFirstChild("Floors")
+    if not hrp or not floors then
+        return
+    end
+    for _, fl in ipairs(floors:GetChildren()) do
+        local sm = fl:FindFirstChild("SlotModels")
+        if sm then
+            for _, slotFolder in ipairs(sm:GetChildren()) do
+                local slotNum = tonumber(slotFolder.Name)
+                local unitModel = slotFolder:FindFirstChildOfClass("Model")
+                local pad = unitModel and unitModel:FindFirstChild("Slot1")
+                if slotNum and pad and pad:IsA("BasePart") and (hrp.Position - pad.Position).Magnitude <= 58 then
+                    local sg = pad:FindFirstChildOfClass("SurfaceGui")
+                    local tl = sg and sg:FindFirstChildOfClass("TextLabel")
+                    if tl and type(tl.Text) == "string" and tl.Text ~= "" and tl.Text ~= "$0" then
+                        pcall(function()
+                            RequestCollect:FireServer(plotIdx, slotNum)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function computeUnitIncome(cfg)
+    local stat = tonumber(cfg:GetAttribute("Stat")) or 0
+    if stat <= 0 and BrainrotData and type(BrainrotData.ComputeStat) == "function" then
+        local ok, computed = pcall(
+            BrainrotData.ComputeStat,
+            cfg:GetAttribute("Name"),
+            cfg:GetAttribute("Mutation") or "None",
+            cfg:GetAttribute("Variant") or "None",
+            cfg:GetAttribute("NeonTier") or 0
+        )
+        stat = ok and (tonumber(computed) or 0) or 0
+    end
+    local lv = math.clamp(math.floor(tonumber(cfg:GetAttribute("Level")) or 1), 1, 100)
+    local rebirthMult = tonumber(LocalPlayer:GetAttribute("RebirthMult")) or 1
+    return stat * (1.247 ^ math.max(0, lv - 1)) * rebirthMult
+end
+
+local function findBestUnitUpgradeSlot(plot, plotIdx)
+    if not plot then
+        return nil
+    end
+    if slotSignCachePlot ~= plotIdx then
+        slotSignCachePlot = plotIdx
+        table.clear(slotSignCache)
+    end
+    local slotConfigs = plot:FindFirstChild("SlotConfigs")
+    if not slotConfigs then
+        return nil
+    end
+
+    local cash = getPlayerCash()
+    local priority = Config.UnitUpgradePriority
+    local bestSlot = nil
+    local bestScore = -math.huge
+    local bestIncome = -1
+
+    for _, cfg in ipairs(slotConfigs:GetChildren()) do
+        if cfg:IsA("Configuration") then
+            local slotNum = tonumber(cfg.Name)
+            local name = cfg:GetAttribute("Name")
+            local sync = slotNum and slotSignCache[slotNum]
+            if slotNum and type(name) == "string" and name ~= "" and type(sync) == "table" then
+                local lv = math.floor(tonumber(cfg:GetAttribute("Level")) or tonumber(sync.level) or 1)
+                local isFree = (sync.free == true)
+                local cost = isFree and 0 or tonumber(sync.nextCost)
+                local eligible = (lv < 100) and (sync.max ~= true) and (sync.paid ~= true)
+                    and (isFree or (type(cost) == "number" and cost <= cash))
+                if eligible then
+                    local inc = computeUnitIncome(cfg)
+                    local score
+                    if priority == "Lowest Cost First" then
+                        score = -cost
+                    elseif priority == "Highest $/s First" then
+                        score = inc
+                    else
+                        score = (isFree or cost <= 0) and (1e30 + inc) or ((inc * 0.247) / cost)
+                    end
+                    if score > bestScore or (score == bestScore and inc > bestIncome) then
+                        bestScore = score
+                        bestIncome = inc
+                        bestSlot = slotNum
+                    end
+                end
+            end
+        end
+    end
+    return bestSlot
+end
+
+local slotSignSyncConn = SlotSignSync and SlotSignSync.OnClientEvent:Connect(function(data)
+    if not isScriptAlive() then
+        if slotSignSyncConn then slotSignSyncConn:Disconnect(); slotSignSyncConn = nil end
+        return
+    end
+    if type(data) == "table" and type(data.slot) == "number" then
+        local myPlotIdx = LocalPlayer:GetAttribute("BasePlot")
+        if data.plot ~= nil and data.plot ~= myPlotIdx then
+            return
+        end
+        if slotSignCachePlot ~= myPlotIdx then
+            slotSignCachePlot = myPlotIdx
+            table.clear(slotSignCache)
+        end
+        slotSignCache[data.slot] = data
+        if lastUpgradedSlot == data.slot then
+            upgradePendingUntil = 0
+        end
+    end
+end)
+
+local baseLevelResultConn = BaseLevelResult and BaseLevelResult.OnClientEvent:Connect(function(data)
+    if not isScriptAlive() then
+        if baseLevelResultConn then baseLevelResultConn:Disconnect(); baseLevelResultConn = nil end
+        return
+    end
+    if type(data) == "table" and data.slot and data.slot == lastUpgradedSlot then
+        upgradePendingUntil = 0
+    end
+end)
+
+local basePadInfoConn = BasePadInfo and BasePadInfo.OnClientEvent:Connect(function(val)
+    if not isScriptAlive() then
+        if basePadInfoConn then basePadInfoConn:Disconnect(); basePadInfoConn = nil end
+        return
+    end
+    pendingBaseCash = math.max(0, tonumber(val) or 0)
+end)
+
+local equipTriggerConns = {}
+for _, evt in ipairs({ CaseOpened, ItemObtained }) do
+    if evt and evt.OnClientEvent then
+        local c
+        c = evt.OnClientEvent:Connect(function()
+            if not isScriptAlive() then
+                if c then c:Disconnect() end
+                return
+            end
+            if Config.AutoEquipBest then
+                task.delay(0.35, function()
+                    if isScriptAlive() and Config.AutoEquipBest then
+                        tryEquipBestUnits(false)
+                    end
+                end)
+            end
+        end)
+        table.insert(equipTriggerConns, c)
+    end
+end
+
+TabUpgrades:Section({ Title = "🏠 Base Units, Money & Upgrades" })
+
+TabUpgrades:Toggle({
+    Title = "Auto Equip Best Units (Place Best)",
+    Desc = "Automatically places your highest $/s brainrots onto base slots cleanly (no popup spam)",
+    Default = false,
+    Callback = function(v)
+        Config.AutoEquipBest = v
+        if v then
+            task.spawn(function()
+                tryEquipBestUnits(true)
+            end)
+        end
+    end,
+})
+
+TabUpgrades:Toggle({
+    Title = "Auto Collect Money (Base Cash)",
+    Desc = "Automatically collects all generated cash from your base from anywhere on the map",
+    Default = false,
+    Callback = function(v)
+        Config.AutoCollectMoney = v
+        if v then
+            task.spawn(performAutoCollectStep)
+        end
+    end,
+})
+
+TabUpgrades:Toggle({
+    Title = "Auto Upgrade Units (Level Up Best)",
+    Desc = "Automatically levels up placed brainrots using the selected upgrade priority",
+    Default = false,
+    Callback = function(v)
+        Config.AutoUpgradeUnits = v
+        if v and RequestSlotSignSync then
+            pcall(function() RequestSlotSignSync:FireServer() end)
+        end
+    end,
+})
+
+TabUpgrades:Dropdown({
+    Title = "Unit Upgrade Priority",
+    Values = { "Best ROI ($/s per $)", "Highest $/s First", "Lowest Cost First" },
+    Default = "Best ROI ($/s per $)",
+    Callback = function(v)
+        Config.UnitUpgradePriority = v
+    end,
+})
+
 TabUpgrades:Section({ Title = "💪 Auto Train & X2 Bonus" })
 
 TabUpgrades:Toggle({
@@ -1397,6 +1712,53 @@ task.spawn(function()
             pcall(function()
                 RequestRebirth:FireServer({ mode = "rebirth" })
             end)
+        end
+    end
+end)
+
+-- Auto Base & Units Worker (Equip Best, Collect Money, Upgrade Units)
+task.spawn(function()
+    local lastEquipLoop = 0
+    local lastCollectLoop = 0
+    local lastSlotSync = 0
+    while isScriptAlive() do
+        local anyActive = Config.AutoEquipBest or Config.AutoCollectMoney or Config.AutoUpgradeUnits
+        if not anyActive then
+            task.wait(0.25)
+        else
+            local now = os.clock()
+
+            if Config.AutoCollectMoney and (now - lastCollectLoop) >= 0.75 then
+                lastCollectLoop = now
+                performAutoCollectStep()
+            end
+
+            if Config.AutoEquipBest and (now - lastEquipLoop) >= 3.5 then
+                lastEquipLoop = now
+                tryEquipBestUnits(false)
+            end
+
+            if Config.AutoUpgradeUnits and RequestSlotLevel then
+                local plot, plotIdx = getMyPlot()
+                if plot and plotIdx then
+                    if RequestSlotSignSync and (next(slotSignCache) == nil or (now - lastSlotSync) >= 4.5) then
+                        lastSlotSync = now
+                        pcall(function() RequestSlotSignSync:FireServer() end)
+                    end
+                    if now >= upgradePendingUntil then
+                        local bestSlot = findBestUnitUpgradeSlot(plot, plotIdx)
+                        if bestSlot then
+                            lastUpgradedSlot = bestSlot
+                            upgradePendingUntil = now + 0.28
+                            pcall(function()
+                                RequestSlotLevel:FireServer({ slot = bestSlot })
+                            end)
+                        end
+                    end
+                end
+            end
+
+            task.wait(0.14)
         end
     end
 end)
@@ -1796,6 +2158,9 @@ TabSettings:Button({
         Config.AutoOpenAll = false
         Config.AutoOpenSelected = false
         Config.FastOpenSkip = false
+        Config.AutoEquipBest = false
+        Config.AutoCollectMoney = false
+        Config.AutoUpgradeUnits = false
         Config.AutoSpeedUpgrade = false
         Config.AutoTrain = false
         Config.AutoTrainX2 = false
@@ -1813,6 +2178,23 @@ TabSettings:Button({
             getgenv()._JumpForCasesRunning = false
         end
 
+        if slotSignSyncConn then
+            pcall(function() slotSignSyncConn:Disconnect() end)
+            slotSignSyncConn = nil
+        end
+        if baseLevelResultConn then
+            pcall(function() baseLevelResultConn:Disconnect() end)
+            baseLevelResultConn = nil
+        end
+        if basePadInfoConn then
+            pcall(function() basePadInfoConn:Disconnect() end)
+            basePadInfoConn = nil
+        end
+        for _, c in ipairs(equipTriggerConns) do
+            pcall(function() c:Disconnect() end)
+        end
+        table.clear(equipTriggerConns)
+        table.clear(slotSignCache)
         if kickingBypassConn then
             pcall(function() kickingBypassConn:Disconnect() end)
             kickingBypassConn = nil
