@@ -239,6 +239,12 @@ local Config = {
     NoClip = false,
     FlyEnabled = false,
     FlySpeed = 50,
+
+    -- UI Visuals & Animation (Eye-Care Aurora Engine)
+    UITheme = "🌌 Aurora Borealis (แสงเหนือออโรร่า)",
+    UIAnimationStyle = "🌌 Aurora Flow (แสงเหนือไหลนุ่มๆ)",
+    UIBackgroundAnimation = true,
+    UIAnimationSpeed = 8,
 }
 
 -- Target Key Positions
@@ -449,25 +455,732 @@ if not WindUI then
     return
 end
 
+-- ==============================================================================
+-- 🌸 EYE-CARE PASTEL & AURORA THEME PRESETS (SOFT, VIBRANT & NON-HARSH)
+-- ==============================================================================
+local UI_THEME_PRESETS = {
+    ["🌌 Aurora Borealis (แสงเหนือออโรร่า)"] = {
+        Id = "JFC_AuroraBorealis",
+        Effect = "AuroraFlow",
+        Accent = "#132A38",
+        Background = "#0A101D",
+        Dialog = "#0F172A",
+        Outline = "#5EEAD4",
+        Text = "#F1F5F9",
+        Placeholder = "#94A3B8",
+        Button = "#1E3A5F",
+        Icon = "#7DD3FC",
+        Toggle = "#2DD4BF",
+        Slider = "#38BDF8",
+        SliderIcon = "#BAE6FD",
+        Checkbox = "#2DD4BF",
+        Primary = "#5EEAD4",
+        ElementBackground = "#152238",
+        PanelBackground = "#0E1729",
+        LabelBackground = "#0B1322",
+        Grad1 = Color3.fromHex("#090F1C"),
+        Grad2 = Color3.fromHex("#112236"),
+        Grad3 = Color3.fromHex("#151932"),
+        Orb1 = Color3.fromHex("#5EEAD4"), -- Soft Aqua Mint
+        Orb2 = Color3.fromHex("#7DD3FC"), -- Pastel Sky Blue
+        Orb3 = Color3.fromHex("#C4B5FD"), -- Soft Lavender
+        Orb4 = Color3.fromHex("#F9A8D4"), -- Gentle Rose
+        Particle1 = Color3.fromHex("#99F6E4"),
+        Particle2 = Color3.fromHex("#BAE6FD"),
+        TitleSheen = Color3.fromHex("#A7F3D0"),
+    },
+    ["🌸 Sakura Twilight (ซากุระยามสนธยา)"] = {
+        Id = "JFC_SakuraTwilight",
+        Effect = "SakuraPetals",
+        Accent = "#2D1630",
+        Background = "#110B1A",
+        Dialog = "#191026",
+        Outline = "#F9A8D4",
+        Text = "#FDF2F8",
+        Placeholder = "#D8B4FE",
+        Button = "#3B1D4A",
+        Icon = "#F472B6",
+        Toggle = "#EC4899",
+        Slider = "#C084FC",
+        SliderIcon = "#FBCFE8",
+        Checkbox = "#F472B6",
+        Primary = "#F9A8D4",
+        ElementBackground = "#211533",
+        PanelBackground = "#160E24",
+        LabelBackground = "#120A1E",
+        Grad1 = Color3.fromHex("#110A19"),
+        Grad2 = Color3.fromHex("#231332"),
+        Grad3 = Color3.fromHex("#19112E"),
+        Orb1 = Color3.fromHex("#F9A8D4"), -- Sakura Pink
+        Orb2 = Color3.fromHex("#C4B5FD"), -- Soft Wisteria
+        Orb3 = Color3.fromHex("#FDBA74"), -- Warm Sunset Peach
+        Orb4 = Color3.fromHex("#A5B4FC"), -- Periwinkle
+        Particle1 = Color3.fromHex("#FBCFE8"),
+        Particle2 = Color3.fromHex("#DDD6FE"),
+        TitleSheen = Color3.fromHex("#F9A8D4"),
+    },
+    ["🌊 Ocean Serenity (มหาสมุทรครามสบายตา)"] = {
+        Id = "JFC_OceanSerenity",
+        Effect = "OceanBubbles",
+        Accent = "#0F293D",
+        Background = "#07121C",
+        Dialog = "#0C1D2C",
+        Outline = "#67E8F9",
+        Text = "#F0F9FF",
+        Placeholder = "#7DD3FC",
+        Button = "#163B56",
+        Icon = "#38BDF8",
+        Toggle = "#06B6D4",
+        Slider = "#38BDF8",
+        SliderIcon = "#CFFAFE",
+        Checkbox = "#22D3EE",
+        Primary = "#67E8F9",
+        ElementBackground = "#112638",
+        PanelBackground = "#0A1926",
+        LabelBackground = "#081420",
+        Grad1 = Color3.fromHex("#061019"),
+        Grad2 = Color3.fromHex("#0E2538"),
+        Grad3 = Color3.fromHex("#0B1D30"),
+        Orb1 = Color3.fromHex("#67E8F9"), -- Pearl Cyan
+        Orb2 = Color3.fromHex("#6EE7B7"), -- Seafoam Mint
+        Orb3 = Color3.fromHex("#818CF8"), -- Soft Indigo
+        Orb4 = Color3.fromHex("#7DD3FC"), -- Sky Blue
+        Particle1 = Color3.fromHex("#A5F3FC"),
+        Particle2 = Color3.fromHex("#A7F3D0"),
+        TitleSheen = Color3.fromHex("#67E8F9"),
+    },
+    ["🍃 Matcha Zen (มัทฉะเซนธรรมชาติ)"] = {
+        Id = "JFC_MatchaZen",
+        Effect = "StarlightFirefly",
+        Accent = "#142E24",
+        Background = "#09130F",
+        Dialog = "#0E1F18",
+        Outline = "#6EE7B7",
+        Text = "#F0FDF4",
+        Placeholder = "#86EFAC",
+        Button = "#1B3D2F",
+        Icon = "#34D399",
+        Toggle = "#10B981",
+        Slider = "#34D399",
+        SliderIcon = "#D1FAE5",
+        Checkbox = "#10B981",
+        Primary = "#6EE7B7",
+        ElementBackground = "#132820",
+        PanelBackground = "#0C1A15",
+        LabelBackground = "#091410",
+        Grad1 = Color3.fromHex("#08110E"),
+        Grad2 = Color3.fromHex("#12261E"),
+        Grad3 = Color3.fromHex("#0F201D"),
+        Orb1 = Color3.fromHex("#6EE7B7"), -- Matcha Mint
+        Orb2 = Color3.fromHex("#A7F3D0"), -- Soft Sage
+        Orb3 = Color3.fromHex("#FDE68A"), -- Warm Honey Tea
+        Orb4 = Color3.fromHex("#5EEAD4"), -- Aqua Leaf
+        Particle1 = Color3.fromHex("#A7F3D0"),
+        Particle2 = Color3.fromHex("#FEF08A"),
+        TitleSheen = Color3.fromHex("#A7F3D0"),
+    },
+    ["🌙 Velvet Amethyst (อเมทิสต์มิดไนท์)"] = {
+        Id = "JFC_VelvetAmethyst",
+        Effect = "StarlightFirefly",
+        Accent = "#22183B",
+        Background = "#0D0A1A",
+        Dialog = "#141029",
+        Outline = "#C4B5FD",
+        Text = "#EEF2FF",
+        Placeholder = "#A5B4FC",
+        Button = "#2E2152",
+        Icon = "#A78BFA",
+        Toggle = "#8B5CF6",
+        Slider = "#818CF8",
+        SliderIcon = "#E0E7FF",
+        Checkbox = "#8B5CF6",
+        Primary = "#C4B5FD",
+        ElementBackground = "#1A1433",
+        PanelBackground = "#120E24",
+        LabelBackground = "#0E0B1D",
+        Grad1 = Color3.fromHex("#0C0918"),
+        Grad2 = Color3.fromHex("#1B1435"),
+        Grad3 = Color3.fromHex("#131730"),
+        Orb1 = Color3.fromHex("#C4B5FD"), -- Soft Lilac
+        Orb2 = Color3.fromHex("#818CF8"), -- Periwinkle
+        Orb3 = Color3.fromHex("#F0ABFC"), -- Pastel Orchid
+        Orb4 = Color3.fromHex("#7DD3FC"), -- Starlight Sky
+        Particle1 = Color3.fromHex("#DDD6FE"),
+        Particle2 = Color3.fromHex("#C7D2FE"),
+        TitleSheen = Color3.fromHex("#DDD6FE"),
+    },
+}
+
+local UI_THEME_NAMES = {
+    "🌌 Aurora Borealis (แสงเหนือออโรร่า)",
+    "🌸 Sakura Twilight (ซากุระยามสนธยา)",
+    "🌊 Ocean Serenity (มหาสมุทรครามสบายตา)",
+    "🍃 Matcha Zen (มัทฉะเซนธรรมชาติ)",
+    "🌙 Velvet Amethyst (อเมทิสต์มิดไนท์)",
+}
+
+local UI_STYLE_MAP = {
+    ["Auto (ตามธีมอัตโนมัติ)"] = "Auto",
+    ["🌌 Aurora Flow (แสงเหนือไหลนุ่มๆ)"] = "AuroraFlow",
+    ["🌸 Sakura Petals (กลีบซากุระลอยช้าๆ)"] = "SakuraPetals",
+    ["✨ Starlight Firefly (ละอองดาวหิ่งห้อย)"] = "StarlightFirefly",
+    ["🌊 Ocean Bubbles (ฟองอากาศใต้น้ำ)"] = "OceanBubbles",
+    ["🧘 Minimal Glow Only (เฉพาะแสงออร่า ไม่เอาละออง)"] = "MinimalGlow",
+}
+
+local UI_STYLE_NAMES = {
+    "Auto (ตามธีมอัตโนมัติ)",
+    "🌌 Aurora Flow (แสงเหนือไหลนุ่มๆ)",
+    "🌸 Sakura Petals (กลีบซากุระลอยช้าๆ)",
+    "✨ Starlight Firefly (ละอองดาวหิ่งห้อย)",
+    "🌊 Ocean Bubbles (ฟองอากาศใต้น้ำ)",
+    "🧘 Minimal Glow Only (เฉพาะแสงออร่า ไม่เอาละออง)",
+}
+
+pcall(function()
+    if WindUI and typeof(WindUI.AddTheme) == "function" then
+        for _, preset in pairs(UI_THEME_PRESETS) do
+            WindUI:AddTheme({
+                Name = preset.Id,
+                Accent = Color3.fromHex(preset.Accent),
+                Background = Color3.fromHex(preset.Background),
+                Dialog = Color3.fromHex(preset.Dialog),
+                Outline = Color3.fromHex(preset.Outline),
+                Text = Color3.fromHex(preset.Text),
+                Placeholder = Color3.fromHex(preset.Placeholder),
+                Button = Color3.fromHex(preset.Button),
+                Icon = Color3.fromHex(preset.Icon),
+                Toggle = Color3.fromHex(preset.Toggle),
+                Slider = Color3.fromHex(preset.Slider),
+                SliderIcon = Color3.fromHex(preset.SliderIcon),
+                Checkbox = Color3.fromHex(preset.Checkbox),
+                Primary = Color3.fromHex(preset.Primary),
+                ElementBackground = Color3.fromHex(preset.ElementBackground),
+                ElementBackgroundTransparency = 0.16,
+                PanelBackground = Color3.fromHex(preset.PanelBackground),
+                PanelBackgroundTransparency = 0.85,
+                LabelBackground = Color3.fromHex(preset.LabelBackground),
+                LabelBackgroundTransparency = 0.72,
+            })
+        end
+    end
+end)
+
+local defaultThemeId = (WindUI and WindUI.Themes and WindUI.Themes["JFC_AuroraBorealis"]) and "JFC_AuroraBorealis" or "Dark"
+
 local Window = WindUI:CreateWindow({
-    Title = "Song Hub",
-    Icon = "rbxassetid://135165335432475",
-    Author = "Song",
+    Title = "Song Hub  •  Jump for Cases",
+    Icon = "sparkles",
+    Author = "Aurora Eye-Care Edition",
     Folder = "SongHub_JumpForCases",
-    Size = UDim2.fromOffset(620, 440),
+    Size = UDim2.fromOffset(650, 460),
+    SideBarWidth = 185,
     Transparent = true,
-    Theme = "Dark",
+    Theme = defaultThemeId,
+    OpenButton = {
+        Title = "🎲 Song Hub | Jump for Cases",
+        Icon = "sparkles",
+        CornerRadius = UDim.new(0, 14),
+        StrokeThickness = 2,
+        Color = ColorSequence.new(
+            Color3.fromHex("#5EEAD4"),
+            Color3.fromHex("#818CF8")
+        ),
+        Enabled = true,
+        Draggable = true,
+    },
 })
 
 if getgenv then
     getgenv()._JFC_Window = Window
 end
 
+pcall(function()
+    if Window and typeof(Window.EditOpenButton) == "function" then
+        Window:EditOpenButton({
+            Title = "🎲 Song Hub | Jump for Cases",
+            Icon = "sparkles",
+            CornerRadius = UDim.new(0, 14),
+            StrokeThickness = 2,
+            Color = ColorSequence.new(
+                Color3.fromHex("#5EEAD4"),
+                Color3.fromHex("#818CF8")
+            ),
+        })
+    end
+    if Window and typeof(Window.Tag) == "function" then
+        Window:Tag({
+            Title = "✨ Aurora UI",
+            Color = Color3.fromHex("#2DD4BF"),
+        })
+    end
+end)
+
+-- ==============================================================================
+-- 🌌 PROCEDURAL AURORA & EYE-SOOTHING ANIMATION ENGINE (60 FPS, ZERO EYE STRAIN)
+-- ==============================================================================
+local uiAnimConn = nil
+do
+    local mainWinFrame = Window and Window.UIElements and Window.UIElements.Main
+    local activePreset = UI_THEME_PRESETS[Config.UITheme] or UI_THEME_PRESETS["🌌 Aurora Borealis (แสงเหนือออโรร่า)"]
+    local animCanvas, borderFrame = nil, nil
+    local bgGrad, borderGrad, topLineGrad, titleGrad = nil, nil, nil, nil
+    local outerHalo, innerHalo, outerHaloStroke, innerHaloStroke = nil, nil, nil, nil
+    local orbs = {}
+    local particles = {}
+
+    if mainWinFrame then
+        pcall(function()
+            for _, childName in ipairs({ "JFC_AuroraCanvas", "JFC_BorderFrame" }) do
+                local old = mainWinFrame:FindFirstChild(childName)
+                if old then old:Destroy() end
+            end
+
+            -- 1. Deep Velvet Backdrop Canvas (ZIndex 4: blocks noisy 3D world text behind UI)
+            animCanvas = Instance.new("Frame")
+            animCanvas.Name = "JFC_AuroraCanvas"
+            animCanvas.Size = UDim2.fromScale(1, 1)
+            animCanvas.Position = UDim2.fromScale(0, 0)
+            animCanvas.BackgroundColor3 = Color3.new(1, 1, 1)
+            animCanvas.BackgroundTransparency = 0.04
+            animCanvas.BorderSizePixel = 0
+            animCanvas.ClipsDescendants = true
+            animCanvas.ZIndex = 4
+            animCanvas.Parent = mainWinFrame
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 12)
+            cCorner.Parent = animCanvas
+
+            bgGrad = Instance.new("UIGradient")
+            bgGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, activePreset.Grad1),
+                ColorSequenceKeypoint.new(0.5, activePreset.Grad2),
+                ColorSequenceKeypoint.new(1, activePreset.Grad3),
+            })
+            bgGrad.Rotation = 35
+            bgGrad.Parent = animCanvas
+
+            -- 2. Four Ultra-Soft Breathing Aurora Mist Orbs (ZIndex 5)
+            local orbDefs = {
+                { Pos = UDim2.fromScale(0.18, 0.22), Size = UDim2.fromOffset(310, 310), Col = activePreset.Orb1 },
+                { Pos = UDim2.fromScale(0.84, 0.76), Size = UDim2.fromOffset(340, 340), Col = activePreset.Orb2 },
+                { Pos = UDim2.fromScale(0.65, 0.24), Size = UDim2.fromOffset(270, 270), Col = activePreset.Orb3 },
+                { Pos = UDim2.fromScale(0.28, 0.80), Size = UDim2.fromOffset(250, 250), Col = activePreset.Orb4 },
+            }
+            for idx, od in ipairs(orbDefs) do
+                local orb = Instance.new("Frame")
+                orb.Name = "AuroraOrb_" .. idx
+                orb.AnchorPoint = Vector2.new(0.5, 0.5)
+                orb.Position = od.Pos
+                orb.Size = od.Size
+                orb.BackgroundColor3 = od.Col
+                orb.BackgroundTransparency = 0.88
+                orb.BorderSizePixel = 0
+                orb.ZIndex = 5
+                orb.Parent = animCanvas
+
+                local oCorner = Instance.new("UICorner")
+                oCorner.CornerRadius = UDim.new(1, 0)
+                oCorner.Parent = orb
+
+                local oGrad = Instance.new("UIGradient")
+                oGrad.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 0.20),
+                    NumberSequenceKeypoint.new(0.60, 0.62),
+                    NumberSequenceKeypoint.new(1, 1),
+                })
+                oGrad.Parent = orb
+
+                table.insert(orbs, {
+                    Frame = orb,
+                    BaseX = od.Pos.X.Scale,
+                    BaseY = od.Pos.Y.Scale,
+                    Phase = idx * 1.65,
+                })
+            end
+
+            -- 3. Soft Counter-Rotating Celestial Halo Rings (ZIndex 5)
+            local haloCenter = UDim2.fromScale(0.64, 0.54)
+
+            outerHalo = Instance.new("Frame")
+            outerHalo.Name = "CelestialOuterHalo"
+            outerHalo.AnchorPoint = Vector2.new(0.5, 0.5)
+            outerHalo.Position = haloCenter
+            outerHalo.Size = UDim2.fromOffset(260, 260)
+            outerHalo.BackgroundTransparency = 1
+            outerHalo.ZIndex = 5
+            outerHalo.Parent = animCanvas
+            local ohCorner = Instance.new("UICorner")
+            ohCorner.CornerRadius = UDim.new(1, 0)
+            ohCorner.Parent = outerHalo
+            outerHaloStroke = Instance.new("UIStroke")
+            outerHaloStroke.Thickness = 1.2
+            outerHaloStroke.Transparency = 0.82
+            outerHaloStroke.Color = activePreset.Orb1
+            outerHaloStroke.Parent = outerHalo
+            local ohGrad = Instance.new("UIGradient")
+            ohGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.15),
+                NumberSequenceKeypoint.new(0.5, 0.90),
+                NumberSequenceKeypoint.new(1, 0.15),
+            })
+            ohGrad.Parent = outerHaloStroke
+
+            innerHalo = Instance.new("Frame")
+            innerHalo.Name = "CelestialInnerHalo"
+            innerHalo.AnchorPoint = Vector2.new(0.5, 0.5)
+            innerHalo.Position = haloCenter
+            innerHalo.Size = UDim2.fromOffset(180, 180)
+            innerHalo.BackgroundTransparency = 1
+            innerHalo.ZIndex = 5
+            innerHalo.Parent = animCanvas
+            local ihCorner = Instance.new("UICorner")
+            ihCorner.CornerRadius = UDim.new(1, 0)
+            ihCorner.Parent = innerHalo
+            innerHaloStroke = Instance.new("UIStroke")
+            innerHaloStroke.Thickness = 1.0
+            innerHaloStroke.Transparency = 0.84
+            innerHaloStroke.Color = activePreset.Orb3
+            innerHaloStroke.Parent = innerHalo
+            local ihGrad = Instance.new("UIGradient")
+            ihGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.85),
+                NumberSequenceKeypoint.new(0.5, 0.15),
+                NumberSequenceKeypoint.new(1, 0.85),
+            })
+            ihGrad.Parent = innerHaloStroke
+
+            -- 4. 18 Gentle Pastel Floating Motes / Petals / Ribbons (ZIndex 6)
+            for i = 1, 18 do
+                local p = Instance.new("Frame")
+                p.Name = "AuroraMote_" .. i
+                p.AnchorPoint = Vector2.new(0.5, 0.5)
+                local sz = math.random(4, 7)
+                p.Size = UDim2.fromOffset(sz, sz)
+                p.Position = UDim2.fromScale(math.random() * 0.94 + 0.03, math.random())
+                p.BackgroundColor3 = (i % 2 == 0) and activePreset.Particle1 or activePreset.Particle2
+                p.BackgroundTransparency = 0.52 + (math.random() * 0.28)
+                p.BorderSizePixel = 0
+                p.ZIndex = 6
+                p.Parent = animCanvas
+
+                local pCorner = Instance.new("UICorner")
+                pCorner.CornerRadius = UDim.new(1, 0)
+                pCorner.Parent = p
+
+                local pStroke = Instance.new("UIStroke")
+                pStroke.Thickness = 1
+                pStroke.Transparency = 0.68
+                pStroke.Color = (i % 2 == 0) and activePreset.Orb1 or activePreset.Orb2
+                pStroke.Parent = p
+
+                table.insert(particles, {
+                    Frame = p,
+                    Corner = pCorner,
+                    Stroke = pStroke,
+                    X = math.random() * 0.94 + 0.03,
+                    Y = math.random(),
+                    Speed = 0.028 + math.random() * 0.045,
+                    SwayAmp = 0.012 + math.random() * 0.024,
+                    SwayFreq = 0.9 + math.random() * 1.4,
+                    Phase = math.random() * 6.28,
+                    BaseSize = sz,
+                })
+            end
+
+            -- 5. Silky Rotating Pastel Border & Topbar Flowing Ribbon (ZIndex 98)
+            borderFrame = Instance.new("Frame")
+            borderFrame.Name = "JFC_BorderFrame"
+            borderFrame.Size = UDim2.fromScale(1, 1)
+            borderFrame.Position = UDim2.fromScale(0, 0)
+            borderFrame.BackgroundTransparency = 1
+            borderFrame.BorderSizePixel = 0
+            borderFrame.ZIndex = 98
+            borderFrame.Parent = mainWinFrame
+
+            local bfCorner = Instance.new("UICorner")
+            bfCorner.CornerRadius = UDim.new(0, 12)
+            bfCorner.Parent = borderFrame
+
+            local bfStroke = Instance.new("UIStroke")
+            bfStroke.Thickness = 1.7
+            bfStroke.Transparency = 0.28
+            bfStroke.Color = Color3.new(1, 1, 1)
+            bfStroke.Parent = borderFrame
+
+            borderGrad = Instance.new("UIGradient")
+            borderGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, activePreset.Orb1),
+                ColorSequenceKeypoint.new(0.35, activePreset.Orb2),
+                ColorSequenceKeypoint.new(0.70, activePreset.Orb3),
+                ColorSequenceKeypoint.new(1, activePreset.Orb4),
+            })
+            borderGrad.Rotation = 0
+            borderGrad.Parent = bfStroke
+
+            local topBarLine = Instance.new("Frame")
+            topBarLine.Name = "TopbarAuroraLine"
+            topBarLine.Position = UDim2.new(0, 16, 0, 48)
+            topBarLine.Size = UDim2.new(1, -32, 0, 1)
+            topBarLine.BackgroundColor3 = Color3.new(1, 1, 1)
+            topBarLine.BackgroundTransparency = 0.25
+            topBarLine.BorderSizePixel = 0
+            topBarLine.ZIndex = 98
+            topBarLine.Parent = borderFrame
+
+            topLineGrad = Instance.new("UIGradient")
+            topLineGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, activePreset.Orb2),
+                ColorSequenceKeypoint.new(0.5, activePreset.Orb1),
+                ColorSequenceKeypoint.new(1, activePreset.Orb3),
+            })
+            topLineGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.18, 0.15),
+                NumberSequenceKeypoint.new(0.5, 0.05),
+                NumberSequenceKeypoint.new(0.82, 0.15),
+                NumberSequenceKeypoint.new(1, 1),
+            })
+            topLineGrad.Parent = topBarLine
+
+            -- 6. Soft Shimmer Gradient on Window Title Text
+            local innerMain = mainWinFrame:FindFirstChild("Main")
+            local topbar = innerMain and innerMain:FindFirstChild("Topbar")
+            local left = topbar and topbar:FindFirstChild("Left")
+            local titleHolder = left and left:FindFirstChild("Title")
+            local titleLbl = titleHolder and titleHolder:FindFirstChild("Title")
+            if titleLbl and titleLbl:IsA("TextLabel") then
+                local oldTG = titleLbl:FindFirstChildOfClass("UIGradient")
+                if oldTG then oldTG:Destroy() end
+                titleGrad = Instance.new("UIGradient")
+                titleGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromHex("#FFFFFF")),
+                    ColorSequenceKeypoint.new(0.5, activePreset.TitleSheen),
+                    ColorSequenceKeypoint.new(1, activePreset.Orb2),
+                })
+                titleGrad.Parent = titleLbl
+            end
+        end)
+    end
+
+    local function getActiveEffectStyle()
+        local chosen = Config.UIAnimationStyle or "Auto (ตามธีมอัตโนมัติ)"
+        local mapped = UI_STYLE_MAP[chosen] or "Auto"
+        if mapped == "Auto" then
+            return (activePreset and activePreset.Effect) or "AuroraFlow"
+        end
+        return mapped
+    end
+
+    local function updateParticleShapes()
+        local eff = getActiveEffectStyle()
+        local showParticles = (Config.UIBackgroundAnimation ~= false) and (eff ~= "MinimalGlow")
+        for i, pt in ipairs(particles) do
+            pcall(function()
+                pt.Frame.Visible = showParticles
+                pt.Frame.BackgroundColor3 = (i % 2 == 0) and activePreset.Particle1 or activePreset.Particle2
+                pt.Stroke.Color = (i % 2 == 0) and activePreset.Orb1 or activePreset.Orb2
+                if eff == "AuroraFlow" then
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize * 2.8, math.max(3, math.floor(pt.BaseSize * 0.55)))
+                    pt.Frame.Rotation = -14
+                    pt.Corner.CornerRadius = UDim.new(1, 0)
+                elseif eff == "SakuraPetals" then
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize * 1.4, pt.BaseSize * 0.85)
+                    pt.Corner.CornerRadius = UDim.new(0.45, 0)
+                else
+                    pt.Frame.Size = UDim2.fromOffset(pt.BaseSize, pt.BaseSize)
+                    pt.Frame.Rotation = 0
+                    pt.Corner.CornerRadius = UDim.new(1, 0)
+                end
+            end)
+        end
+    end
+
+    local function applyAuroraTheme(themeLabel, notifyUser)
+        local preset = UI_THEME_PRESETS[themeLabel] or UI_THEME_PRESETS["🌌 Aurora Borealis (แสงเหนือออโรร่า)"]
+        activePreset = preset
+        Config.UITheme = themeLabel
+
+        pcall(function()
+            if WindUI and WindUI.SetTheme then
+                WindUI:SetTheme(preset.Id)
+            elseif Window and Window.SetTheme then
+                Window:SetTheme(preset.Id)
+            end
+        end)
+
+        pcall(function()
+            if bgGrad then
+                bgGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, preset.Grad1),
+                    ColorSequenceKeypoint.new(0.5, preset.Grad2),
+                    ColorSequenceKeypoint.new(1, preset.Grad3),
+                })
+            end
+            if borderGrad then
+                borderGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, preset.Orb1),
+                    ColorSequenceKeypoint.new(0.35, preset.Orb2),
+                    ColorSequenceKeypoint.new(0.70, preset.Orb3),
+                    ColorSequenceKeypoint.new(1, preset.Orb4),
+                })
+            end
+            if topLineGrad then
+                topLineGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, preset.Orb2),
+                    ColorSequenceKeypoint.new(0.5, preset.Orb1),
+                    ColorSequenceKeypoint.new(1, preset.Orb3),
+                })
+            end
+            if titleGrad then
+                titleGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromHex("#FFFFFF")),
+                    ColorSequenceKeypoint.new(0.5, preset.TitleSheen),
+                    ColorSequenceKeypoint.new(1, preset.Orb2),
+                })
+            end
+            if orbs[1] then orbs[1].Frame.BackgroundColor3 = preset.Orb1 end
+            if orbs[2] then orbs[2].Frame.BackgroundColor3 = preset.Orb2 end
+            if orbs[3] then orbs[3].Frame.BackgroundColor3 = preset.Orb3 end
+            if orbs[4] then orbs[4].Frame.BackgroundColor3 = preset.Orb4 end
+            if outerHaloStroke then outerHaloStroke.Color = preset.Orb1 end
+            if innerHaloStroke then innerHaloStroke.Color = preset.Orb3 end
+            updateParticleShapes()
+        end)
+
+        if notifyUser and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "🎨 เปลี่ยนธีมสำเร็จ",
+                Content = "ใช้ธีม: " .. tostring(themeLabel),
+                Duration = 2.5,
+                Icon = "palette",
+            })
+        end
+    end
+
+    updateParticleShapes()
+
+    local animClock = 0
+    uiAnimConn = RunService.RenderStepped:Connect(function(dt)
+        if not isScriptAlive() then return end
+        if not animCanvas or Config.UIBackgroundAnimation == false then return end
+        if Window.Closed or not mainWinFrame or not mainWinFrame.Visible then return end
+
+        local speedMult = math.clamp((tonumber(Config.UIAnimationSpeed) or 8) / 10, 0.15, 2.5)
+        local step = math.min(dt, 0.05) * speedMult
+        animClock = animClock + step
+
+        -- 1. Calmly oscillate background gradient & rotate pastel border
+        if bgGrad then
+            bgGrad.Rotation = 35 + math.sin(animClock * 0.35) * 22
+        end
+        if borderGrad then
+            borderGrad.Rotation = (animClock * 26) % 360
+        end
+        if topLineGrad then
+            topLineGrad.Offset = Vector2.new(math.sin(animClock * 0.85) * 0.32, 0)
+        end
+        if titleGrad then
+            titleGrad.Offset = Vector2.new(math.sin(animClock * 0.70) * 0.28, 0)
+        end
+
+        -- 2. Slow-breathing ambient aurora mist orbs
+        for _, ob in ipairs(orbs) do
+            local ox = ob.BaseX + math.sin(animClock * 0.42 + ob.Phase) * 0.075
+            local oy = ob.BaseY + math.cos(animClock * 0.34 + ob.Phase) * 0.075
+            ob.Frame.Position = UDim2.fromScale(ox, oy)
+            ob.Frame.BackgroundTransparency = 0.88 + math.sin(animClock * 0.95 + ob.Phase) * 0.035
+        end
+
+        -- 3. Counter-rotate celestial halo rings very gently
+        if outerHalo then
+            outerHalo.Rotation = (animClock * 9) % 360
+        end
+        if innerHalo then
+            innerHalo.Rotation = (-animClock * 14) % 360
+        end
+
+        -- 4. Gentle floating motes
+        local eff = getActiveEffectStyle()
+        if eff == "MinimalGlow" then return end
+
+        for _, pt in ipairs(particles) do
+            if eff == "AuroraFlow" then
+                pt.X = pt.X + step * pt.Speed * 1.35
+                pt.Y = pt.Y - step * pt.Speed * 0.32
+                if pt.X > 1.06 or pt.Y < -0.05 then
+                    pt.X = -0.06
+                    pt.Y = math.random() * 0.92 + 0.04
+                end
+                local py = pt.Y + math.sin(animClock * pt.SwayFreq + pt.Phase) * (pt.SwayAmp * 0.6)
+                pt.Frame.Position = UDim2.fromScale(pt.X, py)
+                pt.Frame.BackgroundTransparency = 0.56 + math.sin(animClock * 1.8 + pt.Phase) * 0.18
+            elseif eff == "SakuraPetals" then
+                pt.Y = pt.Y + step * pt.Speed * 0.65
+                pt.X = pt.X - step * pt.Speed * 0.35
+                if pt.Y > 1.05 or pt.X < -0.05 then
+                    pt.Y = -0.05
+                    pt.X = math.random() * 1.05
+                end
+                local px = pt.X + math.sin(animClock * pt.SwayFreq + pt.Phase) * pt.SwayAmp
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                pt.Frame.Rotation = (animClock * 42 + pt.Phase * 30) % 360
+                pt.Frame.BackgroundTransparency = 0.50 + math.sin(animClock * 1.5 + pt.Phase) * 0.18
+            elseif eff == "OceanBubbles" then
+                pt.Y = pt.Y - step * pt.Speed * 0.60
+                if pt.Y < -0.05 then
+                    pt.Y = 1.05
+                    pt.X = math.random() * 0.94 + 0.03
+                end
+                local px = pt.X + math.sin(animClock * pt.SwayFreq + pt.Phase) * pt.SwayAmp
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                pt.Frame.BackgroundTransparency = 0.58 + math.sin(animClock * 1.6 + pt.Phase) * 0.16
+            else
+                -- StarlightFirefly
+                pt.Y = pt.Y - step * pt.Speed * 0.38
+                if pt.Y < -0.05 then
+                    pt.Y = 1.05
+                    pt.X = math.random() * 0.94 + 0.03
+                end
+                local px = pt.X + math.sin(animClock * 0.75 + pt.Phase) * (pt.SwayAmp * 0.65)
+                pt.Frame.Position = UDim2.fromScale(px, pt.Y)
+                local twinkle = math.sin(animClock * 2.2 + pt.Phase)
+                local s = math.max(3, pt.BaseSize + twinkle * 1.8)
+                pt.Frame.Size = UDim2.fromOffset(s, s)
+                pt.Frame.BackgroundTransparency = 0.58 - twinkle * 0.20
+            end
+        end
+    end)
+
+    Window._JFCThemeEngine = {
+        ThemeNames = UI_THEME_NAMES,
+        StyleNames = UI_STYLE_NAMES,
+        ApplyTheme = applyAuroraTheme,
+        UpdateParticles = updateParticleShapes,
+        SetAnimEnabled = function(enabled)
+            Config.UIBackgroundAnimation = enabled
+            if animCanvas then
+                for _, ob in ipairs(orbs) do ob.Frame.Visible = enabled end
+                if outerHalo then outerHalo.Visible = enabled end
+                if innerHalo then innerHalo.Visible = enabled end
+            end
+            updateParticleShapes()
+        end,
+    }
+
+    task.defer(function()
+        task.wait(0.2)
+        applyAuroraTheme(Config.UITheme, false)
+        pcall(function() Window:SelectTab(1) end)
+    end)
+end
+
 WindUI:Notify({
-    Title = "Song Hub Loaded!",
-    Content = "Jump for Cases🎲 script loaded successfully.",
+    Title = "✨ Song Hub Aurora Loaded!",
+    Content = "Jump for Cases🎲 • Eye-Care Smooth UI Ready",
     Duration = 4,
-    Icon = "check-circle",
+    Icon = "sparkles",
 })
 
 -- ==============================================================================
@@ -475,7 +1188,7 @@ WindUI:Notify({
 -- ==============================================================================
 local TabFarm = Window:Tab({ Title = "Auto Farm", Icon = "zap" })
 local TabCases = Window:Tab({ Title = "Cases", Icon = "package" })
-local TabUpgrades = Window:Tab({ Title = "Upgrades", Icon = "arrow-up-circle" })
+local TabUpgrades = Window:Tab({ Title = "Upgrades", Icon = "trending-up" })
 local TabClaims = Window:Tab({ Title = "Claims & Codes", Icon = "gift" })
 local TabTeleports = Window:Tab({ Title = "Teleports", Icon = "map-pin" })
 local TabPlayer = Window:Tab({ Title = "Player", Icon = "user" })
@@ -2109,6 +2822,58 @@ end)
 -- ==============================================================================
 -- ⚙️ TAB: SETTINGS & HUB
 -- ==============================================================================
+TabSettings:Section({ Title = "🎨 UI Theme & Smooth Effects (สบายตา)" })
+
+TabSettings:Dropdown({
+    Title = "UI Color Theme (โทนสีสบายตา)",
+    Desc = "Choose from 5 curated soft pastel & midnight eye-care themes",
+    Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.ThemeNames) or { "🌌 Aurora Borealis (แสงเหนือออโรร่า)" },
+    Value = Config.UITheme,
+    Callback = function(v)
+        if Window._JFCThemeEngine and Window._JFCThemeEngine.ApplyTheme then
+            Window._JFCThemeEngine.ApplyTheme(v, true)
+        end
+    end,
+})
+
+TabSettings:Dropdown({
+    Title = "Animation Effect Style (รูปแบบเอฟเฟกต์)",
+    Desc = "Switch between Aurora Flow, Sakura Petals, Starlight Firefly, Bubbles, or Minimal Glow",
+    Values = (Window._JFCThemeEngine and Window._JFCThemeEngine.StyleNames) or { "Auto (ตามธีมอัตโนมัติ)" },
+    Value = Config.UIAnimationStyle,
+    Callback = function(v)
+        Config.UIAnimationStyle = v
+        if Window._JFCThemeEngine and Window._JFCThemeEngine.UpdateParticles then
+            Window._JFCThemeEngine.UpdateParticles()
+        end
+    end,
+})
+
+TabSettings:Toggle({
+    Title = "Smooth Animated Effects (เปิดเอฟเฟกต์เคลื่อนไหว)",
+    Desc = "Soft breathing aurora glow, rotating pastel border, and gentle floating motes",
+    Default = true,
+    Callback = function(v)
+        if Window._JFCThemeEngine and Window._JFCThemeEngine.SetAnimEnabled then
+            Window._JFCThemeEngine.SetAnimEnabled(v)
+        end
+    end,
+})
+
+TabSettings:Slider({
+    Title = "Animation Speed (ความเร็วการเคลื่อนไหว)",
+    Desc = "Adjust how fast the aurora & particles flow (Default: 8 = 0.8x Calm)",
+    Step = 1,
+    Value = {
+        Min = 2,
+        Max = 20,
+        Default = 8,
+    },
+    Callback = function(v)
+        Config.UIAnimationSpeed = tonumber(v) or 8
+    end,
+})
+
 TabSettings:Section({ Title = "🌐 Server Management" })
 
 TabSettings:Button({
@@ -2172,12 +2937,17 @@ TabSettings:Button({
         Config.InfiniteJump = false
         Config.NoClip = false
         Config.FlyEnabled = false
+        Config.UIBackgroundAnimation = false
         syncNetworkGuardFlags()
 
         if getgenv then
             getgenv()._JumpForCasesRunning = false
         end
 
+        if uiAnimConn then
+            pcall(function() uiAnimConn:Disconnect() end)
+            uiAnimConn = nil
+        end
         if slotSignSyncConn then
             pcall(function() slotSignSyncConn:Disconnect() end)
             slotSignSyncConn = nil
@@ -2224,6 +2994,8 @@ TabSettings:Button({
 })
 
 TabSettings:Section({ Title = "ℹ️ Information" })
-TabSettings:Paragraph({ Title = "Song Hub", Desc = "Jump for Cases🎲 v1.0\nMade with WindUI" })
+TabSettings:Paragraph({ Title = "Song Hub", Desc = "Jump for Cases🎲 v1.2 • Aurora Eye-Care Edition\nSmooth 60 FPS Ambient UI" })
+
+pcall(function() Window:SelectTab(1) end)
 
 print("[Song Hub] ✅ Jump for Cases🎲 script loaded successfully.")
