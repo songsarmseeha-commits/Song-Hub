@@ -192,6 +192,11 @@ local LEVEL_FARM_TARGETS = {
 -- ⚙️ 3. CONFIGURATION & STATE
 -- ==============================================================================
 local Config = {
+    -- ⚡ Master 1-to-Max Auto Leveler ("ปั๊มเลเวล 1 ถึงตัน")
+    AutoLevel1ToMax = false,
+    AutoLevelMode = "⚡ Jin Ok Hyper Rush (ตามรูปโพสต์ - วิ่งแต่อันแรกยาวๆ)", -- "⚡ Jin Ok Hyper Rush (ตามรูปโพสต์ - วิ่งแต่อันแรกยาวๆ)" | "🌟 Smart Story + Boss Rush (ทำเควสเนื้อเรื่อง + วาร์ปฟาร์มบอส)"
+    MaxLevelTarget = 50,
+
     -- ⚡ Road Fight Level Farm ("วิ่งแต่อันแรกยาวๆ")
     AutoFarmLevel = false,
     LevelFarmTarget = "🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)",
@@ -678,9 +683,67 @@ TabDerix:Button({
 local TabLevel = Window:Tab({ Title = "Level Farm (เวลไว)", Icon = "zap" })
 
 TabLevel:Paragraph({
-    Title = "⚡ Auto Level Farm (วิ่งแต่อันแรกยาวๆ)",
-    Desc = "ฟังก์ชั่นฟาร์มเลเวลรถและคนขับที่ดีที่สุดในเกม! บอทจะพารถไปหา NPC บอส Road Fight ที่ให้ EXP สูงสุด และรับภารกิจ [รอบที่ 1 / Standard] วนซ้ำแบบไม่รู้จบ ตามเทคนิคของคอมมูนิตี้ไทย [วิ่งแต่อันแรกยาวๆได้เลย]",
+    Title = "⚡ Master Auto Level 1 to Max (ปั๊มเลเวล 1 ถึงตันอัตโนมัติ)",
+    Desc = "ระบบฟาร์มเลเวลรถและคนขับอัตโนมัติตั้งแต่เลเวล 1 จนถึงเลเวลตัน (Max Level)! ตามเทคนิคคอมมูนิตี้ไทย [ถ้าเอาเวล วิ่งอันนี้วิ่งแต่อันแรกยาวๆได้เลย] วาร์ปบอสจินอุก (Jin Ok) จบใน 2 วินาที รับ EXP สูงลิบ พร้อมทอยเต๋าและเปิดกล่องเงินให้อัตโนมัติ",
     Image = "flame"
+})
+
+TabLevel:Toggle({
+    Title = "⚡ Master Auto Level 1 to Max (เปิดบอทปั๊มเลเวล 1 ถึงตัน)",
+    Desc = "เปิดบอททำงานอัตโนมัติ 100% ตั้งแต่เลเวล 1 จนถึงเป้าหมายที่กำหนด (บอทจะหยุดเองเมื่อเลเวลตัน)",
+    Value = Config.AutoLevel1ToMax,
+    Callback = function(val)
+        Config.AutoLevel1ToMax = val
+        if val then
+            Config.AutoFarmLevel = false
+            Config.AutoFarmDerix = false
+            Config.AutoFarmQuests = false
+            Config.AutoRollDice = true
+            Config.AutoOpen15MBox = true
+            Config.AutoOpenAllCashBoxes = true
+            Config.QuestDriveMode = "Instant Warp"
+            WindUI:Notify({
+                Title = "1-to-Max Auto Leveler Started! ⚡",
+                Content = "เริ่มปั๊มเลเวล 1 ถึงตันอัตโนมัติ! (เป้าหมาย Lv." .. tostring(Config.MaxLevelTarget) .. ")\nโหมด: " .. Config.AutoLevelMode,
+                Duration = 4,
+                Icon = "zap"
+            })
+        else
+            stopAutoDrive()
+            WindUI:Notify({ Title = "Auto Leveler Stopped", Content = "หยุดการปั๊มเลเวลชั่วคราว", Duration = 2, Icon = "pause" })
+        end
+    end
+})
+
+TabLevel:Dropdown({
+    Title = "🎮 Auto Level Mode (โหมดการปั๊มเลเวล)",
+    Desc = "เลือกรูปแบบการปั๊มเลเวล:",
+    Values = {
+        "⚡ Jin Ok Hyper Rush (ตามรูปโพสต์ - วิ่งแต่อันแรกยาวๆ)",
+        "🌟 Smart Story + Boss Rush (ทำเควสเนื้อเรื่อง + วาร์ปฟาร์มบอส)"
+    },
+    Value = Config.AutoLevelMode,
+    Callback = function(val)
+        Config.AutoLevelMode = val
+        WindUI:Notify({ Title = "Mode Selected", Content = "เลือก: " .. val, Duration = 2, Icon = "flame" })
+    end
+})
+
+TabLevel:Slider({
+    Title = "🎯 Target Max Level (เลเวลเป้าหมาย)",
+    Desc = "กำหนดเลเวลที่ต้องการ เมื่อถึงเลเวลนี้บอทจะหยุดทำงานอัตโนมัติ",
+    Value = { Min = 10, Max = 60, Default = Config.MaxLevelTarget },
+    Callback = function(val)
+        Config.MaxLevelTarget = val
+    end
+})
+
+TabLevel:Divider()
+
+TabLevel:Paragraph({
+    Title = "🎯 Individual Boss Farm (ฟาร์มบอสแยกตัว)",
+    Desc = "เลือกบอสที่ต้องการฟาร์มเจาะจงเฉพาะตัว เช่น Derix เพื่อกล่องเงิน 1.5M หรือบอสอื่นๆ ตามต้องการ",
+    Image = "crosshair"
 })
 
 TabLevel:Toggle({
@@ -2841,6 +2904,44 @@ local isWarping = false
 local lastProgressPos = nil
 local lastProgressTime = os.clock()
 
+local function getPlayerLevel()
+    local lvl = nil
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local pcMod = rep:FindFirstChild("RaycityProfile") and rep.RaycityProfile:FindFirstChild("ProfileClient")
+        if pcMod then
+            local pc = require(pcMod)
+            local data = pc.get and pc.get()
+            if data and data.level then lvl = tonumber(data.level) end
+        end
+    end)
+    if not lvl then
+        pcall(function()
+            local at = LocalPlayer:GetAttribute("Level") or LocalPlayer:GetAttribute("userLevel")
+            if at then lvl = tonumber(at) end
+        end)
+    end
+    return lvl
+end
+
+local function getCarLevel()
+    local cLvl = nil
+    pcall(function()
+        local rep = game:GetService("ReplicatedStorage")
+        local pcMod = rep:FindFirstChild("RaycityProfile") and rep.RaycityProfile:FindFirstChild("ProfileClient")
+        if pcMod then
+            local pc = require(pcMod)
+            local data = pc.get and pc.get()
+            if data and data.car and data.car.level then
+                cLvl = tonumber(data.car.level)
+            elseif data and data.carLevel then
+                cLvl = tonumber(data.carLevel)
+            end
+        end
+    end)
+    return cLvl
+end
+
 local function getAutoDrive()
     local ok, ad = pcall(function()
         local rep = game:GetService("ReplicatedStorage")
@@ -2867,54 +2968,72 @@ local function executeMoveStep(targetPos, destType, speedKmh)
     local dist = (root.Position - targetPos).Magnitude
     local mode = Config.QuestDriveMode or "Realistic Road Drive"
 
-    -- ⚡ Mode 1: Instant Warp (Single-shot teleport with cooldown, NEVER spams spawnCar)
+    -- ⚡ Mode 1: Instant Warp (High-speed sequence with telemetry and touch collision)
     if mode == "Instant Warp" then
-        if not isWarping and (os.clock() - lastWarpTime) >= 1.2 and dist > 6 then
+        if not isWarping and (os.clock() - lastWarpTime) >= 0.15 and dist > 4 then
             isWarping = true
             stopAutoDrive()
             pcall(function()
                 local dir = dist > 0.1 and (targetPos - root.Position).Unit or root.CFrame.LookVector
+                if dir.Magnitude < 0.1 then dir = root.CFrame.LookVector end
+
                 local targetCF
                 if destType == "checkpoint" then
-                    -- Warp directly into front entrance of checkpoint gate so gate plane is crossed
-                    targetCF = CFrame.new(targetPos - dir * 6, targetPos + dir * 15)
-                else
-                    targetCF = CFrame.new(targetPos + Vector3.new(0, 1.2, 0), targetPos + dir * 5)
-                end
+                    targetCF = CFrame.new(targetPos - dir * 4, targetPos + dir * 15)
+                    teleportCarWithVelocity(targetCF, dir * 85)
 
-                if rcd and type(rcd.teleport) == "function" then
-                    rcd.teleport(targetCF)
-                elseif root then
-                    root.CFrame = targetCF
-                end
-
-                if destType == "checkpoint" then
-                    root.AssemblyLinearVelocity = dir * 75
-                    if rcd and type(rcd.phys) == "table" then
-                        rcd.phys.v = dir * 75
-                        rcd.phys.throttle = 1
-                        rcd.phys.brake = 0
-                    end
                     pcall(function()
                         local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
-                        qt:FireServer({pos = targetPos, speed = 60, stopped = false, gear = 3})
+                        if qt then qt:FireServer({ pos = targetPos, speed = 85, stopped = false, gear = 4 }) end
+                    end)
+
+                    pcall(function()
+                        if firetouchinterest then
+                            local parts = workspace:GetPartBoundsInRadius(targetPos, 35)
+                            for _, p in ipairs(parts) do
+                                if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                    firetouchinterest(root, p, 0)
+                                    task.wait(0.01)
+                                    firetouchinterest(root, p, 1)
+                                end
+                            end
+                        end
                     end)
                 else
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
+                    targetCF = CFrame.new(targetPos + Vector3.new(0, 1.2, 0), targetPos + dir * 5)
+                    teleportCarWithVelocity(targetCF, Vector3.zero)
+
                     if rcd and type(rcd.phys) == "table" then
                         rcd.phys.v = Vector3.zero
                         rcd.phys.throttle = 0
                         rcd.phys.brake = 1
                     end
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+
+                    task.wait(0.12)
+
                     pcall(function()
                         local qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
-                        qt:FireServer({pos = targetPos, speed = 0, stopped = true, gear = 1})
+                        if qt then qt:FireServer({ pos = targetPos, speed = 0, stopped = true, gear = 1 }) end
+                    end)
+
+                    pcall(function()
+                        if firetouchinterest then
+                            local parts = workspace:GetPartBoundsInRadius(targetPos, 25)
+                            for _, p in ipairs(parts) do
+                                if p:IsA("BasePart") and p ~= root and not p:IsDescendantOf(workspace.MyCar) then
+                                    firetouchinterest(root, p, 0)
+                                    task.wait(0.01)
+                                    firetouchinterest(root, p, 1)
+                                end
+                            end
+                        end
                     end)
                 end
             end)
             lastWarpTime = os.clock()
-            task.wait(1.0)
+            task.wait(0.12)
             isWarping = false
         end
         return
@@ -3026,7 +3145,13 @@ local function runDedicatedRoadFight()
     local targetNpcId = 1779
     local targetCoords = Vector3.new(3962, 50.83, 7952)
 
-    if Config.AutoFarmLevel then
+    if Config.AutoLevel1ToMax then
+        local t = LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
+        targetBoss = t
+        targetQuestId = "R1779"
+        targetNpcId = 1779
+        targetCoords = Vector3.new(3962, 50.83, 7952)
+    elseif Config.AutoFarmLevel then
         local t = LEVEL_FARM_TARGETS[Config.LevelFarmTarget] or LEVEL_FARM_TARGETS["🌟 Jin Ok (จินอุก) - EXP เทพ (จุดตามรูปโพสต์)"]
         targetBoss = t
         targetQuestId = t.questId or "R1779"
@@ -3045,7 +3170,7 @@ local function runDedicatedRoadFight()
         targetCoords = DERIX_COORDS
     end
 
-    questFarmState = Config.AutoFarmLevel and "LEVEL_FARM" or "DERIX_FARM"
+    questFarmState = Config.AutoLevel1ToMax and "LEVEL_1_TO_MAX" or (Config.AutoFarmLevel and "LEVEL_FARM" or "DERIX_FARM")
 
     -- 1. APPROACH & SYNCHRONIZE AT BOSS NPC (BYPASS ANTI-CHEAT QUARANTINE / UNTRUSTED CHECK)
     local distToBoss = (root.Position - targetCoords).Magnitude
@@ -3134,6 +3259,18 @@ local function runDedicatedRoadFight()
         end
     end
 
+    local numericId = tonumber(string.match(tostring(targetQuestId), "%d+"))
+    if not qData and rfd and rfd.questRows then
+        for _, row in pairs(rfd.questRows) do
+            if type(row) == "table" then
+                if row.questId == targetQuestId or row.id == targetQuestId or (numericId and (row.missionId == numericId or row.mid == numericId or tostring(row.missionId) == tostring(numericId))) then
+                    qData = row
+                    break
+                end
+            end
+        end
+    end
+
     local gates = {}
     if qData and type(qData.obj) == "table" and #qData.obj > 0 then
         for idx, gate in ipairs(qData.obj) do
@@ -3146,10 +3283,14 @@ local function runDedicatedRoadFight()
                     idx = idx,
                     pos = Vector3.new(gx, gy, gz),
                     coords = coords,
-                    isFinish = (idx == #qData.obj)
+                    isFinish = false
                 })
             end
         end
+    end
+    -- Crucial fix: The final checkpoint gate in gates is ALWAYS the finish line!
+    if #gates > 0 then
+        gates[#gates].isFinish = true
     end
 
     -- 4. EXECUTE RACE (INSTANT WARP VS ROAD DRIVE)
@@ -3159,7 +3300,7 @@ local function runDedicatedRoadFight()
         if mode == "Instant Warp" then
             -- ⚡ INSTANT WARP: Sequentially teleport through each gate with physics & telemetry
             for i, g in ipairs(gates) do
-                if not isAlive() or not (Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
+                if not isAlive() or not (Config.AutoLevel1ToMax or Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
 
                 local gatePos = g.pos
                 local nextGate = gates[i + 1]
@@ -3243,12 +3384,12 @@ local function runDedicatedRoadFight()
         else
             -- Realistic Road Drive / Hyper Sonic Glide
             for i, g in ipairs(gates) do
-                if not isAlive() or not (Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
+                if not isAlive() or not (Config.AutoLevel1ToMax or Config.AutoFarmLevel or Config.AutoFarmDerix) then break end
                 local gatePos = g.pos
                 local gateReached = false
                 local gateTimeout = os.clock() + 25
 
-                while isAlive() and (Config.AutoFarmLevel or Config.AutoFarmDerix) and not gateReached and os.clock() < gateTimeout do
+                while isAlive() and (Config.AutoLevel1ToMax or Config.AutoFarmLevel or Config.AutoFarmDerix) and not gateReached and os.clock() < gateTimeout do
                     task.wait(0.05)
                     local curRoot = getCarRoot()
                     if not curRoot then break end
@@ -3300,16 +3441,22 @@ local function runDedicatedRoadFight()
     handleDiceRollAndRewards()
     autoOpenCashBoxes()
 
-    if Config.AutoFarmLevel then
+    if Config.AutoLevel1ToMax or Config.AutoFarmLevel then
         LevelFarmStats.runsCompleted = LevelFarmStats.runsCompleted + 1
         local ux = targetBoss and targetBoss.ux or 3533
         local cx = targetBoss and targetBoss.cx or 2840
         LevelFarmStats.totalUserExp = LevelFarmStats.totalUserExp + ux
         LevelFarmStats.totalCarExp = LevelFarmStats.totalCarExp + cx
+        local curPLevel = getPlayerLevel()
+        local curCLevel = getCarLevel()
         pcall(function()
+            local statusStr = string.format("จบรอบที่ %d | +%d EXP (รถ +%d)", LevelFarmStats.runsCompleted, ux, cx)
+            if curPLevel then
+                statusStr = statusStr .. string.format(" | Lv.%d", curPLevel)
+            end
             WindUI:Notify({
-                Title = "🎉 จบรอบ Road Fight เลเวล!",
-                Content = string.format("จบรอบที่ %d | +%d EXP (รถ +%d)", LevelFarmStats.runsCompleted, ux, cx),
+                Title = Config.AutoLevel1ToMax and "⚡ 1-to-Max Rush สำเร็จ!" or "🎉 จบรอบ Road Fight เลเวล!",
+                Content = statusStr,
                 Duration = 3,
                 Icon = "award"
             })
@@ -3333,7 +3480,38 @@ end
 task.spawn(function()
     while isAlive() do
         task.wait(0.06)
-        if Config.AutoFarmLevel or Config.AutoFarmDerix then
+        if Config.AutoLevel1ToMax then
+            -- ⚡ 1-to-Max Auto Leveler Engine
+            local curLvl = getPlayerLevel()
+            if curLvl and curLvl >= (Config.MaxLevelTarget or 50) then
+                Config.AutoLevel1ToMax = false
+                stopAutoDrive()
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "👑 LEVEL CAP REACHED!",
+                        Content = string.format("ยินดีด้วยครับ! เลเวลถึงเป้าหมาย %d แล้ว (เลเวลปัจจุบัน: %d)", Config.MaxLevelTarget or 50, curLvl),
+                        Duration = 8,
+                        Icon = "crown"
+                    })
+                end)
+                task.wait(1.5)
+            else
+                if Config.AutoLevelMode == "🌟 Smart Story + Boss Rush (ทำเควสเนื้อเรื่อง + วาร์ปฟาร์มบอส)" then
+                    local destPos, destObj, points, destType, mState = getActiveQuestDestination()
+                    if destPos and mState ~= "boarding" then
+                        executeMoveStep(destPos, destType, Config.QuestDriveSpeed)
+                        task.wait(0.12)
+                    else
+                        runDedicatedRoadFight()
+                        task.wait(0.15)
+                    end
+                else
+                    -- "⚡ Jin Ok Hyper Rush (ตามรูปโพสต์ - วิ่งแต่อันแรกยาวๆ)"
+                    runDedicatedRoadFight()
+                    task.wait(0.15)
+                end
+            end
+        elseif Config.AutoFarmLevel or Config.AutoFarmDerix then
             runDedicatedRoadFight()
             task.wait(0.15)
         elseif Config.AutoFarmQuests then
