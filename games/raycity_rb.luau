@@ -18,7 +18,7 @@
 --     - ⚔️ Auto Road Fight & Whirl Skill Spam
 --     - 🧲 Auto Item Vacuum (Pickups, Jewels & Booster Boxes)
 --     - 📍 City Teleports (Districts, Garages, Shops & NPCs)
---     - 👻 Stealth Mode (Hide Car, Driver, Nameplate & Audio from Other Players)
+--     - 👻 Stealth Mode + Quest Bypass (Hide Car, Driver, Nameplate & Audio; Bypass Quest Sync)
 --     - 🛡️ Anti-Cheat Telemetry Shield & Anti-AFK
 --   ======================================================================
 -- ]]
@@ -264,6 +264,8 @@ local Config = {
 
     -- Safety & Utility
     StealthMode = false,
+    StealthVariant = "Ghost Gone + Quest Bypass (แนะนำ)",
+    StealthQuestBypass = true,
     AntiAfk = false,
     FastMode = false
 }
@@ -291,6 +293,13 @@ local LevelFarmStats = {
 -- Forward declarations for UI callbacks
 local updateFlyState = function() end
 local applyStealthState = function() end
+local stealthCtrl = {
+    activateHold = function() end,
+    scheduleSnapback = function() end,
+    snapBackNow = function() end,
+    pulseSync = function() end,
+    bindTargetResolver = function() end,
+}
 local teleportCar = function(targetCF) end
 local handleDiceRollAndRewards = function() end
 local autoOpenCashBoxes = function() end
@@ -1123,16 +1132,45 @@ local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 TabSettings:Toggle({
     Title = "👻 Stealth Mode (โหมดพรางตัว ล่องหนจากคนอื่น)",
-    Desc = "ส่งแพ็กเก็ต Gone ลบรถ, คนขับ, ป้ายชื่อ และเสียงเครื่องออกจากจอผู้เล่นอื่น (ขับ/ฟาร์มเควสได้ปกติ)",
+    Desc = "ซ่อนรถ, คนขับ, ป้ายชื่อ และเสียงเครื่องจากผู้เล่นอื่น พร้อมโหมด Bypass รับ/ส่งเควสอัตโนมัติ",
     Value = Config.StealthMode,
     Callback = function(val)
         applyStealthState(val)
         WindUI:Notify({
             Title = val and "Stealth Mode: ON 👻" or "Stealth Mode: OFF 👁️",
-            Content = val and "ซ่อนรถและตำแหน่งจากผู้เล่นอื่นแล้ว (UP_KIND_GONE)" or "กลับมาแสดงรถให้ผู้เล่นอื่นเห็นตามปกติแล้ว",
+            Content = val and (Config.StealthQuestBypass and "ซ่อนรถแล้ว + เปิด Quest Bypass (รับ/ส่งเควสได้ปกติ)" or "ซ่อนรถและตำแหน่งจากผู้เล่นอื่นแล้ว") or "กลับมาแสดงรถให้ผู้เล่นอื่นเห็นตามปกติแล้ว",
             Duration = 3,
             Icon = val and "eye-off" or "eye"
         })
+    end
+})
+
+TabSettings:Dropdown({
+    Title = "🕵️ Stealth Variant (รูปแบบการซ่อนรถ)",
+    Desc = "Ghost Gone + Quest Bypass = ลบรถออกจริงและปลดชั่วคราวเฉพาะตอนรับ/ส่งเควส | Hidden Flags = ส่ง flags F.VISIBLE=0+GHOST ต่อเนื่อง (ส่งเควส/ไล่ล่าไม่ดีเลย์)",
+    Values = {
+        "Ghost Gone + Quest Bypass (แนะนำ)",
+        "Hidden Flags (F.VISIBLE=0 + Ghost - ส่งเควสทันที)"
+    },
+    Value = Config.StealthVariant,
+    Callback = function(val)
+        Config.StealthVariant = val
+        if Config.StealthMode then
+            applyStealthState(true)
+        end
+    end
+})
+
+TabSettings:Toggle({
+    Title = "🔓 Stealth Quest Bypass (บายพาสรับ/จบเควส)",
+    Desc = "ส่งแพ็กเก็ตซิงค์ตำแหน่งแบบ F.VISIBLE=0+Ghost อัตโนมัติตอนคุย/รับเควส/เข้าจุด Checkpoint/เส้นชัย แล้วตัดกลับเป็น Gone ทันที",
+    Value = Config.StealthQuestBypass,
+    Callback = function(val)
+        Config.StealthQuestBypass = val
+        getgenv().__RaycityStealthQuestBypass = (val == true)
+        if Config.StealthMode then
+            applyStealthState(true)
+        end
     end
 })
 
@@ -1221,70 +1259,645 @@ end
 -- ==============================================================================
 -- 🛡️ 1. ANTI-CHEAT BYPASS, MULTIPLAYER SYNC PRESERVATION & STEALTH ENGINE
 -- ==============================================================================
-local function getStealthProtocol()
-    local mp = ReplicatedStorage:FindFirstChild("RaycityMultiplayer")
-    local protoMod = mp and mp:FindFirstChild("RemoteCarProtocol")
-    local remotes = mp and mp:FindFirstChild("Remotes")
-    local carStateUp = remotes and remotes:FindFirstChild("CarStateUp")
-    if not protoMod then
-        return nil, carStateUp
-    end
-    local ok, proto = pcall(require, protoMod)
-    if not ok or type(proto) ~= "table" then
-        return nil, carStateUp
-    end
-    return proto, carStateUp
-end
+do
+    local RETRYABLE_REASONS = {
+        serverFar = true,
+        noPos = true,
+        quarantine = true,
+        far = true,
+    }
+    local BYPASS_QUEST_OPS = {
+        talk = true,
+        accept = true,
+        boarded = true,
+        retry = true,
+        reward = true,
+    }
+    local ZONE_TRIGGER_RADIUS = 185
+    local ZONE_EXIT_RADIUS = 215
+    local TARGETLESS_KEEPALIVE_INTERVAL = 1.35
 
-local function installStealthHook()
-    local proto, carStateUp = getStealthProtocol()
-    if not proto or type(proto.encodeUp) ~= "function" then
-        return nil, carStateUp
+    local _resolveTargetHint = nil
+    local _invokeHoldCount = 0
+    local _zoneHoldUntil = 0
+    local _autoMoveHoldUntil = 0
+    local _wasInZoneHold = false
+    local _snapToken = 0
+    local _lastKeepaliveAt = 0
+    local _bypassThreadGuard = setmetatable({}, { __mode = "k" })
+    local _remoteCache = {}
+
+    local function isKeepStateVariant()
+        return Config.StealthVariant == "Hidden Flags (F.VISIBLE=0 + Ghost - ส่งเควสทันที)"
     end
-    if type(getgenv().__RaycityOrigEncodeUp) ~= "function" then
-        getgenv().__RaycityOrigEncodeUp = proto.encodeUp
+
+    local function syncStealthGlobals()
+        getgenv().__RaycityStealthEnabled = (Config.StealthMode == true)
+        getgenv().__RaycityStealthVariant = Config.StealthVariant
+        getgenv().__RaycityStealthQuestBypass = (Config.StealthQuestBypass ~= false)
+        getgenv().__RaycityStealthKeepState = isKeepStateVariant()
     end
-    local origEncode = getgenv().__RaycityOrigEncodeUp
-    if proto.encodeUp ~= getgenv().__RaycityStealthEncodeWrapper then
-        local wrapper = function(tbl)
-            if getgenv().__RaycityStealthEnabled == true then
-                return origEncode(nil)
-            end
-            return origEncode(tbl)
+
+    local function isBypassHoldActive()
+        if getgenv().__RaycityStealthQuestBypass ~= true then
+            return false
         end
-        getgenv().__RaycityStealthEncodeWrapper = wrapper
-        proto.encodeUp = wrapper
+        if _invokeHoldCount > 0 then
+            return true
+        end
+        local now = os.clock()
+        return now < _zoneHoldUntil or now < _autoMoveHoldUntil or now < (getgenv().__RaycityStealthSyncHoldUntil or 0)
     end
-    return proto, carStateUp
-end
 
-applyStealthState = function(enabled)
-    local active = (enabled == true)
-    Config.StealthMode = active
-    getgenv().__RaycityStealthEnabled = active
-    local _, carStateUp = installStealthHook()
-    local origEncode = getgenv().__RaycityOrigEncodeUp
-    ensureBackgroundCarSync()
-    if active and carStateUp and type(origEncode) == "function" then
-        pcall(function()
+    local function getStealthCarRoot()
+        local myCar = workspace:FindFirstChild("MyCar")
+        if myCar then
+            local root = myCar:FindFirstChild("Root") or myCar.PrimaryPart or myCar:FindFirstChildWhichIsA("BasePart")
+            if root then
+                return root, myCar
+            end
+        end
+        local ch = LocalPlayer and LocalPlayer.Character
+        if ch then
+            local root = ch:FindFirstChild("HumanoidRootPart") or ch.PrimaryPart
+            if root then
+                return root, myCar
+            end
+        end
+        return nil, myCar
+    end
+
+    local function cloneTbl(src)
+        if type(src) ~= "table" then return nil end
+        local dst = {}
+        for k, v in pairs(src) do
+            dst[k] = v
+        end
+        return dst
+    end
+
+    local function maskStealthFlags(rawFlags, proto, showVisible)
+        local F = proto and proto.F or {}
+        local visBit = F.VISIBLE or 128
+        local ghostBit = F.GHOST or 64
+        local aliveBit = F.ALIVE or 1
+        local base = tonumber(rawFlags) or aliveBit
+        if showVisible then
+            return bit32.bor(bit32.band(base, bit32.bnot(ghostBit)), visBit, aliveBit)
+        end
+        return bit32.bor(bit32.band(base, bit32.bnot(visBit)), ghostBit, aliveBit)
+    end
+
+    local function getStealthProtocol()
+        local mp = ReplicatedStorage:FindFirstChild("RaycityMultiplayer")
+        local protoMod = mp and mp:FindFirstChild("RemoteCarProtocol")
+        local remotes = mp and mp:FindFirstChild("Remotes")
+        local carStateUp = remotes and remotes:FindFirstChild("CarStateUp")
+        if not protoMod then
+            return nil, carStateUp
+        end
+        local ok, proto = pcall(require, protoMod)
+        if not ok or type(proto) ~= "table" then
+            return nil, carStateUp
+        end
+        return proto, carStateUp
+    end
+
+    local function buildCarStateTable(proto, overridePos, showVisible)
+        local studs = (proto and tonumber(proto.STUDS)) or 2
+        local root = getStealthCarRoot()
+        local cached = getgenv().__RaycityLastCarStateTbl
+        local tbl = cloneTbl(cached)
+        local posVec = (typeof(overridePos) == "Vector3") and overridePos or (root and root.Position)
+
+        if tbl then
+            local elapsedMs = math.max(0, math.floor((os.clock() - (getgenv().__RaycityLastCarStateAt or os.clock())) * 1000))
+            if type(tbl.t) == "number" then
+                tbl.t = tbl.t + elapsedMs
+            end
+            if posVec then
+                local newPosMetres = posVec / studs
+                if root and typeof(overridePos) ~= "Vector3" then
+                    if typeof(tbl.pos) ~= "Vector3" or (newPosMetres - tbl.pos).Magnitude > 0.75 then
+                        tbl.vel = root.AssemblyLinearVelocity / studs
+                        if proto and type(proto.quatFromCFrame) == "function" then
+                            local okQ, q = pcall(proto.quatFromCFrame, root.CFrame - root.CFrame.Position)
+                            if okQ and q then tbl.rot = q end
+                        end
+                    end
+                end
+                tbl.pos = newPosMetres
+            end
+            tbl.flags = maskStealthFlags(tbl.flags, proto, showVisible)
+            return tbl
+        end
+
+        if not posVec then
+            return nil
+        end
+
+        local cf = root and root.CFrame or CFrame.new(posVec)
+        local vel = root and root.AssemblyLinearVelocity or Vector3.zero
+        local rotVal = { 0, 0, 0, 1 }
+        if proto and type(proto.quatFromCFrame) == "function" then
+            local okQ, q = pcall(proto.quatFromCFrame, cf - cf.Position)
+            if okQ and q then rotVal = q end
+        end
+        return {
+            pos = posVec / studs,
+            vel = vel / studs,
+            rot = rotVal,
+            ang = Vector3.zero,
+            flags = maskStealthFlags(nil, proto, showVisible),
+            parts = 0,
+            t = math.floor(os.clock() * 1000),
+        }
+    end
+
+    local function installStealthHook()
+        local proto, carStateUp = getStealthProtocol()
+        if not proto or type(proto.encodeUp) ~= "function" then
+            return nil, carStateUp
+        end
+        if type(getgenv().__RaycityOrigEncodeUp) ~= "function" then
+            getgenv().__RaycityOrigEncodeUp = proto.encodeUp
+        end
+        local origEncode = getgenv().__RaycityOrigEncodeUp
+        if proto.encodeUp ~= getgenv().__RaycityStealthEncodeWrapper then
+            local wrapper = function(tbl)
+                if type(tbl) == "table" and tbl.pos ~= nil then
+                    getgenv().__RaycityLastCarStateTbl = cloneTbl(tbl)
+                    getgenv().__RaycityLastCarStateAt = os.clock()
+                end
+                if getgenv().__RaycityStealthEnabled == true then
+                    if getgenv().__RaycityStealthKeepState == true or isBypassHoldActive() then
+                        if type(tbl) == "table" then
+                            local masked = cloneTbl(tbl)
+                            local ov = getgenv().__RaycityStealthSyncOverridePos
+                            local ovAt = getgenv().__RaycityStealthSyncOverrideAt or 0
+                            if typeof(ov) == "Vector3" and (os.clock() - ovAt) < 0.65 then
+                                local studs = tonumber(proto.STUDS) or 2
+                                masked.pos = ov / studs
+                            end
+                            masked.flags = maskStealthFlags(masked.flags, proto, false)
+                            return origEncode(masked)
+                        end
+                        local built = buildCarStateTable(proto, getgenv().__RaycityStealthSyncOverridePos, false)
+                        if built then
+                            return origEncode(built)
+                        end
+                    end
+                    return origEncode(nil)
+                end
+                return origEncode(tbl)
+            end
+            getgenv().__RaycityStealthEncodeWrapper = wrapper
+            proto.encodeUp = wrapper
+        end
+        return proto, carStateUp
+    end
+
+    local function pushStatePacket(overridePos, showVisible)
+        local proto, carStateUp = installStealthHook()
+        local origEncode = getgenv().__RaycityOrigEncodeUp
+        if not proto or not carStateUp or type(origEncode) ~= "function" then
+            return false
+        end
+        local tbl = buildCarStateTable(proto, overridePos, showVisible)
+        if not tbl then
+            return false
+        end
+        local ok = pcall(function()
+            carStateUp:FireServer(origEncode(tbl))
+        end)
+        return ok
+    end
+
+    local function pushGonePacket()
+        if getgenv().__RaycityStealthEnabled ~= true or getgenv().__RaycityStealthKeepState == true then
+            return false
+        end
+        if isBypassHoldActive() then
+            return false
+        end
+        local _, carStateUp = installStealthHook()
+        local origEncode = getgenv().__RaycityOrigEncodeUp
+        if not carStateUp or type(origEncode) ~= "function" then
+            return false
+        end
+        local ok = pcall(function()
             carStateUp:FireServer(origEncode(nil))
         end)
+        return ok
     end
-end
 
-ensureBackgroundCarSync()
-applyStealthState(Config.StealthMode)
-
--- Continuous background sync guard ensuring CarStateUp never stalls when unfocused
-task.spawn(function()
-    while isAlive() do
-        ensureBackgroundCarSync()
-        if Config.StealthMode then
-            installStealthHook()
+    local function activateHold(holdSec, overridePos, reason)
+        if getgenv().__RaycityStealthEnabled ~= true then
+            return
         end
-        task.wait(1.5)
+        local now = os.clock()
+        local exp = now + (holdSec or 0.45)
+        if reason == "zone" then
+            if exp > _zoneHoldUntil then _zoneHoldUntil = exp end
+            _wasInZoneHold = true
+        elseif reason == "autoMove" then
+            if exp > _autoMoveHoldUntil then _autoMoveHoldUntil = exp end
+        else
+            if exp > (getgenv().__RaycityStealthSyncHoldUntil or 0) then
+                getgenv().__RaycityStealthSyncHoldUntil = exp
+            end
+        end
+        if typeof(overridePos) == "Vector3" then
+            getgenv().__RaycityStealthSyncOverridePos = overridePos
+            getgenv().__RaycityStealthSyncOverrideAt = now
+        end
+        if not isKeepStateVariant() then
+            pushStatePacket(overridePos, false)
+        end
     end
-end)
+
+    local function snapBackNow()
+        _zoneHoldUntil = 0
+        _autoMoveHoldUntil = 0
+        getgenv().__RaycityStealthSyncHoldUntil = 0
+        getgenv().__RaycityStealthSyncOverridePos = nil
+        _wasInZoneHold = false
+        if getgenv().__RaycityStealthEnabled == true and not isKeepStateVariant() and _invokeHoldCount <= 0 then
+            _snapToken = _snapToken + 1
+            local myTok = _snapToken
+            pushGonePacket()
+            task.delay(0.08, function()
+                if _snapToken == myTok and getgenv().__RaycityStealthEnabled == true and not isKeepStateVariant() and not isBypassHoldActive() then
+                    pushGonePacket()
+                end
+            end)
+        end
+    end
+
+    local function scheduleSnapback(delaySec)
+        _snapToken = _snapToken + 1
+        local myTok = _snapToken
+        local waitS = tonumber(delaySec) or 0
+        local function flushGone()
+            if _snapToken ~= myTok then return end
+            if getgenv().__RaycityStealthEnabled == true and not isKeepStateVariant() and not isBypassHoldActive() then
+                pushGonePacket()
+                task.delay(0.08, function()
+                    if _snapToken == myTok and getgenv().__RaycityStealthEnabled == true and not isKeepStateVariant() and not isBypassHoldActive() then
+                        pushGonePacket()
+                    end
+                end)
+            end
+        end
+        if waitS <= 0 then
+            flushGone()
+        else
+            task.delay(waitS, flushGone)
+        end
+    end
+
+    local function pulseSync(overridePos, waitAfterSec)
+        if getgenv().__RaycityStealthEnabled ~= true or getgenv().__RaycityStealthQuestBypass ~= true or isKeepStateVariant() then
+            return
+        end
+        activateHold(0.65, overridePos, "pulse")
+        if coroutine.isyieldable() then
+            task.wait(0.04)
+            pushStatePacket(overridePos, false)
+            if (waitAfterSec or 0) > 0 then
+                task.wait(waitAfterSec)
+            end
+        end
+    end
+
+    local function inspectActiveQuestZone(carPos)
+        local hasTarget = false
+        if type(_resolveTargetHint) == "function" then
+            local okH, hintPos, forceHold = pcall(_resolveTargetHint)
+            if okH then
+                if forceHold == true then
+                    return true, true, (typeof(hintPos) == "Vector3" and hintPos or carPos)
+                end
+                if typeof(hintPos) == "Vector3" then
+                    hasTarget = true
+                    local rad = _wasInZoneHold and ZONE_EXIT_RADIUS or ZONE_TRIGGER_RADIUS
+                    if carPos and (carPos - hintPos).Magnitude <= rad then
+                        return true, true, hintPos
+                    end
+                end
+            end
+        end
+
+        local gs = getGameShared()
+        local rq = gs and gs.RBRCQuest
+        if rq and type(rq.state) == "function" then
+            local okS, st = pcall(rq.state)
+            if okS and type(st) == "table" and st.state == "boarding" then
+                return true, true, carPos
+            end
+        end
+
+        local rad = _wasInZoneHold and ZONE_EXIT_RADIUS or ZONE_TRIGGER_RADIUS
+        for _, folderName in ipairs({ "RBRCQuestMarkers", "RBRCQuestGuide", "RBRCMissionCars" }) do
+            local folder = workspace:FindFirstChild(folderName)
+            if folder then
+                for _, item in ipairs(folder:GetChildren()) do
+                    local pos = nil
+                    if item:IsA("BasePart") then
+                        pos = item.Position
+                    elseif item:IsA("Model") then
+                        local okP, cf = pcall(item.GetPivot, item)
+                        if okP and cf then pos = cf.Position end
+                    end
+                    if typeof(pos) == "Vector3" then
+                        hasTarget = true
+                        if carPos and (carPos - pos).Magnitude <= rad then
+                            return true, true, pos
+                        end
+                    end
+                end
+            end
+        end
+
+        local navUi = ReplicatedStorage:FindFirstChild("RaycityUi") and ReplicatedStorage.RaycityUi:FindFirstChild("Navigation")
+        if navUi then
+            local okN, nav = pcall(require, navUi)
+            if okN and type(nav) == "table" then
+                if type(nav.getGuideLine) == "function" then
+                    local okGl, gl = pcall(nav.getGuideLine)
+                    if okGl and type(gl) == "table" and typeof(gl.target) == "Vector3" then
+                        hasTarget = true
+                        if carPos and (carPos - gl.target).Magnitude <= rad then
+                            return true, true, gl.target
+                        end
+                    end
+                end
+                if type(nav.getGuide) == "function" then
+                    local okG, g = pcall(nav.getGuide)
+                    if okG and type(g) == "table" and typeof(g.destRoblox) == "Vector3" then
+                        hasTarget = true
+                        if carPos and (carPos - g.destRoblox).Magnitude <= rad then
+                            return true, true, g.destRoblox
+                        end
+                    end
+                end
+            end
+        end
+
+        return hasTarget, false, nil
+    end
+
+    local function getQuestRemotes()
+        local rq = ReplicatedStorage:FindFirstChild("RBRCQuest")
+        local rem = rq and rq:FindFirstChild("Remotes")
+        if not rem then
+            return nil
+        end
+        if _remoteCache.folder ~= rem then
+            _remoteCache = {
+                folder = rem,
+                QuestRequest = rem:FindFirstChild("QuestRequest"),
+                SkillQuestRequest = rem:FindFirstChild("SkillQuestRequest"),
+                RoadFightRequest = rem:FindFirstChild("RoadFightRequest"),
+                QuestEventUp = rem:FindFirstChild("QuestEventUp"),
+                QuestTelemetry = rem:FindFirstChild("QuestTelemetry"),
+            }
+        end
+        return _remoteCache
+    end
+
+    local function invokeRemoteMethod(orig, self, method, ...)
+        if type(setnamecallmethod) == "function" then
+            setnamecallmethod(method)
+            return orig(self, ...)
+        end
+        local fn = self[method]
+        return fn(self, ...)
+    end
+
+    local function handleSyncInvoke(orig, self, ...)
+        local args = table.pack(...)
+        local payload = args[1]
+        local op = (type(payload) == "table" and payload.op) and tostring(payload.op) or ""
+        local shouldSync = BYPASS_QUEST_OPS[op] == true
+            or (self == _remoteCache.RoadFightRequest and op ~= "state" and op ~= "list")
+        if not shouldSync then
+            return orig(self, ...)
+        end
+
+        local co = coroutine.running()
+        _bypassThreadGuard[co] = true
+        _invokeHoldCount = _invokeHoldCount + 1
+        local ovPos = (type(payload) == "table" and typeof(payload.carPos) == "Vector3") and payload.carPos or nil
+
+        local okRun, resPack = pcall(function()
+            activateHold(0.95, ovPos, "invoke")
+            if coroutine.isyieldable() then
+                task.wait(0.045)
+                pushStatePacket(ovPos, false)
+                task.wait(0.045)
+            end
+            local pack = table.pack(invokeRemoteMethod(orig, self, "InvokeServer", table.unpack(args, 1, args.n)))
+            local first = pack[1]
+            if type(first) == "table" and first.ok == false and RETRYABLE_REASONS[tostring(first.reason or "")] then
+                pushStatePacket(ovPos, false)
+                if coroutine.isyieldable() then
+                    task.wait(0.055)
+                    pushStatePacket(ovPos, false)
+                    task.wait(0.055)
+                end
+                pack = table.pack(invokeRemoteMethod(orig, self, "InvokeServer", table.unpack(args, 1, args.n)))
+            end
+            return pack
+        end)
+
+        _invokeHoldCount = math.max(0, _invokeHoldCount - 1)
+        _bypassThreadGuard[co] = nil
+
+        if not okRun then
+            if _invokeHoldCount == 0 then
+                getgenv().__RaycityStealthSyncHoldUntil = 0
+                scheduleSnapback(0)
+            end
+            error(resPack)
+        end
+
+        local res1 = resPack[1]
+        if op == "accept" and type(res1) == "table" and res1.ok == true and res1.needsBoarding == true then
+            activateHold(1.15, ovPos, "zone")
+        elseif _invokeHoldCount == 0 and os.clock() >= _zoneHoldUntil and os.clock() >= _autoMoveHoldUntil then
+            getgenv().__RaycityStealthSyncHoldUntil = 0
+            scheduleSnapback(0)
+        end
+
+        return table.unpack(resPack, 1, resPack.n)
+    end
+
+    local function installQuestBypassNamecallHook()
+        getgenv().__RaycityStealthNamecallHandler = function(orig, self, ...)
+            if getgenv().__RaycityStealthEnabled ~= true
+                or getgenv().__RaycityStealthQuestBypass ~= true
+                or getgenv().__RaycityStealthKeepState == true
+            then
+                return orig(self, ...)
+            end
+
+            local method = getnamecallmethod and getnamecallmethod()
+            if method ~= "InvokeServer" and method ~= "FireServer" then
+                return orig(self, ...)
+            end
+
+            local co = coroutine.running()
+            if _bypassThreadGuard[co] then
+                return orig(self, ...)
+            end
+
+            local rc = getQuestRemotes()
+            if not rc then
+                return orig(self, ...)
+            end
+
+            if method == "InvokeServer" and (self == rc.QuestRequest or self == rc.SkillQuestRequest or self == rc.RoadFightRequest) then
+                return handleSyncInvoke(orig, self, ...)
+            elseif method == "FireServer" and self == rc.QuestEventUp then
+                local arg1 = (...)
+                _bypassThreadGuard[co] = true
+                activateHold(0.75, nil, "zone")
+                local okCall, errCall = pcall(invokeRemoteMethod, orig, self, "FireServer", ...)
+                _bypassThreadGuard[co] = nil
+                if arg1 == "GoalReached" then
+                    local capturedArgs = table.pack(...)
+                    task.delay(0.10, function()
+                        if getgenv().__RaycityStealthEnabled == true and not isKeepStateVariant() then
+                            pushStatePacket(nil, false)
+                            local delayedCo = coroutine.running()
+                            _bypassThreadGuard[delayedCo] = true
+                            pcall(function()
+                                self:FireServer(table.unpack(capturedArgs, 1, capturedArgs.n))
+                            end)
+                            _bypassThreadGuard[delayedCo] = nil
+                            scheduleSnapback(0.35)
+                        end
+                    end)
+                end
+                if not okCall then error(errCall) end
+                return
+            elseif method == "FireServer" and self == rc.QuestTelemetry then
+                local arg1 = (...)
+                local posVec = (type(arg1) == "table" and typeof(arg1.pos) == "Vector3") and arg1.pos or nil
+                if not posVec then
+                    local r = getStealthCarRoot()
+                    posVec = r and r.Position or nil
+                end
+                local isStopped = (type(arg1) == "table" and arg1.stopped == true)
+                local hasTarget, inZone = inspectActiveQuestZone(posVec)
+                if inZone or isStopped then
+                    activateHold(0.55, posVec, "zone")
+                elseif not hasTarget and LocalPlayer and LocalPlayer:GetAttribute("RaycityMissionActive") == true then
+                    local now = os.clock()
+                    if (now - _lastKeepaliveAt) >= TARGETLESS_KEEPALIVE_INTERVAL then
+                        _lastKeepaliveAt = now
+                        activateHold(0.20, posVec, "pulse")
+                        scheduleSnapback(0.18)
+                    end
+                elseif _wasInZoneHold and not inZone and os.clock() >= _autoMoveHoldUntil and _invokeHoldCount == 0 then
+                    snapBackNow()
+                end
+                return invokeRemoteMethod(orig, self, "FireServer", ...)
+            end
+
+            return orig(self, ...)
+        end
+
+        if not getgenv().__RaycityStealthNamecallInstalled
+            and type(hookmetamethod) == "function"
+            and type(getnamecallmethod) == "function"
+        then
+            pcall(function()
+                local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
+                local orig
+                orig = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+                    local h = getgenv().__RaycityStealthNamecallHandler
+                    if type(h) == "function" then
+                        return h(orig, self, ...)
+                    end
+                    return orig(self, ...)
+                end))
+                getgenv().__RaycityStealthOrigNamecall = orig
+                getgenv().__RaycityStealthNamecallInstalled = true
+            end)
+        end
+    end
+
+    stealthCtrl.activateHold = activateHold
+    stealthCtrl.scheduleSnapback = scheduleSnapback
+    stealthCtrl.snapBackNow = snapBackNow
+    stealthCtrl.pulseSync = pulseSync
+    stealthCtrl.bindTargetResolver = function(fn)
+        _resolveTargetHint = fn
+    end
+
+    applyStealthState = function(enabled)
+        local wasActive = (getgenv().__RaycityStealthEnabled == true)
+        local active = (enabled == true)
+        Config.StealthMode = active
+        syncStealthGlobals()
+        installStealthHook()
+        installQuestBypassNamecallHook()
+        ensureBackgroundCarSync()
+
+        if active then
+            if isKeepStateVariant() then
+                pushStatePacket(nil, false)
+            else
+                snapBackNow()
+                pushGonePacket()
+            end
+        else
+            _invokeHoldCount = 0
+            _zoneHoldUntil = 0
+            _autoMoveHoldUntil = 0
+            getgenv().__RaycityStealthSyncHoldUntil = 0
+            getgenv().__RaycityStealthSyncOverridePos = nil
+            _wasInZoneHold = false
+            if wasActive then
+                pushStatePacket(nil, true)
+            end
+        end
+    end
+
+    ensureBackgroundCarSync()
+    applyStealthState(Config.StealthMode)
+
+    -- Continuous background sync guard & fast active-quest checkpoint stealth monitor
+    task.spawn(function()
+        while isAlive() do
+            ensureBackgroundCarSync()
+            syncStealthGlobals()
+            if Config.StealthMode then
+                installStealthHook()
+                installQuestBypassNamecallHook()
+                local missionBusy = (LocalPlayer and LocalPlayer:GetAttribute("RaycityMissionActive") == true)
+                    or (LevelFarmStats and LevelFarmStats.activeFightRound ~= nil)
+                    or (DerixStats and DerixStats.activeFightRound ~= nil)
+                if Config.StealthQuestBypass and not isKeepStateVariant() and missionBusy then
+                    local root = getStealthCarRoot()
+                    local hasTarget, inZone, tPos = inspectActiveQuestZone(root and root.Position or nil)
+                    if inZone then
+                        activateHold(0.45, root and root.Position or tPos, "zone")
+                    elseif _wasInZoneHold and not inZone and os.clock() >= _autoMoveHoldUntil and _invokeHoldCount == 0 then
+                        snapBackNow()
+                    end
+                    task.wait(0.08)
+                else
+                    task.wait(0.5)
+                end
+            else
+                task.wait(1.2)
+            end
+        end
+    end)
+end
 
 
 -- ==============================================================================
@@ -1640,6 +2253,9 @@ local function performTrustSyncRoll(anchorPos, faceDir, allowRespawn)
     flatDir = flatDir.Magnitude > 0.05 and flatDir.Unit or Vector3.new(0, 0, -1)
 
     clearCarHoldLocks()
+    if Config.StealthMode and Config.StealthQuestBypass then
+        stealthCtrl.activateHold(0.85, anchorPos, "autoMove")
+    end
     local qt = nil
     pcall(function()
         qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
@@ -1722,6 +2338,9 @@ local function performTrustSyncRoll(anchorPos, faceDir, allowRespawn)
         end)
     end
     task.wait(0.05)
+    if Config.StealthMode and Config.StealthQuestBypass then
+        stealthCtrl.scheduleSnapback(0.25)
+    end
 end
 
 local function isColonNpcId(str)
@@ -3435,6 +4054,34 @@ local function getActiveMissionTarget()
     return nil, nil, nil, false
 end
 
+stealthCtrl.bindTargetResolver(function()
+    local activeRId = (Config.AutoFarmLevel and LevelFarmStats.activeFightRound) or (Config.AutoFarmDerix and DerixStats.activeFightRound)
+    if activeRId then
+        local root = getCarRoot()
+        local clearedSet = Config.AutoFarmLevel and LevelFarmStats.clearedGates or DerixStats.clearedGates
+        local gPos = getRoadFightNextGate(activeRId, root and root.Position, clearedSet)
+        if gPos then
+            return gPos, false
+        end
+    end
+
+    local gs = getGameShared()
+    local rq = gs and gs.RBRCQuest
+    if rq and type(rq.state) == "function" then
+        local ok, clientMission = pcall(rq.state)
+        if ok and type(clientMission) == "table" and (clientMission.state == "running" or clientMission.state == "boarding") then
+            if clientMission.state == "boarding" then
+                return nil, true
+            end
+            local tPos = resolveMissionObjectiveFromState(clientMission)
+            if typeof(tPos) == "Vector3" then
+                return tPos, false
+            end
+        end
+    end
+    return nil, false
+end)
+
 local function getActiveQuestDestination()
     local okNav, nav = pcall(function() return require(ReplicatedStorage.RaycityUi.Navigation) end)
     local navPoints = nil
@@ -3843,6 +4490,11 @@ local function steppedAntiQuarantineWarp(targetPos, faceDir, endSpeedMps, stopAt
         end
 
         local now = os.clock()
+        if Config.StealthMode and Config.StealthQuestBypass then
+            if (pos - endPos).Magnitude <= 185 or isFinalTick then
+                stealthCtrl.activateHold(0.45, pos, "autoMove")
+            end
+        end
         if qt and (isFinalTick or (now - lastTelem) >= 0.2) then
             lastTelem = now
             pcall(function()
@@ -3911,102 +4563,114 @@ local function waitUntilObjectiveCleared(targetPos, flatDir, isStop, passSpeedMp
         qt = ReplicatedStorage.RBRCQuest.Remotes.QuestTelemetry
     end)
 
-    local wStart = os.clock()
-    local lastTelem = 0
-    local lastServerPoll = 0
-    local dirSign = 1
+    local function runClearWait()
+        local wStart = os.clock()
+        local lastTelem = 0
+        local lastServerPoll = 0
+        local dirSign = 1
 
-    while (os.clock() - wStart) < 12.0 do
-        if not isAlive() then break end
-        local anyActive = Config.AutoFarmQuests or Config.AutoStoryProgression or Config.AutoLevel1ToMax
-        if not anyActive then break end
+        while (os.clock() - wStart) < 12.0 do
+            if not isAlive() then break end
+            local anyActive = Config.AutoFarmQuests or Config.AutoStoryProgression or Config.AutoLevel1ToMax
+            if not anyActive then break end
 
-        local now = os.clock()
-        local checkServer = (now - lastServerPoll) >= 0.45
-        if checkServer then
-            lastServerPoll = now
-            local liveM = getLiveMissionState(true)
-            if not liveM or (liveM.state ~= "running" and liveM.state ~= "boarding") then
-                _lastLiveMissionCheck = 0
-                _cachedLiveMission = nil
-                return true
-            end
-            if initQuestId and liveM.questId ~= initQuestId then
-                _lastLiveMissionCheck = 0
-                return true
-            end
-            if initStep ~= nil and tonumber(liveM.step) ~= tonumber(initStep) then
-                _lastLiveMissionCheck = 0
-                return true
-            end
-            if objIdx ~= nil and type(liveM.objectives) == "table" then
-                local o = liveM.objectives[objIdx] or liveM.objectives[tostring(objIdx)]
-                if o and (o.done == true or o.mine == true) then
+            local now = os.clock()
+            local checkServer = (now - lastServerPoll) >= 0.45
+            if checkServer then
+                lastServerPoll = now
+                local liveM = getLiveMissionState(true)
+                if not liveM or (liveM.state ~= "running" and liveM.state ~= "boarding") then
+                    _lastLiveMissionCheck = 0
+                    _cachedLiveMission = nil
+                    return true
+                end
+                if initQuestId and liveM.questId ~= initQuestId then
                     _lastLiveMissionCheck = 0
                     return true
                 end
+                if initStep ~= nil and tonumber(liveM.step) ~= tonumber(initStep) then
+                    _lastLiveMissionCheck = 0
+                    return true
+                end
+                if objIdx ~= nil and type(liveM.objectives) == "table" then
+                    local o = liveM.objectives[objIdx] or liveM.objectives[tostring(objIdx)]
+                    if o and (o.done == true or o.mine == true) then
+                        _lastLiveMissionCheck = 0
+                        return true
+                    end
+                end
             end
+
+            if isMissionStepCleared(initQuestId, initStep, objIdx) then
+                _lastLiveMissionCheck = 0
+                return true
+            end
+
+            local rcd = getRCDrive()
+            local root = getCarRoot()
+            local car = getMyCar()
+            if not root then break end
+            if root.Anchored then root.Anchored = false end
+
+            local holdPos = targetPos + Vector3.new(0, 0.8, 0)
+            local holdVel = Vector3.zero
+            if not isStop then
+                -- Gently oscillate +/- 3 studs across checkpoint center at pass speed so minSpeed & poly both register cleanly
+                local phase = ((now - wStart) * 2.5) % 2
+                local off = (phase <= 1) and (-3 + phase * 6) or (3 - (phase - 1) * 6)
+                dirSign = (phase <= 1) and 1 or -1
+                holdPos = targetPos + flatDir * off + Vector3.new(0, 0.8, 0)
+                holdVel = flatDir * (dirSign * math.max(16, passSpeedMps or 25))
+            end
+
+            if Config.StealthMode and Config.StealthQuestBypass then
+                stealthCtrl.activateHold(0.45, holdPos, "autoMove")
+            end
+
+            local cf = CFrame.lookAt(holdPos, holdPos + flatDir * 10)
+            local rot = cf - cf.Position
+            if rcd and type(rcd.phys) == "table" then
+                pcall(function()
+                    rcd.phys.cf = CFrame.new(holdPos / 2) * rot
+                    rcd.phys.v = holdVel / 2
+                    rcd.phys.w = Vector3.zero
+                    rcd.phys.throttle = isStop and 0 or 1
+                    rcd.phys.brake = isStop and 1 or 0
+                    rcd.phys.handbrake = isStop and 1 or 0
+                    rcd.phys.airMode = false
+                    rcd.phys.anyContact = true
+                end)
+            end
+            root.CFrame = cf
+            root.AssemblyLinearVelocity = holdVel
+            root.AssemblyAngularVelocity = Vector3.zero
+            if car and car.PrimaryPart then
+                pcall(function() car:PivotTo(cf) end)
+            end
+
+            if qt and (now - lastTelem) >= 0.2 then
+                lastTelem = now
+                pcall(function()
+                    qt:FireServer({
+                        pos = holdPos,
+                        speed = isStop and 0 or holdVel.Magnitude,
+                        stopped = isStop,
+                        gear = isStop and 0 or 3
+                    })
+                end)
+            end
+
+            task.wait(0.08)
         end
 
-        if isMissionStepCleared(initQuestId, initStep, objIdx) then
-            _lastLiveMissionCheck = 0
-            return true
-        end
-
-        local rcd = getRCDrive()
-        local root = getCarRoot()
-        local car = getMyCar()
-        if not root then break end
-        if root.Anchored then root.Anchored = false end
-
-        local holdPos = targetPos + Vector3.new(0, 0.8, 0)
-        local holdVel = Vector3.zero
-        if not isStop then
-            -- Gently oscillate +/- 3 studs across checkpoint center at pass speed so minSpeed & poly both register cleanly
-            local phase = ((now - wStart) * 2.5) % 2
-            local off = (phase <= 1) and (-3 + phase * 6) or (3 - (phase - 1) * 6)
-            dirSign = (phase <= 1) and 1 or -1
-            holdPos = targetPos + flatDir * off + Vector3.new(0, 0.8, 0)
-            holdVel = flatDir * (dirSign * math.max(16, passSpeedMps or 25))
-        end
-
-        local cf = CFrame.lookAt(holdPos, holdPos + flatDir * 10)
-        local rot = cf - cf.Position
-        if rcd and type(rcd.phys) == "table" then
-            pcall(function()
-                rcd.phys.cf = CFrame.new(holdPos / 2) * rot
-                rcd.phys.v = holdVel / 2
-                rcd.phys.w = Vector3.zero
-                rcd.phys.throttle = isStop and 0 or 1
-                rcd.phys.brake = isStop and 1 or 0
-                rcd.phys.handbrake = isStop and 1 or 0
-                rcd.phys.airMode = false
-                rcd.phys.anyContact = true
-            end)
-        end
-        root.CFrame = cf
-        root.AssemblyLinearVelocity = holdVel
-        root.AssemblyAngularVelocity = Vector3.zero
-        if car and car.PrimaryPart then
-            pcall(function() car:PivotTo(cf) end)
-        end
-
-        if qt and (now - lastTelem) >= 0.2 then
-            lastTelem = now
-            pcall(function()
-                qt:FireServer({
-                    pos = holdPos,
-                    speed = isStop and 0 or holdVel.Magnitude,
-                    stopped = isStop,
-                    gear = isStop and 0 or 3
-                })
-            end)
-        end
-
-        task.wait(0.08)
+        return false
     end
 
-    return false
+    local okCleared = runClearWait()
+    if Config.StealthMode and Config.StealthQuestBypass then
+        stealthCtrl.snapBackNow()
+    end
+    return okCleared
 end
 
 local function executeMoveStep(targetPos, destType, speedKmh, metaObj)
