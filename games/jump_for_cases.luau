@@ -205,10 +205,23 @@ local Config = {
     
     -- Auto Case Opening
     FastOpenSkip = false,
+    InstantRevealBypass = false,
+    AutoOpenMutatedCases = false,
     AutoOpenAll = false,
     AutoOpenSelected = false,
     SelectedCase = CaseNamesList[1] or "Basic",
     CaseOpenDelay = 0.35,
+
+    -- VVIP Overdrive (Smart AI Expedition, Auto-Sell, Max Level & Gem Boosts)
+    AutoSmartExpedition = false,
+    ExpeditionStrategy = "Smart Best EV (Auto Win%)",
+    ExpeditionDuration = "Fast (1-1.7h)",
+    AutoSellJunkPets = false,
+    AutoSellMaxRarity = "Up to Mythic",
+    InstantMaxLevelUnits = false,
+    AutoClaimEventPass = false,
+    AutoBuyGemBoost = false,
+    SelectedGemBoost = "2x Luck (150 Gems)",
 
     -- Auto Upgrades & Base
     AutoEquipBest = false,
@@ -1419,10 +1432,21 @@ local function wrapTabForConfig(rawTab)
         ["Turbo Return Bypass (500 WS Anti-Wave)"] = "ReturnSprintBoost",
         ["Instant Warp Return"] = "InstantWarpReturn",
         ["Fast Open (Skip Animation)"] = "FastOpenSkip",
+        ["Instant 0s Reveal & Auto Luck Clover"] = "InstantRevealBypass",
+        ["Auto Open All Mutated & Event Cases (3x)"] = "AutoOpenMutatedCases",
         ["Auto Open All Owned Cases"] = "AutoOpenAll",
         ["Open Delay (s)"] = "CaseOpenDelay",
         ["Select Target Case"] = "SelectedCase",
         ["Auto Open Selected Case"] = "AutoOpenSelected",
+        ["Smart AI Auto-Expedition (1,500 Gems/Day)"] = "AutoSmartExpedition",
+        ["Expedition Risk Strategy"] = "ExpeditionStrategy",
+        ["Expedition Duration"] = "ExpeditionDuration",
+        ["Smart Auto-Sell Junk Brainrots (Anywhere)"] = "AutoSellJunkPets",
+        ["Auto-Sell Max Rarity Filter"] = "AutoSellMaxRarity",
+        ["1-Click Max Level Units (Lv.1 -> Lv.100)"] = "InstantMaxLevelUnits",
+        ["Auto Claim Event Pass & Perm Quests"] = "AutoClaimEventPass",
+        ["Auto Buy Gem Shop Boosts"] = "AutoBuyGemBoost",
+        ["Target Gem Boost"] = "SelectedGemBoost",
         ["Auto Equip Best Units (Place Best)"] = "AutoEquipBest",
         ["Auto Collect Money (Base Cash)"] = "AutoCollectMoney",
         ["Auto Upgrade Units (Level Up Best)"] = "AutoUpgradeUnits",
@@ -1500,6 +1524,7 @@ local function wrapTabForConfig(rawTab)
 end
 
 local TabFarm = wrapTabForConfig(Window:Tab({ Title = "Auto Farm", Icon = "zap" }))
+CfgSys.TabPremium = wrapTabForConfig(Window:Tab({ Title = "VVIP Overdrive", Icon = "crown" }))
 local TabCases = wrapTabForConfig(Window:Tab({ Title = "Cases", Icon = "package" }))
 local TabUpgrades = wrapTabForConfig(Window:Tab({ Title = "Upgrades", Icon = "trending-up" }))
 local TabClaims = wrapTabForConfig(Window:Tab({ Title = "Claims & Codes", Icon = "gift" }))
@@ -2017,7 +2042,7 @@ TabCases:Toggle({
     end,
 })
 
--- Case Opener Helper Function
+-- Case Opener Helper Function (Supports Regular, Event & Mutated Cases + 3x Multi-Open)
 local function openCaseInstance(caseName)
     local count = getCaseCount(caseName)
     if count <= 0 then return false end
@@ -2027,13 +2052,21 @@ local function openCaseInstance(caseName)
         return false
     end
 
-    -- Equip case
-    if RequestEquipBrainrot then
+    -- Equip case if not already holding this exact case key
+    local alreadyEquipped = false
+    pcall(function()
+        local char = LocalPlayer.Character
+        local held = char and char:FindFirstChild("_HeldConfig")
+        if held and held:GetAttribute("IsCase") == true and held:GetAttribute("CaseKey") == caseName then
+            alreadyEquipped = true
+        end
+    end)
+    if not alreadyEquipped and RequestEquipBrainrot then
         pcall(function()
             RequestEquipBrainrot:FireServer("case::" .. caseName)
         end)
+        task.wait(0.06)
     end
-    task.wait(0.08)
 
     -- Multi-open 3x if count >= 3, 2x if count == 2, else 1x
     if count >= 3 and RequestOpenCaseMulti then
@@ -2050,12 +2083,14 @@ local function openCaseInstance(caseName)
         end)
     end
 
-    -- Dismiss reveal popup if Fast Open is enabled
-    if Config.FastOpenSkip then
+    -- Dismiss reveal popup if Fast Open or Instant Reveal Bypass is enabled
+    if Config.FastOpenSkip or Config.InstantRevealBypass then
         pcall(function()
             local renv = getrenv and getrenv()
             local g = (renv and renv._G) or _G
             if g then
+                g._SpinGen = (tonumber(g._SpinGen) or 0) + 1
+                _G._SpinGen = g._SpinGen
                 if type(g.StopCaseReveal) == "function" then g.StopCaseReveal() end
                 if type(g.StopCaseOpening) == "function" then g.StopCaseOpening() end
             end
@@ -2065,28 +2100,781 @@ local function openCaseInstance(caseName)
     return true
 end
 
--- Auto Case Opener Background Worker
+-- ==============================================================================
+-- 👑 TAB: VVIP OVERDRIVE ENGINE (AI EXPEDITION • MUTATED CASES • AUTO-SELL • 0s REVEAL)
+-- ==============================================================================
+do
+    local TabPremium = CfgSys.TabPremium
+    CfgSys.OverdriveConns = {}
+    local overdriveConns = CfgSys.OverdriveConns
+    local RequestRevealComplete = Remotes:FindFirstChild("RequestRevealComplete")
+    local AutoOpenRevealClosed = Remotes:FindFirstChild("AutoOpenRevealClosed")
+    local LuckFound = Remotes:FindFirstChild("LuckFound")
+    local LuckCaseClear = Remotes:FindFirstChild("LuckCaseClear")
+    local SpinUIState = Remotes:FindFirstChild("SpinUIState")
+    local FuseGetPets = Remotes:FindFirstChild("FuseGetPets")
+    local ExpeditionSync = Remotes:FindFirstChild("ExpeditionSync")
+    local ExpeditionResult = Remotes:FindFirstChild("ExpeditionResult")
+    local RequestSendExpedition = Remotes:FindFirstChild("RequestSendExpedition")
+    local RequestCollectExpedition = Remotes:FindFirstChild("RequestCollectExpedition")
+    local SellShopRequest = Remotes:FindFirstChild("SellShopRequest")
+    local RequestSlotLevelMax = Remotes:FindFirstChild("RequestSlotLevelMax")
+    local RequestEventPassClaim = Remotes:FindFirstChild("RequestEventPassClaim")
+    local RequestEventPassState = Remotes:FindFirstChild("RequestEventPassState")
+    local EventPassSync = Remotes:FindFirstChild("EventPassSync")
+    local RequestClaimPermQuest = Remotes:FindFirstChild("RequestClaimPermQuest")
+    local RequestBuyGemItem = Remotes:FindFirstChild("RequestBuyGemItem")
+
+    local ExpeditionConfig = nil
+    pcall(function()
+        ExpeditionConfig = require(ReplicatedStorage:WaitForChild("ExpeditionConfig", 3))
+    end)
+
+    -- Live Overdrive Telemetry
+    local statsCasesSkipped = 0
+    local statsCloversClaimed = 0
+    local statsPetsSold = 0
+    local statsCashFromSell = 0
+    local statsExpeditionsSent = 0
+    local statsExpeditionsClaimed = 0
+    local activeExpeditions = {}
+    local eventPassState = { level = 0, owned = false, freeClaimed = {}, paidClaimed = {} }
+    local lastExpeditionDispatchAt = 0
+
+    local BASE_CASE_SET = {}
+    local BASE_CASE_RANK = {}
+    for idx, name in ipairs(CaseNamesList) do
+        BASE_CASE_SET[name] = true
+        BASE_CASE_RANK[name] = idx
+    end
+
+    local function getCasePriorityScore(caseKey)
+        local isMut = caseKey:find("_MUT_") ~= nil
+        local baseName = isMut and caseKey:match("^(.-)_MUT_") or caseKey
+        local rank = BASE_CASE_RANK[baseName] or 15
+        return (isMut and 1000 or 0) + rank
+    end
+
+    local function scanOwnedCases(onlyMutatedOrEvent)
+        local list = {}
+        local totalBase = 0
+        local totalMutOrEvent = 0
+        local attrs = LocalPlayer:GetAttributes()
+        for k, v in pairs(attrs) do
+            if type(k) == "string" and k:sub(1, 6) == "Cases_" then
+                local cnt = tonumber(v) or 0
+                if cnt > 0 then
+                    local caseKey = k:sub(7)
+                    local isMutOrSpecial = (caseKey:find("_MUT_") ~= nil) or (not BASE_CASE_SET[caseKey])
+                    if isMutOrSpecial then
+                        totalMutOrEvent = totalMutOrEvent + cnt
+                    else
+                        totalBase = totalBase + cnt
+                    end
+                    if (not onlyMutatedOrEvent) or isMutOrSpecial then
+                        table.insert(list, {
+                            key = caseKey,
+                            count = cnt,
+                            score = getCasePriorityScore(caseKey),
+                        })
+                    end
+                end
+            end
+        end
+        table.sort(list, function(a, b)
+            if a.score ~= b.score then
+                return a.score > b.score
+            end
+            return a.count > b.count
+        end)
+        return list, totalBase, totalMutOrEvent
+    end
+
+    -- 1. Instant 0s Case Reveal & Auto Luck Clover Harvester Hook
+    local function hideSpinOverlayCleanly()
+        pcall(function()
+            local renv = getrenv and getrenv()
+            local g = (renv and renv._G) or _G
+            if g then
+                g._SpinGen = (tonumber(g._SpinGen) or 0) + 1
+                _G._SpinGen = g._SpinGen
+                if type(g.SetUIHidden) == "function" then
+                    pcall(g.SetUIHidden, "CaseSpin", false)
+                end
+                if type(g._SetAutoBackdrop) == "function" then
+                    pcall(g._SetAutoBackdrop, false, true)
+                end
+            end
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            if pg then
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d.Name == "SpinningFrame" and d:IsA("GuiObject") then
+                        d.Visible = false
+                    end
+                end
+            end
+            for _, b in ipairs(game:GetService("Lighting"):GetChildren()) do
+                if b:IsA("BlurEffect") then
+                    b.Size = 0
+                end
+            end
+        end)
+    end
+
+    if CaseOpened and CaseOpened.OnClientEvent then
+        local revealConn = CaseOpened.OnClientEvent:Connect(function(data)
+            if not isScriptAlive() then return end
+            if not (Config.InstantRevealBypass or Config.FastOpenSkip) then return end
+
+            statsCasesSkipped = statsCasesSkipped + (tonumber(type(data) == "table" and data.Count) or 1)
+            hideSpinOverlayCleanly()
+
+            if type(data) == "table" then
+                -- Harvest all Luck Clover tokens in single or 3x multi-lanes
+                if LuckFound then
+                    if type(data.Stages) == "table" then
+                        for _, st in ipairs(data.Stages) do
+                            if type(st) == "table" and type(st.Token) == "string" and st.Token ~= "" then
+                                statsCloversClaimed = statsCloversClaimed + 1
+                                pcall(function() LuckFound:FireServer({ Token = st.Token }) end)
+                            end
+                        end
+                    end
+                    if type(data.Rounds) == "table" then
+                        for _, rd in ipairs(data.Rounds) do
+                            if type(rd) == "table" and type(rd.Lanes) == "table" then
+                                for _, ln in ipairs(rd.Lanes) do
+                                    if type(ln) == "table" and type(ln.Stages) == "table" then
+                                        for _, st in ipairs(ln.Stages) do
+                                            if type(st) == "table" and type(st.Token) == "string" and st.Token ~= "" then
+                                                statsCloversClaimed = statsCloversClaimed + 1
+                                                pcall(function() LuckFound:FireServer({ Token = st.Token }) end)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- Immediately complete server reveal lock so next case opens in 0.2s instead of 8s
+                if RequestRevealComplete then
+                    if type(data.RevealId) == "string" and data.RevealId ~= "" then
+                        pcall(function() RequestRevealComplete:FireServer({ id = data.RevealId }) end)
+                    end
+                    if type(data.RevealIds) == "table" and #data.RevealIds > 0 then
+                        pcall(function() RequestRevealComplete:FireServer({ ids = data.RevealIds }) end)
+                    end
+                end
+                if AutoOpenRevealClosed and type(data.RevealIds) == "table" and data.RevealIds[1] then
+                    pcall(function() AutoOpenRevealClosed:FireServer({ id = data.RevealIds[1] }) end)
+                end
+                if LuckCaseClear then
+                    pcall(function() LuckCaseClear:FireServer() end)
+                end
+                if SpinUIState then
+                    pcall(function() SpinUIState:FireServer(false) end)
+                end
+            end
+
+            task.delay(0.08, hideSpinOverlayCleanly)
+            task.delay(0.25, hideSpinOverlayCleanly)
+        end)
+        table.insert(overdriveConns, revealConn)
+    end
+
+    -- 2. Smart AI Expedition Engine (1,500 Free Gems/Day + Bonus Brainrots)
+    if ExpeditionSync and ExpeditionSync.OnClientEvent then
+        local expSyncConn = ExpeditionSync.OnClientEvent:Connect(function(payload)
+            if not isScriptAlive() then return end
+            if type(payload) == "table" and type(payload.Expeditions) == "table" then
+                activeExpeditions = payload.Expeditions
+            end
+        end)
+        table.insert(overdriveConns, expSyncConn)
+    end
+
+    if ExpeditionResult and ExpeditionResult.OnClientEvent then
+        local expResConn = ExpeditionResult.OnClientEvent:Connect(function(payload)
+            if not isScriptAlive() then return end
+            if type(payload) == "table" then
+                if payload.kind == "send" and payload.ok then
+                    statsExpeditionsSent = statsExpeditionsSent + 1
+                elseif payload.kind == "collect" and payload.ok then
+                    statsExpeditionsClaimed = statsExpeditionsClaimed + 1
+                end
+            end
+        end)
+        table.insert(overdriveConns, expResConn)
+    end
+
+    local function runSmartExpeditionCycle(forceNotify)
+        if not ExpeditionConfig or not RequestSendExpedition or not RequestCollectExpedition then
+            return false
+        end
+
+        local nowServer = os.time()
+        local activeCount = 0
+        for _, exp in ipairs(activeExpeditions) do
+            if type(exp) == "table" and exp.id then
+                local endT = tonumber(exp.endTime) or 0
+                if endT > 0 and nowServer >= endT then
+                    pcall(function()
+                        RequestCollectExpedition:FireServer(tostring(exp.id))
+                    end)
+                else
+                    activeCount = activeCount + 1
+                end
+            end
+        end
+
+        local maxActive = tonumber(ExpeditionConfig.MaxActiveExpeditions) or 2
+        if activeCount >= maxActive then
+            if forceNotify then
+                WindUI:Notify({
+                    Title = "🚀 Expeditions Running",
+                    Content = string.format("กำลังส่งสำรวจครบ %d/%d ทีมแล้ว (รอเก็บเพชรอัตโนมัติ)", activeCount, maxActive),
+                    Duration = 3,
+                    Icon = "compass",
+                })
+            end
+            return false
+        end
+
+        if os.clock() - lastExpeditionDispatchAt < 6.5 and not forceNotify then
+            return false
+        end
+
+        local okPets, pets = pcall(function()
+            return FuseGetPets and FuseGetPets:InvokeServer() or nil
+        end)
+        if not okPets or type(pets) ~= "table" or #pets == 0 then
+            return false
+        end
+
+        -- Sort unequipped pets by ExpeditionConfig.BrainrotPower descending
+        table.sort(pets, function(a, b)
+            local pa = 0
+            local pb = 0
+            pcall(function()
+                pa = ExpeditionConfig.BrainrotPower(a)
+                pb = ExpeditionConfig.BrainrotPower(b)
+            end)
+            return pa > pb
+        end)
+
+        local maxSlots = tonumber(ExpeditionConfig.FreeBrainrotSlots) or 2
+        local chosenTeam = {}
+        local chosenUids = {}
+        for i = 1, math.min(maxSlots, #pets) do
+            if pets[i] and pets[i].uid then
+                table.insert(chosenTeam, pets[i])
+                table.insert(chosenUids, pets[i].uid)
+            end
+        end
+        if #chosenUids == 0 then
+            return false
+        end
+
+        local teamPower = 0
+        pcall(function()
+            teamPower = ExpeditionConfig.TeamPower(chosenTeam)
+        end)
+
+        local rebirths = tonumber(LocalPlayer:GetAttribute("Rebirths")) or 0
+        local bestDestKey = ExpeditionConfig.DefaultDestKey or "forest"
+        for _, dest in ipairs(ExpeditionConfig.Destinations or {}) do
+            local dKey = dest.key
+            local unlocked = false
+            pcall(function()
+                unlocked = ExpeditionConfig.IsDestinationUnlocked(dKey, rebirths)
+            end)
+            if unlocked then
+                bestDestKey = dKey
+            end
+        end
+
+        local durKey = (Config.ExpeditionDuration == "Long (8x Gems)") and "long" or "fast"
+        local riskKey = "safe"
+        if Config.ExpeditionStrategy == "Safe (97% Win)" then
+            riskKey = "safe"
+        elseif Config.ExpeditionStrategy == "Risky (2.2x Gems)" then
+            riskKey = "risky"
+        elseif Config.ExpeditionStrategy == "Insane (4.5x Gems)" then
+            riskKey = "insane"
+        else
+            -- Smart Best EV (Auto Win%): pick highest expected gems with solid win rate
+            local bestScore = -1
+            for _, rKey in ipairs({ "safe", "risky", "insane" }) do
+                local winChance = 0.5
+                local promised = 100
+                pcall(function()
+                    winChance = ExpeditionConfig.SuccessChance(rKey, teamPower, bestDestKey, #chosenTeam, durKey)
+                    promised = ExpeditionConfig.PromisedGems(teamPower, durKey, rKey, bestDestKey)
+                end)
+                local failFrac = (rKey == "safe" and 0.5) or (rKey == "risky" and 0.3) or 0.1
+                local ev = promised * (winChance + (1 - winChance) * failFrac)
+                if winChance >= 0.65 and ev > bestScore then
+                    bestScore = ev
+                    riskKey = rKey
+                end
+            end
+        end
+
+        lastExpeditionDispatchAt = os.clock()
+        pcall(function()
+            RequestSendExpedition:FireServer({
+                uids = chosenUids,
+                durationKey = durKey,
+                riskKey = riskKey,
+                destKey = bestDestKey,
+            })
+        end)
+
+        if forceNotify then
+            WindUI:Notify({
+                Title = "🚀 ส่งทีมสำรวจสำเร็จ!",
+                Content = string.format("ด่าน: %s • โหมด: %s (%s) • สัตว์ %d ตัว", tostring(bestDestKey):upper(), tostring(riskKey):upper(), tostring(durKey):upper(), #chosenUids),
+                Duration = 3.5,
+                Icon = "rocket",
+            })
+        end
+        return true
+    end
+
+    -- 3. Smart Auto-Sell Junk Brainrots (Anywhere on Map)
+    local RARITY_ORDER_LIST = {
+        "Common",
+        "Uncommon",
+        "Rare",
+        "Epic",
+        "Legendary",
+        "Mythic",
+        "Godly",
+        "Secret",
+        "BrainrotGod",
+        "Celestial",
+    }
+    local RARITY_LABEL_TO_INDEX = {
+        ["Up to Rare"] = 3,
+        ["Up to Epic"] = 4,
+        ["Up to Legendary"] = 5,
+        ["Up to Mythic"] = 6,
+        ["Up to Godly"] = 7,
+        ["Up to Secret"] = 8,
+        ["Up to BrainrotGod"] = 9,
+        ["Up to Celestial"] = 10,
+    }
+
+    local function runAutoSellJunk(forceNotify)
+        if not SellShopRequest then return false end
+        local maxIdx = RARITY_LABEL_TO_INDEX[Config.AutoSellMaxRarity] or 6
+        local raritiesToSell = {}
+        for i = 1, maxIdx do
+            table.insert(raritiesToSell, RARITY_ORDER_LIST[i])
+        end
+        local ok, res = pcall(function()
+            return SellShopRequest:InvokeServer({
+                kind = "brainrotAll",
+                rarities = raritiesToSell,
+            })
+        end)
+        if ok and type(res) == "table" and res.ok then
+            local soldCnt = tonumber(res.count) or 0
+            local soldPrice = tonumber(res.price) or 0
+            if soldCnt > 0 then
+                statsPetsSold = statsPetsSold + soldCnt
+                statsCashFromSell = statsCashFromSell + soldPrice
+                if forceNotify then
+                    WindUI:Notify({
+                        Title = "🧹 ขายสัตว์ขยะสำเร็จ!",
+                        Content = string.format("ขายไป %d ตัว (%s) ได้เงิน +$%s", soldCnt, tostring(Config.AutoSellMaxRarity), tostring(soldPrice)),
+                        Duration = 3,
+                        Icon = "trash-2",
+                    })
+                end
+                return true
+            elseif forceNotify then
+                WindUI:Notify({
+                    Title = "🧹 กระเป๋าสะอาดแล้ว!",
+                    Content = "ไม่มีสัตว์ระดับต่ำกว่าที่ตั้งไว้ในกระเป๋า",
+                    Duration = 2.5,
+                    Icon = "check-circle",
+                })
+            end
+        end
+        return false
+    end
+
+    -- 4. Event Pass & Perm Quest Auto-Claimer + Gem Boost Buyer
+    if EventPassSync and EventPassSync.OnClientEvent then
+        local epConn = EventPassSync.OnClientEvent:Connect(function(state)
+            if not isScriptAlive() then return end
+            if type(state) == "table" then
+                eventPassState.level = tonumber(state.level) or eventPassState.level
+                eventPassState.owned = state.owned == true
+                if type(state.freeClaimed) == "table" then eventPassState.freeClaimed = state.freeClaimed end
+                if type(state.paidClaimed) == "table" then eventPassState.paidClaimed = state.paidClaimed end
+            end
+        end)
+        table.insert(overdriveConns, epConn)
+    end
+    if RequestEventPassState then
+        task.defer(function()
+            pcall(function() RequestEventPassState:FireServer() end)
+        end)
+    end
+
+    local GEM_BOOST_MAP = {
+        ["2x Luck (150 Gems)"] = { key = "GemLuck2x", btn = 1, cost = 150 },
+        ["4x Luck (500 Gems)"] = { key = "GemLuck4x", btn = 1, cost = 500 },
+        ["8x Luck (1000 Gems)"] = { key = "GemLuck8x", btn = 1, cost = 1000 },
+        ["2x Strength (150 Gems)"] = { key = "GemStrength2x", btn = 1, cost = 150 },
+        ["4x Strength (500 Gems)"] = { key = "GemStrength4x", btn = 1, cost = 500 },
+        ["8x Strength (1000 Gems)"] = { key = "GemStrength8x", btn = 1, cost = 1000 },
+    }
+
+    -- Build VVIP Overdrive Tab UI
+    TabPremium:Section({ Title = "👑 VVIP Overdrive Telemetry (สถานะระบบอัจฉริยะ)" })
+
+    local overdriveStatusParagraph = TabPremium:Paragraph({
+        Title = "📊 Live Overdrive Monitor",
+        Desc = "กำลังซิงค์ข้อมูลกระเป๋า, กล่องกลายพันธุ์ และทีมสำรวจเพชร...",
+    })
+
+    local function updateOverdriveTelemetry()
+        pcall(function()
+            if not overdriveStatusParagraph or not overdriveStatusParagraph.SetDesc then return end
+            local _, baseCnt, mutCnt = scanOwnedCases(false)
+            local gems = tonumber(LocalPlayer:GetAttribute("Gems")) or 0
+            local expToday = tonumber(LocalPlayer:GetAttribute("ExpGemsToday")) or 0
+            local reb = tonumber(LocalPlayer:GetAttribute("Rebirths")) or 0
+            local line1 = string.format("📦 กล่องทั่วไป: %d ใบ | 🧬 กล่องกลายพันธุ์/อีเวนต์: %d ใบ", baseCnt, mutCnt)
+            local line2 = string.format("💎 เพชรทั้งหมด: %d | 🚀 เพชรสำรวจวันนี้: %d/1,500 (ทีมสำรวจ: %d/2)", gems, expToday, #activeExpeditions)
+            local line3 = string.format("⚡ ข้ามอนิเมชันเปิดกล่อง: %d ใบ (เก็บใบโคลเวอร์ Luck: %d) | 🧹 ขายสัตว์ขยะ: %d ตัว (Rebirths: %d)", statsCasesSkipped, statsCloversClaimed, statsPetsSold, reb)
+            overdriveStatusParagraph:SetDesc(line1 .. "\n" .. line2 .. "\n" .. line3)
+        end)
+    end
+
+    TabPremium:Section({ Title = "🧬 Hyper Case & Mutation Overdrive (เปิดกล่องกลายพันธุ์ 0 วินาที)" })
+
+    TabPremium:Toggle({
+        Title = "Instant 0s Reveal & Auto Luck Clover",
+        Desc = "ข้ามวงล้อสุ่มกล่อง 8 วินาทียกชุดทันที + เก็บเหรียญโคลเวอร์เพิ่มดวง (Luck Token) ในกล่องให้อัตโนมัติ 100%",
+        Default = false,
+        Callback = function(v)
+            Config.InstantRevealBypass = v
+            if v then
+                hideSpinOverlayCleanly()
+            end
+        end,
+    })
+
+    TabPremium:Toggle({
+        Title = "Auto Open All Mutated & Event Cases (3x)",
+        Desc = "สแกนและเปิดกล่องกลายพันธุ์ทุกธาตุ (Lightning, Plasma, Wet, Bubblegum, Lava, Frozen ฯลฯ) และกล่องอีเวนต์แบบ 3x อัตโนมัติ",
+        Default = false,
+        Callback = function(v)
+            Config.AutoOpenMutatedCases = v
+        end,
+    })
+
+    TabPremium:Button({
+        Title = "🧬 Open All Mutated & Event Cases Now (เปิดกล่องกลายพันธุ์ทันที)",
+        Callback = function()
+            task.spawn(function()
+                local mutList = scanOwnedCases(true)
+                if #mutList == 0 then
+                    WindUI:Notify({
+                        Title = "🧬 ไม่พบกล่องกลายพันธุ์",
+                        Content = "ตอนนี้ไม่มีกล่องกลายพันธุ์หรือกล่องอีเวนต์ในกระเป๋า",
+                        Duration = 2.5,
+                        Icon = "info",
+                    })
+                    return
+                end
+                local prevBypass = Config.InstantRevealBypass
+                Config.InstantRevealBypass = true
+                local openedStacks = 0
+                for _, item in ipairs(mutList) do
+                    if isFlightActive() then break end
+                    if openCaseInstance(item.key) then
+                        openedStacks = openedStacks + 1
+                        task.wait(0.24)
+                    end
+                end
+                Config.InstantRevealBypass = prevBypass
+                updateOverdriveTelemetry()
+                WindUI:Notify({
+                    Title = "🧬 เปิดกล่องกลายพันธุ์สำเร็จ!",
+                    Content = string.format("สั่งเปิดกล่องกลายพันธุ์/อีเวนต์ไป %d ชุดเรียบร้อย", openedStacks),
+                    Duration = 3,
+                    Icon = "sparkles",
+                })
+            end)
+        end,
+    })
+
+    TabPremium:Section({ Title = "🚀 Smart AI Auto-Expedition (ฟาร์มเพชรฟรี 1,500 Gems/วัน)" })
+
+    TabPremium:Toggle({
+        Title = "Smart AI Auto-Expedition (1,500 Gems/Day)",
+        Desc = "คำนวณพลังสัตว์และส่งทีมที่เก่งที่สุดในกระเป๋าไปสำรวจด่านสูงสุด + กดรับเพชรและสัตว์โบนัสอัตโนมัติจากทุกที่ในแมพ",
+        Default = false,
+        Callback = function(v)
+            Config.AutoSmartExpedition = v
+            if v then
+                task.spawn(function()
+                    runSmartExpeditionCycle(false)
+                end)
+            end
+        end,
+    })
+
+    TabPremium:Dropdown({
+        Title = "Expedition Risk Strategy",
+        Values = {
+            "Smart Best EV (Auto Win%)",
+            "Safe (97% Win)",
+            "Risky (2.2x Gems)",
+            "Insane (4.5x Gems)",
+        },
+        Default = "Smart Best EV (Auto Win%)",
+        Callback = function(v)
+            Config.ExpeditionStrategy = v
+        end,
+    })
+
+    TabPremium:Dropdown({
+        Title = "Expedition Duration",
+        Values = { "Fast (1-1.7h)", "Long (8x Gems)" },
+        Default = "Fast (1-1.7h)",
+        Callback = function(v)
+            Config.ExpeditionDuration = v
+        end,
+    })
+
+    TabPremium:Button({
+        Title = "🚀 Dispatch & Claim Expedition Now (ส่งสำรวจ/รับเพชรทันที)",
+        Callback = function()
+            task.spawn(function()
+                runSmartExpeditionCycle(true)
+                updateOverdriveTelemetry()
+            end)
+        end,
+    })
+
+    TabPremium:Section({ Title = "🧹 Smart Auto-Sell & 1-Click Max Level (จัดการฐานและกระเป๋า)" })
+
+    TabPremium:Toggle({
+        Title = "Smart Auto-Sell Junk Brainrots (Anywhere)",
+        Desc = "ขายสัตว์ขยะที่ไม่ได้วางในฐานอัตโนมัติจากทุกที่ในแมพ (ป้องกันกระเป๋า 2,000 ช่องเต็มตอนเปิดกล่องรัวๆ)",
+        Default = false,
+        Callback = function(v)
+            Config.AutoSellJunkPets = v
+            if v then
+                task.spawn(function()
+                    runAutoSellJunk(false)
+                end)
+            end
+        end,
+    })
+
+    TabPremium:Dropdown({
+        Title = "Auto-Sell Max Rarity Filter",
+        Values = {
+            "Up to Rare",
+            "Up to Epic",
+            "Up to Legendary",
+            "Up to Mythic",
+            "Up to Godly",
+            "Up to Secret",
+            "Up to BrainrotGod",
+            "Up to Celestial",
+        },
+        Default = "Up to Mythic",
+        Callback = function(v)
+            Config.AutoSellMaxRarity = v
+        end,
+    })
+
+    TabPremium:Button({
+        Title = "🧹 Clean & Sell Junk Brainrots Now (ล้างสัตว์ขยะทันที)",
+        Callback = function()
+            task.spawn(function()
+                runAutoSellJunk(true)
+                updateOverdriveTelemetry()
+            end)
+        end,
+    })
+
+    TabPremium:Toggle({
+        Title = "1-Click Max Level Units (Lv.1 -> Lv.100)",
+        Desc = "อัปเกรดสัตว์ในฐานแบบข้ามขั้นถึงเลเวลสูงสุดที่เงินพอในคลิกเดียว (RequestSlotLevelMax)",
+        Default = false,
+        Callback = function(v)
+            Config.InstantMaxLevelUnits = v
+        end,
+    })
+
+    TabPremium:Button({
+        Title = "⚡ Max-Level All Placed Units Now (อัปสัตว์ทุกตัวให้ตันทันที)",
+        Callback = function()
+            task.spawn(function()
+                if not RequestSlotLevelMax then return end
+                local fired = 0
+                for slotIdx = 1, 30 do
+                    pcall(function()
+                        RequestSlotLevelMax:FireServer({ slot = slotIdx })
+                        fired = fired + 1
+                    end)
+                    task.wait(0.03)
+                end
+                WindUI:Notify({
+                    Title = "⚡ Max-Level Dispatched!",
+                    Content = "สั่งอัปเลเวลสูงสุดให้สัตว์ทุกช่องในฐานเรียบร้อย!",
+                    Duration = 2.5,
+                    Icon = "zap",
+                })
+            end)
+        end,
+    })
+
+    TabPremium:Section({ Title = "💎 Auto Event Pass, Perm Quests & Gem Boosts" })
+
+    TabPremium:Toggle({
+        Title = "Auto Claim Event Pass & Perm Quests",
+        Desc = "รับของรางวัล Battlepass (Event Pass) ทุกเลเวลและเควสต์ถาวร (Velociraptor) อัตโนมัติ",
+        Default = false,
+        Callback = function(v)
+            Config.AutoClaimEventPass = v
+        end,
+    })
+
+    TabPremium:Toggle({
+        Title = "Auto Buy Gem Shop Boosts",
+        Desc = "ใช้เพชรซื้อบัฟคูณดวงเปิดกล่อง (Luck) หรือคูณพลังยกเวท (Strength) อัตโนมัติ",
+        Default = false,
+        Callback = function(v)
+            Config.AutoBuyGemBoost = v
+        end,
+    })
+
+    TabPremium:Dropdown({
+        Title = "Target Gem Boost",
+        Values = {
+            "2x Luck (150 Gems)",
+            "4x Luck (500 Gems)",
+            "8x Luck (1000 Gems)",
+            "2x Strength (150 Gems)",
+            "4x Strength (500 Gems)",
+            "8x Strength (1000 Gems)",
+        },
+        Default = "2x Luck (150 Gems)",
+        Callback = function(v)
+            Config.SelectedGemBoost = v
+        end,
+    })
+
+    -- Background Workers for VVIP Overdrive
+    task.spawn(function()
+        local lastSellAt = 0
+        local lastExpAt = 0
+        local lastPassAt = 0
+        local lastBoostAt = 0
+        while isScriptAlive() do
+            task.wait(1.0)
+            updateOverdriveTelemetry()
+
+            local now = os.clock()
+            if Config.AutoSmartExpedition and (now - lastExpAt) >= 5.0 then
+                lastExpAt = now
+                pcall(runSmartExpeditionCycle, false)
+            end
+
+            if Config.AutoSellJunkPets and (now - lastSellAt) >= 6.0 then
+                lastSellAt = now
+                pcall(runAutoSellJunk, false)
+            end
+
+            if Config.AutoClaimEventPass and (now - lastPassAt) >= 8.0 then
+                lastPassAt = now
+                pcall(function()
+                    if RequestEventPassState then
+                        RequestEventPassState:FireServer()
+                    end
+                    if RequestEventPassClaim then
+                        local maxLvl = math.max(tonumber(eventPassState.level) or 0, 30)
+                        for lvl = 1, maxLvl do
+                            if not eventPassState.freeClaimed[tostring(lvl)] then
+                                RequestEventPassClaim:FireServer("Free", lvl)
+                            end
+                            if eventPassState.owned and not eventPassState.paidClaimed[tostring(lvl)] then
+                                RequestEventPassClaim:FireServer("Paid", lvl)
+                            end
+                        end
+                    end
+                    if RequestClaimPermQuest then
+                        RequestClaimPermQuest:InvokeServer({})
+                    end
+                end)
+            end
+
+            if Config.AutoBuyGemBoost and RequestBuyGemItem and (now - lastBoostAt) >= 35.0 then
+                local boostCfg = GEM_BOOST_MAP[Config.SelectedGemBoost]
+                local curGems = tonumber(LocalPlayer:GetAttribute("Gems")) or 0
+                if boostCfg and curGems >= boostCfg.cost then
+                    lastBoostAt = now
+                    pcall(function()
+                        RequestBuyGemItem:FireServer({ key = boostCfg.key, btn = boostCfg.btn })
+                    end)
+                end
+            end
+        end
+    end)
+
+    -- Expose scanOwnedCases on CfgSys so AutoOpenAll can also open Mutated & Event cases!
+    CfgSys.ScanOwnedCases = scanOwnedCases
+end
+
+-- Auto Case Opener Background Worker (Upgraded with Mutated & Event Case Scanner)
 task.spawn(function()
-    while true do
-        task.wait(0.15)
-        if (Config.AutoOpenSelected or Config.AutoOpenAll) and not isFlightActive() then
+    while isScriptAlive() do
+        task.wait(0.12)
+        if (Config.AutoOpenSelected or Config.AutoOpenAll or Config.AutoOpenMutatedCases) and not isFlightActive() then
+            local delaySec = (Config.InstantRevealBypass or Config.FastOpenSkip)
+                and math.min(tonumber(Config.CaseOpenDelay) or 0.25, 0.25)
+                or (tonumber(Config.CaseOpenDelay) or 0.35)
+
             if Config.AutoOpenSelected and Config.SelectedCase then
                 if openCaseInstance(Config.SelectedCase) then
-                    task.wait(Config.CaseOpenDelay)
+                    task.wait(delaySec)
                 else
                     task.wait(0.4)
                 end
-            elseif Config.AutoOpenAll then
-                local openedAny = false
-                for _, caseName in ipairs(CaseNamesList) do
-                    if not Config.AutoOpenAll or isFlightActive() then break end
-                    if getCaseCount(caseName) > 0 then
-                        openCaseInstance(caseName)
-                        openedAny = true
-                        task.wait(Config.CaseOpenDelay)
+            elseif Config.AutoOpenMutatedCases and not Config.AutoOpenAll then
+                local mutList = CfgSys.ScanOwnedCases and CfgSys.ScanOwnedCases(true) or {}
+                if #mutList > 0 then
+                    for _, item in ipairs(mutList) do
+                        if not Config.AutoOpenMutatedCases or isFlightActive() then break end
+                        if openCaseInstance(item.key) then
+                            task.wait(delaySec)
+                        end
                     end
+                else
+                    task.wait(0.6)
                 end
-                if not openedAny then
+            elseif Config.AutoOpenAll then
+                local allList = CfgSys.ScanOwnedCases and CfgSys.ScanOwnedCases(false) or {}
+                if #allList > 0 then
+                    for _, item in ipairs(allList) do
+                        if not Config.AutoOpenAll or isFlightActive() then break end
+                        if openCaseInstance(item.key) then
+                            task.wait(delaySec)
+                        end
+                    end
+                else
                     task.wait(0.6)
                 end
             end
@@ -2806,7 +3594,7 @@ task.spawn(function()
                 tryEquipBestUnits(false)
             end
 
-            if Config.AutoUpgradeUnits and RequestSlotLevel then
+            if (Config.AutoUpgradeUnits or Config.InstantMaxLevelUnits) and RequestSlotLevel then
                 local plot, plotIdx = getMyPlot()
                 if plot and plotIdx then
                     if RequestSlotSignSync and (next(slotSignCache) == nil or (now - lastSlotSync) >= 4.5) then
@@ -2819,7 +3607,12 @@ task.spawn(function()
                             lastUpgradedSlot = bestSlot
                             upgradePendingUntil = now + 0.28
                             pcall(function()
-                                RequestSlotLevel:FireServer({ slot = bestSlot })
+                                local maxRem = Config.InstantMaxLevelUnits and Remotes:FindFirstChild("RequestSlotLevelMax")
+                                if maxRem then
+                                    maxRem:FireServer({ slot = bestSlot })
+                                else
+                                    RequestSlotLevel:FireServer({ slot = bestSlot })
+                                end
                             end)
                         end
                     end
@@ -3671,7 +4464,14 @@ do
             Config.InstantWarpReturn = false
             Config.AutoOpenAll = false
             Config.AutoOpenSelected = false
+            Config.AutoOpenMutatedCases = false
             Config.FastOpenSkip = false
+            Config.InstantRevealBypass = false
+            Config.AutoSmartExpedition = false
+            Config.AutoSellJunkPets = false
+            Config.InstantMaxLevelUnits = false
+            Config.AutoClaimEventPass = false
+            Config.AutoBuyGemBoost = false
             Config.AutoEquipBest = false
             Config.AutoCollectMoney = false
             Config.AutoUpgradeUnits = false
@@ -3717,6 +4517,12 @@ do
                 pcall(function() c:Disconnect() end)
             end
             table.clear(equipTriggerConns)
+            if type(CfgSys.OverdriveConns) == "table" then
+                for _, c in ipairs(CfgSys.OverdriveConns) do
+                    pcall(function() c:Disconnect() end)
+                end
+                table.clear(CfgSys.OverdriveConns)
+            end
             table.clear(slotSignCache)
             if kickingBypassConn then
                 pcall(function() kickingBypassConn:Disconnect() end)
