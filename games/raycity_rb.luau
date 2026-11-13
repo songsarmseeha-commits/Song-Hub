@@ -223,6 +223,12 @@ local Config = {
     AutoFarmQuests = false,
     AutoStoryProgression = false,
     AutoCleanInventory = false,
+    AutoPhotoMission = false,
+    AutoSellJunk = false,
+    AutoTrashJunk = false,
+    StrictMoneyOnly = false,
+    ProtectTicketsAndKeys = true,
+    MinKeepSellValue = 5000,
     QuestDriveMode = "Instant Warp", -- "Instant Warp" | "Realistic Road Drive" | "Hyper Sonic Glide" | "Hybrid Cruise"
     QuestDriveSpeed = 260, -- km/h
     AutoSkipDialogue = false,
@@ -535,12 +541,99 @@ TabQuest:Toggle({
     end
 })
 
+local SmartInvBridge = {}
+
 TabQuest:Toggle({
-    Title = "🧹 Auto Clean Inventory (ขายขยะเคลียร์ช่องกระเป๋าออโต้)",
-    Desc = "ขายไอเทมขยะที่ไม่ได้ผูกมัดอัตโนมัติ เพื่อให้มีช่องว่างในกระเป๋าอย่างน้อย 18 ช่องสำหรับรับรางวัลเควส ป้องกันติดบั๊กกระเป๋าเต็ม",
+    Title = "📸 Auto Photo Mission (ถ่ายรูปเควสกด Insert ออโต้)",
+    Desc = "ตรวจจับหน้าจอถ่ายรูป PhotoCam (กด Insert) จอดให้ตรงจุดแล้วรอจังหวะแถบสีเขียวกดถ่ายให้อัตโนมัติ (ทำงานให้เองตอนรัน Auto Farm/Story ด้วย)",
+    Value = Config.AutoPhotoMission,
+    Callback = function(val)
+        Config.AutoPhotoMission = val
+    end
+})
+
+TabQuest:Divider()
+
+TabQuest:Paragraph({
+    Title = "💰 Smart Auto Sell & Trash (ขายของ + เก็บเฉพาะของทำเงิน)",
+    Desc = "แยกอัตโนมัติ: เก็บกล่องเงิน/ลูกเต๋า/ลอตเตอรี่/เพชร/ไข่มุก/รูน/สว่าน/กล่องตีบวก และของราคาสูง พร้อมขายหรือทิ้งขยะที่ไม่ทำเงิน",
+    Image = "coins"
+})
+
+TabQuest:Toggle({
+    Title = "🧹 Auto Clean Inventory (เคลียร์กระเป๋าก่อนรับ-ส่งเควส)",
+    Desc = "เคลียร์ช่องกระเป๋าอัตโนมัติให้ว่างพอสำหรับรับรางวัลเควส โดยไม่ยุ่งกับกล่องเงิน/เพชร/ของทำเงิน",
     Value = Config.AutoCleanInventory,
     Callback = function(val)
         Config.AutoCleanInventory = val
+    end
+})
+
+TabQuest:Toggle({
+    Title = "💰 Auto Sell Non-Money Loot (ขายของไม่ทำเงินเป็น Rain ออโต้)",
+    Desc = "ขายอะไหล่ทั่วไป/ของดรอปที่ไม่ทำเงินและราคาต่ำกว่าเกณฑ์เข้า Shop ทันทีจากทุกที่ (ไม่ต้องเปิดร้านค้า)",
+    Value = Config.AutoSellJunk,
+    Callback = function(val)
+        Config.AutoSellJunk = val
+    end
+})
+
+TabQuest:Toggle({
+    Title = "🗑️ Auto Trash Unsellable Junk (ทิ้งขยะขายไม่ได้ sell=0 ออโต้)",
+    Desc = "โยนทิ้งของที่ขายร้านไม่ได้ (ราคา 0 / ผูกมัด / อะไหล่ Rookie ขยะ) ออกจากกระเป๋าให้อัตโนมัติ",
+    Value = Config.AutoTrashJunk,
+    Callback = function(val)
+        Config.AutoTrashJunk = val
+    end
+})
+
+TabQuest:Toggle({
+    Title = "💎 Strict Money-Only Filter (โหมดเก็บเฉพาะของทำเงิน 100%)",
+    Desc = "เปิด = ทิ้ง/ขายเรียบแม้แต่ตั๋ว EXP และกุญแจรถ เหลือแค่กล่องเงิน ลูกเต๋า ลอตเตอรี่ เพชร สว่าน ตีบวก และของราคาสูงเท่านั้น",
+    Value = Config.StrictMoneyOnly,
+    Callback = function(val)
+        Config.StrictMoneyOnly = val
+    end
+})
+
+TabQuest:Toggle({
+    Title = "🛡️ Protect EXP/Rain Tickets & Car Keys (กันทิ้งตั๋วคูณ/กุญแจรถ)",
+    Desc = "คุ้มครองตั๋วบัฟ EXP/Rain และกุญแจรถไม่ให้ถูกทิ้งอัตโนมัติ (ไม่มีผลเมื่อเปิด Strict Mode)",
+    Value = Config.ProtectTicketsAndKeys,
+    Callback = function(val)
+        Config.ProtectTicketsAndKeys = val
+    end
+})
+
+TabQuest:Slider({
+    Title = "💵 Keep High-Value Sell >= (เก็บของขายได้ตั้งแต่ Rain)",
+    Desc = "ของที่ราคาขายร้านต่อชิ้นถึงค่านี้จะถูกเก็บไว้ (ตั้งเป็น 0 = ขายทุกชิ้นที่ไม่ใช่กล่องเงิน/แรร์)",
+    Value = { Min = 0, Max = 50000, Default = Config.MinKeepSellValue },
+    Callback = function(val)
+        Config.MinKeepSellValue = math.max(0, math.floor((tonumber(val) or 0) + 0.5))
+    end
+})
+
+TabQuest:Button({
+    Title = "🧹 Clean & Sell Inventory Now (ขาย + ทิ้งขยะทันที Keep เฉพาะของทำเงิน)",
+    Desc = "สแกนกระเป๋าเดี๋ยวนี้: ขายของไม่ทำเงินรับ Rain ทันที + ทิ้งขยะราคา 0 พร้อมแจ้งสรุปผล",
+    Callback = function()
+        if SmartInvBridge.run then
+            local stats = SmartInvBridge.run(true, 999, true, true)
+            WindUI:Notify({
+                Title = "Inventory Cleaned! 💰",
+                Content = string.format(
+                    "ขายแล้ว %d ชิ้น (+%s Rain)\nทิ้งขยะ %d ชิ้น | เก็บของทำเงิน %d ชิ้น\nช่องว่างตอนนี้: %d ช่อง",
+                    stats.soldCount or 0,
+                    tostring(stats.earnedRain or 0),
+                    stats.trashedCount or 0,
+                    stats.keptCount or 0,
+                    stats.freeSlots or 0
+                ),
+                Duration = 4,
+                Icon = "check-circle"
+            })
+        end
     end
 })
 
@@ -1992,6 +2085,136 @@ end
 
 -- ==============================================================================
 -- 💰 4.9. CONTINUOUS BACKGROUND 1.5M CASH BOX OPENER & DICE ROLLER
+-- Photo Mission (PhotoDest / Press Insert Minigame) Auto Solver
+SmartInvBridge.photoState = SmartInvBridge.photoState or { cam = nil, openedAt = 0, lastShotAt = 0, shotCount = 0 }
+SmartInvBridge.lastBgCleanAt = 0
+
+function SmartInvBridge.solvePhotoCamIfOpen()
+    local Players = game:GetService("Players")
+    local Rep = game:GetService("ReplicatedStorage")
+    local lp = Players.LocalPlayer
+    local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+    local extraGui = pg and pg:FindFirstChild("RaycityMissionExtra")
+    local photoCam = extraGui and extraGui:FindFirstChild("PhotoCam")
+    local st = SmartInvBridge.photoState
+
+    if not photoCam or not photoCam.Visible then
+        st.cam = nil
+        st.openedAt = 0
+        return false
+    end
+
+    if st.cam ~= photoCam then
+        st.cam = photoCam
+        st.openedAt = os.clock()
+        st.lastShotAt = 0
+    end
+
+    local stamp = photoCam:FindFirstChild("Stamp")
+    if stamp and stamp.Visible then
+        return true
+    end
+
+    -- Respect MissionExtraRules.photoMinShotMs (150ms) before attempting Insert
+    if (os.clock() - st.openedAt) < 0.21 then
+        return false
+    end
+
+    -- Avoid spamming multiple shots while waiting for server stamp confirmation
+    if st.lastShotAt > 0 and (os.clock() - st.lastShotAt) < 0.65 then
+        return false
+    end
+
+    local hitWindow = photoCam:FindFirstChild("HitWindow")
+    local arrow = photoCam:FindFirstChild("Arrow")
+    if not hitWindow or not arrow then
+        return false
+    end
+
+    local okRules, rules = pcall(function()
+        local mod = Rep:FindFirstChild("RaycityMissionExtra") and Rep.RaycityMissionExtra:FindFirstChild("MissionExtraRules")
+        return mod and require(mod) or nil
+    end)
+    if not okRules then rules = nil end
+
+    local RunService = game:GetService("RunService")
+    local VIM = game:GetService("VirtualInputManager")
+
+    local waitStart = os.clock()
+    local aligned = false
+    while isAlive() and photoCam.Parent and photoCam.Visible and not (stamp and stamp.Visible) do
+        local lo = hitWindow.Position.X.Offset
+        local hi = lo + hitWindow.Size.X.Offset - 0.5
+        local ux = arrow.Position.X.Offset + 3.5
+        local markerX = ux + 4.5
+        local center = (lo + hi) * 0.5
+        local halfSpan = math.max(1, (hi - lo) * 0.5)
+
+        local inWindow = false
+        if rules and rules.photoHit then
+            local okH, resH = pcall(rules.photoHit, ux, lo, hi)
+            inWindow = (okH and resH == true)
+        else
+            inWindow = (markerX >= lo and markerX <= hi)
+        end
+
+        local elapsed = os.clock() - waitStart
+        if inWindow and (math.abs(markerX - center) <= math.max(5, halfSpan * 0.68) or elapsed >= 0.70) then
+            aligned = true
+            break
+        end
+        if elapsed >= 1.60 then
+            break
+        end
+        RunService.Heartbeat:Wait()
+    end
+
+    if not aligned or not photoCam.Parent or not photoCam.Visible or (stamp and stamp.Visible) then
+        return (stamp and stamp.Visible) == true
+    end
+
+    st.lastShotAt = os.clock()
+    st.shotCount = (st.shotCount or 0) + 1
+
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.Insert, false, game)
+    end)
+    task.delay(0.035, function()
+        pcall(function()
+            VIM:SendKeyEvent(false, Enum.KeyCode.Insert, false, game)
+        end)
+    end)
+
+    -- Short check: if VirtualInputManager didn't stamp (some executors block VIM), fire fallback click/keypress
+    task.wait(0.14)
+    if photoCam.Parent and photoCam.Visible and not (stamp and stamp.Visible) then
+        local shootBtn = photoCam:FindFirstChild("PhotoShoot")
+        if shootBtn and firesignal then
+            pcall(firesignal, shootBtn.MouseButton1Click)
+            pcall(firesignal, shootBtn.Activated)
+        end
+        if keypress then
+            pcall(keypress, 0x2D)
+            task.delay(0.035, function()
+                if keyrelease then pcall(keyrelease, 0x2D) end
+            end)
+        elseif keytap then
+            pcall(keytap, 0x2D)
+        end
+    end
+
+    return true
+end
+
+task.spawn(function()
+    while isAlive() do
+        task.wait(0.06)
+        if Config.AutoPhotoMission or Config.AutoFarmQuests or Config.AutoStoryProgression or Config.AutoLevel1ToMax then
+            pcall(SmartInvBridge.solvePhotoCamIfOpen)
+        end
+    end
+end)
+
 task.spawn(function()
     while isAlive() do
         task.wait(1.5)
@@ -2000,6 +2223,15 @@ task.spawn(function()
         end
         if Config.AutoRollDice or Config.AutoFarmDerix then
             pcall(handleDiceRollAndRewards)
+        end
+        if (Config.AutoSellJunk or Config.AutoTrashJunk) and SmartInvBridge.run then
+            local now = os.clock()
+            if (now - (SmartInvBridge.lastBgCleanAt or 0)) >= 2.5 then
+                SmartInvBridge.lastBgCleanAt = now
+                pcall(function()
+                    SmartInvBridge.run(false, 999, Config.AutoSellJunk, Config.AutoTrashJunk)
+                end)
+            end
         end
     end
 end)
@@ -2365,57 +2597,300 @@ challengeDerix = function(preferredRound)
     return true
 end
 
-local function ensureInventorySpace(minFree)
-    if not Config.AutoCleanInventory then return end
-    minFree = minFree or 10
-    pcall(function()
-        local rep = game:GetService("ReplicatedStorage")
-        local pcMod = rep:FindFirstChild("RaycityProfile") and rep.RaycityProfile:FindFirstChild("ProfileClient")
-        local scMod = rep:FindFirstChild("RaycityShop") and rep.RaycityShop:FindFirstChild("ShopClient")
-        local iuReq = rep:FindFirstChild("RaycityItemUse") and rep.RaycityItemUse:FindFirstChild("Remotes") and rep.RaycityItemUse.Remotes:FindFirstChild("ItemUseRequest")
-        if not pcMod then return end
+-- Smart Auto Sell & Auto Trash ("Keep ONLY Money-Making Items")
+local MONEY_BOX_IDS = {
+    [15182] = true, -- Power Jet Box (500k)
+    [18270] = true, -- Power Jet Box (700k)
+    [19309] = true, -- Power Jet Box (1.5M)
+}
 
-        local pc = require(pcMod)
-        local data = pc.get and pc.get()
-        if not data or not data.inventory then
-            data = pc.request and pc.request("get")
-            data = data and (data.profile or data)
+local MONEY_KEEP_KEYWORDS = {
+    "cash", "rain", "money", "coin", "gold", "silver",
+    "box", "chest", "pouch", "lottery", "dice", "bingo",
+    "jewel", "gem", "pearl", "diamond", "ruby", "emerald", "sapphire", "opal", "crystal", "rune",
+    "drill", "enchant", "toolbox", "tool box", "upgrade", "jet box",
+    "เพชร", "ไข่มุก", "พลอย", "ทอง", "เงิน", "กล่อง", "ลูกเต๋า", "สว่าน", "รูน", "ตีบวก",
+}
+
+local function matchesAnyKeyword(str, list)
+    if not str or str == "" then return false end
+    local low = string.lower(tostring(str))
+    for _, kw in ipairs(list) do
+        if string.find(low, kw, 1, true) then
+            return true
         end
-        if not data or not data.inventory then return end
+    end
+    return false
+end
 
-        local count = 0
-        for _ in pairs(data.inventory) do count = count + 1 end
-        local free = (data.invSize or 30) - count
+local function loadInventoryModules()
+    local rep = game:GetService("ReplicatedStorage")
+    local rsShop = rep:FindFirstChild("RaycityShop")
+    local rsProf = rep:FindFirstChild("RaycityProfile")
+    local rsUse = rep:FindFirstChild("RaycityItemUse")
 
-        -- 1. Use / consume usable car keys, part boxes, charms, or tickets to free inventory slots permanently
-        if free < minFree and iuReq then
-            for cell, item in pairs(data.inventory) do
-                pcall(function()
-                    local uRes = iuReq:InvokeServer("use", { cell = tonumber(cell), id = item.id })
-                    if uRes and uRes.ok then
-                        free = free + 1
-                    end
-                end)
-                if free >= minFree then break end
-            end
+    local function safeReq(inst)
+        if not inst then return nil end
+        local ok, mod = pcall(require, inst)
+        return ok and mod or nil
+    end
+
+    return {
+        pc = safeReq(rsProf and rsProf:FindFirstChild("ProfileClient")),
+        sc = safeReq(rsShop and rsShop:FindFirstChild("ShopClient")),
+        shopItems = safeReq(rsShop and rsShop:FindFirstChild("ShopItems")),
+        shopItemsExtra = safeReq(rsShop and rsShop:FindFirstChild("ShopItemsExtra")),
+        sellPriceMod = safeReq(rsShop and rsShop:FindFirstChild("ItemSellPrice")),
+        itemUseData = safeReq(rsUse and rsUse:FindFirstChild("ItemUseData")),
+    }
+end
+
+local function lookupShopItemDef(id, mods)
+    local numId = tonumber(id)
+    local strId = tostring(id)
+    local def = nil
+    if mods.shopItems then
+        def = (numId and mods.shopItems[numId]) or mods.shopItems[strId]
+        if not def and type(mods.shopItems.get) == "function" then
+            local okG, dG = pcall(mods.shopItems.get, numId or id)
+            if okG then def = dG end
+        end
+    end
+    if not def and mods.shopItemsExtra then
+        def = (numId and mods.shopItemsExtra[numId]) or mods.shopItemsExtra[strId]
+    end
+    if not def and mods.sellPriceMod and type(mods.sellPriceMod.defOf) == "function" then
+        local okD, dD = pcall(mods.sellPriceMod.defOf, numId or id)
+        if okD then def = dD end
+    end
+    return def
+end
+
+local function computeItemSellPrice(item, def, sellPriceMod)
+    if not item or not def then return 0 end
+    if item.bound == true or item.expires ~= nil then return 0 end
+    if def.bonding and def.bonding ~= 0 then return 0 end
+    if def.type and def.type >= 5 and def.type <= 8 then return 0 end
+
+    local p = nil
+    if sellPriceMod and sellPriceMod.ofDef then
+        local ok, res = pcall(sellPriceMod.ofDef, def, item.id)
+        if ok then p = tonumber(res) end
+    end
+    return tonumber(p or def.sell) or 0
+end
+
+local function classifyInventoryItem(item, def, unitSell, itemUseData)
+    if not item or not item.id or not item.uid then
+        return "KEEP", "Missing Metadata"
+    end
+    if item.equipped then
+        return "KEEP", "Equipped"
+    end
+    if not def then
+        return "KEEP", "Unknown Item"
+    end
+
+    local id = tonumber(item.id)
+    local itType = tonumber(def.type) or -1
+    local kind = tostring(def.kind or "")
+    local name = tostring(def.name or "")
+
+    -- 1. Cash boxes, dice, lottery bags, drills, gems/pearls/runes, enchants, bingo kits
+    if id and MONEY_BOX_IDS[id] then
+        return "KEEP", "Cash Box"
+    end
+    if itemUseData and id then
+        if (itemUseData.BOX and itemUseData.BOX[id])
+            or (itemUseData.LOTTERY and itemUseData.LOTTERY[id])
+            or (itemUseData.DICE and itemUseData.DICE[id])
+        then
+            return "KEEP", "Box/Lottery/Dice"
+        end
+        if itemUseData.ITEMS and itemUseData.ITEMS[id] and matchesAnyKeyword(name, { "jet box", "cash", "rain", "gold", "box", "เงิน", "กล่อง" }) then
+            return "KEEP", "Cash Use Item"
+        end
+    end
+
+    if kind == "Enchant" or kind == "Bingo" or kind == "Jewel" or kind == "Gem" or kind == "Drill" or kind == "Rune" then
+        return "KEEP", "Money Kind (" .. kind .. ")"
+    end
+
+    if itType == 1 or itType == 11 or itType == 15 or itType == 16 or itType == 22 or itType == 23 or itType == 26 or itType == 31 or itType == 34 or itType == 36 then
+        return "KEEP", "Money/Rare Type (" .. tostring(itType) .. ")"
+    end
+
+    if itType == 2 and matchesAnyKeyword(name, MONEY_KEEP_KEYWORDS) then
+        return "KEEP", "Valuable Material"
+    end
+
+    -- 2. High-value sellable loot (>= MinKeepSellValue, disabled if threshold == 0)
+    local threshold = tonumber(Config.MinKeepSellValue) or 5000
+    local stackSell = unitSell * (tonumber(item.count) or 1)
+    if threshold > 0 and (unitSell >= threshold or (itType ~= 20 and stackSell >= threshold)) then
+        return "KEEP", "High Value (" .. tostring(unitSell) .. " Rain)"
+    end
+
+    -- 3. Protect EXP/Rain Tickets (type 10) & Car Keys (type 28) unless StrictMoneyOnly is enabled
+    if (not Config.StrictMoneyOnly) and Config.ProtectTicketsAndKeys then
+        if itType == 10 then
+            return "KEEP", "Protected Ticket/Charm"
+        end
+        if itType == 28 then
+            return "KEEP", "Protected Car Key"
+        end
+    end
+
+    -- Never drop special/mission bound system types (5..8) accidentally
+    if itType >= 5 and itType <= 8 then
+        return "KEEP", "Special/Mission Type"
+    end
+
+    -- 4. Dispose remaining non-money items: sell if price > 0, else drop/trash
+    if unitSell > 0 then
+        return "SELL", "Non-Money Sellable (" .. tostring(unitSell) .. " Rain)"
+    end
+    return "TRASH", "Unsellable Junk (0 Rain)"
+end
+
+SmartInvBridge.classify = classifyInventoryItem
+SmartInvBridge.computeSellPrice = computeItemSellPrice
+SmartInvBridge.loadModules = loadInventoryModules
+pcall(function()
+    if type(getgenv) == "function" then
+        getgenv().__RaycityHubState = {
+            Config = Config,
+            SmartInv = SmartInvBridge,
+        }
+    end
+end)
+
+function SmartInvBridge.run(forceAll, minFree, allowSell, allowTrash, dryRun)
+    local stats = {
+        soldCount = 0,
+        earnedRain = 0,
+        trashedCount = 0,
+        keptCount = 0,
+        freeSlots = 0,
+        invSize = 30,
+        preview = dryRun and {} or nil,
+    }
+
+    local mods = loadInventoryModules()
+    if not mods.pc then return stats end
+
+    local data = mods.pc.get and mods.pc.get()
+    if not data or not data.inventory then
+        data = mods.pc.request and mods.pc.request("get")
+        data = data and (data.profile or data)
+    end
+    if not data or not data.inventory then return stats end
+
+    local invSize = tonumber(data.invSize) or 30
+    stats.invSize = invSize
+
+    local sellList, trashList = {}, {}
+    local itemCount = 0
+    for cell, item in pairs(data.inventory) do
+        itemCount = itemCount + 1
+        local def = lookupShopItemDef(item.id, mods)
+        local unitSell = computeItemSellPrice(item, def, mods.sellPriceMod)
+        local action, reason = classifyInventoryItem(item, def, unitSell, mods.itemUseData)
+        local cellNum = tonumber(cell)
+
+        local entry = {
+            cell = cellNum,
+            id = item.id,
+            uid = item.uid,
+            count = item.count or 1,
+            name = (def and def.name) or ("ID:" .. tostring(item.id)),
+            itemType = def and def.type or nil,
+            unitSell = unitSell,
+            action = action,
+            reason = reason,
+        }
+
+        if stats.preview then
+            table.insert(stats.preview, entry)
         end
 
-        -- 2. Sell unbound loot items via ShopClient if still under threshold
-        if free < minFree and scMod then
-            local sc = require(scMod)
-            for cell, item in pairs(data.inventory) do
-                if not item.bound then
-                    local res = sc.request("sell", {
-                        cell = tonumber(cell),
-                        count = item.count or 1,
-                        uid = item.uid
-                    })
-                    if res and res.ok then
-                        free = free + 1
-                        if free >= minFree then break end
-                    end
+        if action == "SELL" then
+            table.insert(sellList, entry)
+        elseif action == "TRASH" then
+            table.insert(trashList, entry)
+        else
+            stats.keptCount = stats.keptCount + 1
+        end
+    end
+
+    local free = invSize - itemCount
+    stats.freeSlots = free
+
+    if dryRun then
+        return stats
+    end
+
+    minFree = tonumber(minFree) or 10
+    local needMoreSpace = forceAll or (free < minFree)
+    if not needMoreSpace then
+        return stats
+    end
+
+    -- 1. Always try selling non-money sellable loot FIRST to earn Rain cleanly
+    if allowSell and mods.sc and mods.sc.request then
+        table.sort(sellList, function(a, b) return a.unitSell < b.unitSell end)
+        for _, entry in ipairs(sellList) do
+            if not forceAll and free >= minFree then break end
+            if entry.cell and entry.uid then
+                local okS, res = pcall(mods.sc.request, "sell", {
+                    cell = entry.cell,
+                    count = entry.count,
+                    uid = entry.uid,
+                })
+                if okS and res and res.ok then
+                    stats.soldCount = stats.soldCount + 1
+                    stats.earnedRain = stats.earnedRain + (tonumber(res.paid) or tonumber(res.total) or (entry.unitSell * entry.count))
+                    free = free + 1
+                    task.wait(0.06)
                 end
             end
+        end
+    end
+
+    -- 2. Drop unsellable junk (sell=0) only if enabled or forced (uses ShopClient.request("drop", ...))
+    if allowTrash and mods.sc and mods.sc.request then
+        for _, entry in ipairs(trashList) do
+            if not forceAll and free >= minFree then break end
+            if entry.cell and entry.uid then
+                local okD, res = pcall(mods.sc.request, "drop", {
+                    cell = entry.cell,
+                    uid = entry.uid,
+                })
+                if okD and res and res.ok then
+                    stats.trashedCount = stats.trashedCount + 1
+                    free = free + 1
+                    task.wait(0.06)
+                end
+            end
+        end
+    end
+
+    stats.freeSlots = free
+    return stats
+end
+
+local function ensureInventorySpace(minFree)
+    if not Config.AutoCleanInventory and not Config.AutoSellJunk and not Config.AutoTrashJunk then
+        return
+    end
+    minFree = minFree or 10
+    pcall(function()
+        local allowSell = Config.AutoCleanInventory or Config.AutoSellJunk
+        local allowTrash = Config.AutoTrashJunk or Config.AutoCleanInventory
+        -- Sell all non-money junk first; if AutoCleanInventory still needs slots under minFree, drop sell=0 junk too
+        local stats = SmartInvBridge.run(Config.AutoSellJunk, minFree, allowSell, Config.AutoTrashJunk, false)
+        if Config.AutoCleanInventory and stats.freeSlots < minFree and allowTrash and not Config.AutoTrashJunk then
+            SmartInvBridge.run(false, minFree, false, true, false)
         end
     end)
 end
@@ -2754,6 +3229,7 @@ local function resolveMissionObjectiveFromState(stMission)
                     local isStop = false
                     local minSpeedKmh = 0
                     local poly = nil
+                    local liveObj = stMission.objectives and (stMission.objectives[idx] or stMission.objectives[tostring(idx)])
 
                     if v.cls == "Return" then
                         isStop = true
@@ -2767,10 +3243,14 @@ local function resolveMissionObjectiveFromState(stMission)
                             targetVec = getNpcWorldPos(qDef.npcId)
                         end
                     elseif type(v.dest) == "table" then
-                        targetVec = v.dest.center or v.dest.target
-                        isStop = (v.dest.stop == true)
+                        targetVec = v.dest.center or v.dest.target or (liveObj and liveObj.target)
+                        isStop = (v.dest.stop == true) or (v.cls == "PhotoDest") or (v.dest.pillar == "photo")
                         minSpeedKmh = tonumber(v.dest.minSpeedKmh) or 0
-                        poly = v.dest.poly
+                        poly = v.dest.poly or (liveObj and liveObj.poly)
+                    elseif liveObj and typeof(liveObj.target) == "Vector3" then
+                        targetVec = liveObj.target
+                        isStop = (v.cls == "PhotoDest") or (liveObj.stop == true)
+                        poly = liveObj.poly
                     end
 
                     if not targetVec and liveObj then
