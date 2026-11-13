@@ -18,6 +18,7 @@
 --     - ⚔️ Auto Road Fight & Whirl Skill Spam
 --     - 🧲 Auto Item Vacuum (Pickups, Jewels & Booster Boxes)
 --     - 📍 City Teleports (Districts, Garages, Shops & NPCs)
+--     - 👻 Stealth Mode (Hide Car, Driver, Nameplate & Audio from Other Players)
 --     - 🛡️ Anti-Cheat Telemetry Shield & Anti-AFK
 --   ======================================================================
 -- ]]
@@ -262,6 +263,7 @@ local Config = {
     PickupRadius = 150,
 
     -- Safety & Utility
+    StealthMode = false,
     AntiAfk = false,
     FastMode = false
 }
@@ -288,6 +290,7 @@ local LevelFarmStats = {
 
 -- Forward declarations for UI callbacks
 local updateFlyState = function() end
+local applyStealthState = function() end
 local teleportCar = function(targetCF) end
 local handleDiceRollAndRewards = function() end
 local autoOpenCashBoxes = function() end
@@ -1119,6 +1122,21 @@ end
 local TabSettings = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 TabSettings:Toggle({
+    Title = "👻 Stealth Mode (โหมดพรางตัว ล่องหนจากคนอื่น)",
+    Desc = "ส่งแพ็กเก็ต Gone ลบรถ, คนขับ, ป้ายชื่อ และเสียงเครื่องออกจากจอผู้เล่นอื่น (ขับ/ฟาร์มเควสได้ปกติ)",
+    Value = Config.StealthMode,
+    Callback = function(val)
+        applyStealthState(val)
+        WindUI:Notify({
+            Title = val and "Stealth Mode: ON 👻" or "Stealth Mode: OFF 👁️",
+            Content = val and "ซ่อนรถและตำแหน่งจากผู้เล่นอื่นแล้ว (UP_KIND_GONE)" or "กลับมาแสดงรถให้ผู้เล่นอื่นเห็นตามปกติแล้ว",
+            Duration = 3,
+            Icon = val and "eye-off" or "eye"
+        })
+    end
+})
+
+TabSettings:Toggle({
     Title = "🛡️ Anti-AFK (20-Min Kick Prevention)",
     Desc = "Prevents Roblox disconnection while auto-farming or idling",
     Value = Config.AntiAfk,
@@ -1201,14 +1219,69 @@ local function ensureBackgroundCarSync()
 end
 
 -- ==============================================================================
--- 🛡️ 1. ANTI-CHEAT BYPASS & MULTIPLAYER SYNC PRESERVATION
+-- 🛡️ 1. ANTI-CHEAT BYPASS, MULTIPLAYER SYNC PRESERVATION & STEALTH ENGINE
 -- ==============================================================================
+local function getStealthProtocol()
+    local mp = ReplicatedStorage:FindFirstChild("RaycityMultiplayer")
+    local protoMod = mp and mp:FindFirstChild("RemoteCarProtocol")
+    local remotes = mp and mp:FindFirstChild("Remotes")
+    local carStateUp = remotes and remotes:FindFirstChild("CarStateUp")
+    if not protoMod then
+        return nil, carStateUp
+    end
+    local ok, proto = pcall(require, protoMod)
+    if not ok or type(proto) ~= "table" then
+        return nil, carStateUp
+    end
+    return proto, carStateUp
+end
+
+local function installStealthHook()
+    local proto, carStateUp = getStealthProtocol()
+    if not proto or type(proto.encodeUp) ~= "function" then
+        return nil, carStateUp
+    end
+    if type(getgenv().__RaycityOrigEncodeUp) ~= "function" then
+        getgenv().__RaycityOrigEncodeUp = proto.encodeUp
+    end
+    local origEncode = getgenv().__RaycityOrigEncodeUp
+    if proto.encodeUp ~= getgenv().__RaycityStealthEncodeWrapper then
+        local wrapper = function(tbl)
+            if getgenv().__RaycityStealthEnabled == true then
+                return origEncode(nil)
+            end
+            return origEncode(tbl)
+        end
+        getgenv().__RaycityStealthEncodeWrapper = wrapper
+        proto.encodeUp = wrapper
+    end
+    return proto, carStateUp
+end
+
+applyStealthState = function(enabled)
+    local active = (enabled == true)
+    Config.StealthMode = active
+    getgenv().__RaycityStealthEnabled = active
+    local _, carStateUp = installStealthHook()
+    local origEncode = getgenv().__RaycityOrigEncodeUp
+    ensureBackgroundCarSync()
+    if active and carStateUp and type(origEncode) == "function" then
+        pcall(function()
+            carStateUp:FireServer(origEncode(nil))
+        end)
+    end
+end
+
 ensureBackgroundCarSync()
+applyStealthState(Config.StealthMode)
 
 -- Continuous background sync guard ensuring CarStateUp never stalls when unfocused
 task.spawn(function()
     while isAlive() do
         ensureBackgroundCarSync()
+        if Config.StealthMode then
+            installStealthHook()
+        end
         task.wait(1.5)
     end
 end)
