@@ -234,11 +234,11 @@ local function fetchVerifiedLua(url)
         if type(body) ~= "string" or #body <= 500 then
             return nil
         end
-        if body:find("403: Forbidden", 1, true) or body:find("404: Not Found", 1, true) or body:find("-- Game script not found", 1, true) then
+        local head = body:sub(1, 512):gsub("^%s+", "")
+        if head == "" or head:sub(1, 1) == "<" then
             return nil
         end
-        local trimmed = body:match("^%s*(.-)%s*$") or ""
-        if trimmed:sub(1, 1) == "<" then
+        if head:find("403: Forbidden", 1, true) or head:find("404: Not Found", 1, true) or head:find("-- Game script not found", 1, true) then
             return nil
         end
         local fn = loadstring(body)
