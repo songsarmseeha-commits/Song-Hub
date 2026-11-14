@@ -77,6 +77,18 @@ function generateHex(len = 16) {
     return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function normalizeVerifiedKey(raw) {
+    const normalized = String(raw || "")
+        .replace(/[\\u200B-\\u200D\\uFEFF\\u00A0]/g, "")
+        .replace(/[\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]/g, "-")
+        .toUpperCase();
+    const knownMatch = normalized.match(/(?:FREE|GALAXY|PREMIUM|SONGHUB|VIP)(?:\\s*-\\s*[A-Z0-9]{2,16}){2,4}/);
+    if (knownMatch) return knownMatch[0].replace(/\\s+/g, "");
+    const genericMatch = normalized.match(/[A-Z0-9]{2,16}(?:-[A-Z0-9]{2,16}){2,4}/);
+    if (genericMatch) return genericMatch[0];
+    return normalized.replace(/[^A-Z0-9_-]+/g, "").trim();
+}
+
 async function createWhitelistToken(userId, secret, nowSec = Math.floor(Date.now() / 1000)) {
     const exp = nowSec + 86400;
     const payload = \`wl.\${String(userId).trim()}.\${exp}\`;
@@ -221,7 +233,10 @@ class DatabaseHandler {
         const kStr = String(keyString).trim().toUpperCase();
         if (this.db) {
             try {
-                const res = await this.db.prepare("SELECT * FROM keys WHERE key_string = ?").bind(kStr).first();
+                let res = await this.db.prepare("SELECT * FROM keys WHERE key_string = ?").bind(kStr).first();
+                if (!res) {
+                    res = await this.db.prepare("SELECT * FROM keys WHERE UPPER(TRIM(key_string)) = ?").bind(kStr).first();
+                }
                 if (res) return res;
             } catch (e) {
                 console.error("D1 findKey error:", e);
@@ -418,14 +433,49 @@ class DatabaseHandler {
         return this.verifySessionHeartbeat(sessionToken, true);
     }
 
-    async closeKeySession(sessionToken) {
+    async closeKeySession(sessionToken, releaseIdleHwid = false) {
+        let closedKeyId = null;
+        let closedHwid = null;
         if (this.db) {
             try {
+                const row = await this.db.prepare("SELECT key_id, hwid FROM key_sessions WHERE session_token = ?").bind(sessionToken).first();
+                if (row) {
+                    closedKeyId = row.key_id;
+                    closedHwid = row.hwid;
+                }
                 await this.db.prepare("DELETE FROM key_sessions WHERE session_token = ?").bind(sessionToken).run();
+                if (releaseIdleHwid && closedKeyId) {
+                    const cutoff = Math.floor(Date.now() / 1000) - 90;
+                    const rem = await this.db.prepare(
+                        "SELECT id, hwid FROM key_sessions WHERE key_id = ? AND last_heartbeat > ?"
+                    ).bind(closedKeyId, cutoff).all();
+                    const activeList = (rem && rem.results) || [];
+                    if (activeList.length === 0) {
+                        await this.resetKeyHwid(closedKeyId);
+                    } else if (closedHwid && !activeList.some(s => s.hwid === closedHwid)) {
+                        await this.removeKeyHwid(closedKeyId, closedHwid);
+                    }
+                }
                 return;
             } catch (e) {}
         }
+        const s = this.memoryStore.sessions.get(sessionToken);
+        if (s) {
+            closedKeyId = s.key_id;
+            closedHwid = s.hwid;
+        }
         this.memoryStore.sessions.delete(sessionToken);
+        if (releaseIdleHwid && closedKeyId) {
+            const cutoff = Math.floor(Date.now() / 1000) - 90;
+            const activeList = Array.from(this.memoryStore.sessions.values()).filter(
+                sess => sess.key_id === Number(closedKeyId) && sess.last_heartbeat > cutoff
+            );
+            if (activeList.length === 0) {
+                await this.resetKeyHwid(closedKeyId);
+            } else if (closedHwid && !activeList.some(sess => sess.hwid === closedHwid)) {
+                await this.removeKeyHwid(closedKeyId, closedHwid);
+            }
+        }
     }
 
     async kickKeySessions(keyId) {
@@ -482,14 +532,26 @@ class DatabaseHandler {
         const now = Math.floor(Date.now() / 1000);
         if (this.db) {
             try {
-                await this.db.prepare(
-                    "INSERT INTO key_hwids (key_id, hwid, user_id, username, first_used_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)"
-                ).bind(keyId, hwid, String(userId || ''), String(username || ''), now, now).run();
+                await this.db.prepare(\`
+                    INSERT INTO key_hwids (key_id, hwid, user_id, username, first_used_at, last_used_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(key_id, hwid) DO UPDATE SET
+                        last_used_at = excluded.last_used_at,
+                        user_id = CASE WHEN excluded.user_id != '' THEN excluded.user_id ELSE key_hwids.user_id END,
+                        username = CASE WHEN excluded.username != '' THEN excluded.username ELSE key_hwids.username END
+                \`).bind(keyId, hwid, String(userId || ''), String(username || ''), now, now).run();
                 return;
             } catch (e) {}
         }
-        this.memoryStore.hwids.set(\`\${keyId}_\${hwid}\`, {
-            key_id: Number(keyId), hwid, user_id: userId, username, first_used_at: now, last_used_at: now
+        const memKey = \`\${keyId}_\${hwid}\`;
+        const prev = this.memoryStore.hwids.get(memKey);
+        this.memoryStore.hwids.set(memKey, {
+            key_id: Number(keyId),
+            hwid,
+            user_id: userId || (prev ? prev.user_id : ''),
+            username: username || (prev ? prev.username : ''),
+            first_used_at: prev ? prev.first_used_at : now,
+            last_used_at: now
         });
     }
 
@@ -881,10 +943,11 @@ export default {
                 try { body = await request.json(); } catch (e) {}
             }
             const nowSec = Math.floor(Date.now() / 1000);
-            const key = String(body.key || url.searchParams.get("key") || "").replace(/[\\s'"]/g, "").toUpperCase();
-            const hwid = String(body.hwid || url.searchParams.get("hwid") || request.headers.get("x-hwid") || "").trim();
+            const key = normalizeVerifiedKey(body.key || url.searchParams.get("key") || "");
             const userId = body.userId || url.searchParams.get("userId") || request.headers.get("x-roblox-userid");
             const username = String(body.username || url.searchParams.get("username") || "").trim();
+            const rawHwid = String(body.hwid || url.searchParams.get("hwid") || request.headers.get("x-hwid") || "").trim();
+            const hwid = rawHwid || (userId ? \`USER_\${String(userId).trim()}\` : \`IP_\${clientIp}\`);
 
             // Direct Whitelist Check
             if (userId) {
@@ -930,17 +993,70 @@ export default {
                 return json({ success: false, code: "KEY_EXPIRED", expiresAt: keyData.expires_at, serverTime: nowSec, message: "Your license key has expired." }, 403);
             }
 
-            // HWID Check
-            const boundHwids = await db.getKeyHwids(keyData.id);
+            // Reject already-expired keys before mutating bound HWIDs or activating
+            if (keyData.expires_at && keyData.expires_at > 0 && nowSec >= keyData.expires_at) {
+                await db.kickKeySessions(keyData.id);
+                await db.logAccess({ key_string: key, roblox_user_id: userId, username, hwid, ip_address: clientIp, status: "EXPIRED", message: "Key expired" });
+                return json({ success: false, code: "KEY_EXPIRED", expiresAt: keyData.expires_at, serverTime: nowSec, message: "Your license key has expired." }, 403);
+            }
+
+            // Purge stale/idle sessions (> 90s since heartbeat) before evaluating HWID & session limits
+            let activeSessions = await db.getActiveSessions(keyData.id, 90);
+            let boundHwids = await db.getKeyHwids(keyData.id);
+
+            // Auto-release any bound HWIDs with zero active sessions (client exited cleanly or timed out > 90s)
+            if (boundHwids.length > 0) {
+                const activeHwidSet = new Set(activeSessions.map(s => s.hwid));
+                const staleHwids = boundHwids.filter(bh => !activeHwidSet.has(bh.hwid));
+                if (staleHwids.length > 0) {
+                    if (staleHwids.length === boundHwids.length) {
+                        await db.resetKeyHwid(keyData.id);
+                        boundHwids = [];
+                    } else {
+                        for (const bh of staleHwids) {
+                            await db.removeKeyHwid(keyData.id, bh.hwid);
+                        }
+                        boundHwids = boundHwids.filter(bh => activeHwidSet.has(bh.hwid));
+                    }
+                }
+            }
+
+            const maxHwid = keyData.max_hwid || 1;
             const isBound = boundHwids.some(h => h.hwid === hwid);
 
             if (!isBound) {
-                if (boundHwids.length < (keyData.max_hwid || 1)) {
+                // Allow seamless HWID rotation for the exact same Roblox userId (< 90s crash/re-exec/server-hop),
+                // provided no other Roblox userId currently holds an active session on that HWID.
+                if (boundHwids.length >= maxHwid && userId) {
+                    const userStr = String(userId).trim();
+                    const replaceable = boundHwids.filter(bh => {
+                        const sessionsOnHwid = activeSessions.filter(s => s.hwid === bh.hwid);
+                        return sessionsOnHwid.length > 0
+                            ? sessionsOnHwid.every(s => s.roblox_user_id && String(s.roblox_user_id).trim() === userStr)
+                            : (bh.user_id && String(bh.user_id).trim() === userStr);
+                    });
+                    if (replaceable.length > 0) {
+                        for (const bh of replaceable) {
+                            for (const s of activeSessions) {
+                                if (s.hwid === bh.hwid && s.roblox_user_id && String(s.roblox_user_id).trim() === userStr) {
+                                    await db.closeKeySession(s.session_token, false);
+                                }
+                            }
+                            await db.removeKeyHwid(keyData.id, bh.hwid);
+                        }
+                        activeSessions = await db.getActiveSessions(keyData.id, 90);
+                        boundHwids = await db.getKeyHwids(keyData.id);
+                    }
+                }
+
+                if (boundHwids.some(h => h.hwid === hwid) || boundHwids.length < maxHwid) {
                     await db.addKeyHwid(keyData.id, hwid, userId, username);
                 } else {
-                    await db.logAccess({ key_string: key, roblox_user_id: userId, username, hwid, ip_address: clientIp, status: "HWID_MISMATCH", message: "Max devices exceeded" });
-                    return json({ success: false, code: "HWID_MISMATCH", serverTime: nowSec, message: "Key is already bound to another device. Reset HWID in Discord." }, 403);
+                    await db.logAccess({ key_string: key, roblox_user_id: userId, username, hwid, ip_address: clientIp, status: "HWID_MISMATCH", message: "Max devices exceeded (active session on another HWID)" });
+                    return json({ success: false, code: "HWID_MISMATCH", serverTime: nowSec, message: "Key is already active on another device. Exit the script on that device or wait 90s before re-using." }, 403);
                 }
+            } else {
+                await db.addKeyHwid(keyData.id, hwid, userId, username);
             }
 
             let effectiveExpiresAt = (keyData.expires_at && keyData.expires_at > 0) ? keyData.expires_at : null;
@@ -956,9 +1072,17 @@ export default {
             }
 
             // Live Session Tracking & Limit Check
-            const activeSessions = await db.getActiveSessions(keyData.id, 90);
             const jobId = body.jobId || url.searchParams.get("jobId") || "";
-            let session = activeSessions.find(s => (hwid && s.hwid === hwid) || (jobId && s.job_id === jobId) || (userId && String(s.roblox_user_id) === String(userId)));
+            const userStr = userId ? String(userId).trim() : "";
+            let session = activeSessions.find(s => {
+                if (userStr && s.roblox_user_id) {
+                    return String(s.roblox_user_id).trim() === userStr && s.hwid === hwid;
+                }
+                if (userStr && !s.roblox_user_id) {
+                    return s.hwid === hwid || (jobId && s.job_id === jobId);
+                }
+                return (hwid && s.hwid === hwid) || (jobId && s.job_id === jobId);
+            });
 
             let sessionToken = session ? session.session_token : null;
             if (!session) {
@@ -1034,7 +1158,7 @@ export default {
             });
         }
 
-        // Close Session Endpoint when client exits game
+        // Close Session Endpoint when client exits game (auto-releases idle HWID on clean exit)
         if (path === "/api/v1/session/close" || path === "/api/session/close") {
             let body = {};
             if (method === "POST") {
@@ -1042,7 +1166,7 @@ export default {
             }
             const sessionToken = body.sessionToken || url.searchParams.get("sessionToken") || "";
             if (sessionToken) {
-                await db.closeKeySession(sessionToken);
+                await db.closeKeySession(sessionToken, true);
             }
             return json({ success: true, message: "Session closed" });
         }

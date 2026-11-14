@@ -145,14 +145,79 @@ local GET_KEY_PORTAL_URL = CLOUDFLARE_URL .. "/getkey"
 local DISCORD_INVITE_URL = "https://discord.gg/Cpcg9wU5k"
 local KEY_SAVE_PATH = "SongHub/saved_license_key.txt"
 
-local function getHardwareId()
-    if gethwid then return gethwid() end
-    if get_hwid then return get_hwid() end
-    if identifyexecutor then
-        local exec = identifyexecutor()
-        return exec .. "_" .. tostring(LocalPlayer.UserId)
+local function sanitizeLicenseKey(raw)
+    if type(raw) ~= "string" then return "" end
+    local s = raw
+        :gsub("\226\128[\139\140\141]", "") -- zero-width space/joiner
+        :gsub("\239\187\191", "")            -- UTF-8 BOM
+        :gsub("\194\160", " ")               -- NBSP
+        :gsub("\226\128[\144\145\146\147\148\149]", "-") -- Unicode hyphens/dashes -> ASCII -
+        :gsub("\226\136\146", "-")           -- minus sign
+        :gsub("\239\188\141", "-")           -- fullwidth hyphen-minus
+        :upper()
+        :gsub("%s*%-%s*", "-")
+
+    local extracted =
+        s:match("FREE%-%w+%-%w+%-%w+") or
+        s:match("GALAXY%-%w+%-%w+%-%w+") or
+        s:match("PREMIUM%-%w+%-%w+%-%w+") or
+        s:match("SONGHUB%-%w+%-%w+%-%w+") or
+        s:match("VIP%-%w+%-%w+%-%w+") or
+        s:match("%w%w+%-%w%w+%-%w%w+%-%w%w+%-%w%w+") or
+        s:match("%w%w+%-%w%w+%-%w%w+%-%w%w+") or
+        s:match("%w%w+%-%w%w+%-%w%w+")
+    if extracted then
+        return extracted
     end
-    return "DEVICE_" .. tostring(LocalPlayer.UserId)
+    return s:gsub("[^%w%-_]+", "")
+end
+
+local function getHardwareId()
+    local function tryHwid(fn)
+        if type(fn) ~= "function" then return nil end
+        local ok, res = pcall(fn)
+        if ok and res ~= nil then
+            local trimmed = tostring(res):gsub("^%s+", ""):gsub("%s+$", "")
+            if #trimmed > 0 and trimmed ~= "nil" then
+                return trimmed
+            end
+        end
+        return nil
+    end
+
+    local hw = tryHwid(gethwid) or tryHwid(get_hwid)
+    if hw then return hw end
+
+    local okClient, clientId = pcall(function()
+        return game:GetService("RbxAnalyticsService"):GetClientId()
+    end)
+    if okClient and clientId and #tostring(clientId) > 0 then
+        return "RBX_" .. tostring(clientId)
+    end
+
+    local uid = LocalPlayer and LocalPlayer.UserId or 0
+    if identifyexecutor then
+        local okExec, exec = pcall(identifyexecutor)
+        if okExec and exec and #tostring(exec) > 0 then
+            return tostring(exec) .. "_" .. tostring(uid)
+        end
+    end
+    return "DEVICE_" .. tostring(uid)
+end
+
+local function closeSessionRemote(sessionToken)
+    if type(sessionToken) ~= "string" or #sessionToken == 0 then return end
+    pcall(function()
+        local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+        if requestFn then
+            requestFn({
+                Url = CLOUDFLARE_URL .. "/api/v1/session/close",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({ sessionToken = sessionToken })
+            })
+        end
+    end)
 end
 
 local function sendVerifyRequest(key)
@@ -161,7 +226,7 @@ local function sendVerifyRequest(key)
         return false, { message = "Your executor does not support HTTP requests!" }
     end
 
-    local cleanReqKey = (type(key) == "string") and key:gsub("[^%w%-_]+", "") or ""
+    local cleanReqKey = sanitizeLicenseKey(key)
     local payload = HttpService:JSONEncode({
         key = cleanReqKey,
         hwid = getHardwareId(),
@@ -303,6 +368,7 @@ local function shutdownActiveScript(reason, reopenPrompt)
             return
         end
         getgenv()._SongHubShuttingDown = true
+        local activeSessionToken = getgenv()._SongHubAuth and getgenv()._SongHubAuth.sessionToken
         getgenv()._SongHubSessionExpired = true
         getgenv()._SongHubSessionGeneration = (tonumber(getgenv()._SongHubSessionGeneration) or 0) + 1
         getgenv()._SongHubHeartbeatRunning = false
@@ -313,6 +379,9 @@ local function shutdownActiveScript(reason, reopenPrompt)
             reason = msg,
             endedClock = os.clock(),
         }
+        if type(activeSessionToken) == "string" and #activeSessionToken > 0 then
+            task.spawn(closeSessionRemote, activeSessionToken)
+        end
         local activeThread = getgenv()._SongHubActiveGameThread
         getgenv()._SongHubActiveGameThread = nil
         if activeThread then
@@ -504,23 +573,65 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
         end
     end)
 
+    -- Clean session exit hooks: release server session & idle HWID when teleport completes, player leaves, or game closes
+    local closedSent = false
+    local function handleClientExit()
+        if closedSent then return end
+        if getgenv and getgenv()._SongHubSessionGeneration ~= myGen then return end
+        closedSent = true
+        closeSessionRemote(currentToken)
+    end
+
     pcall(function()
         if LocalPlayer and LocalPlayer.OnTeleport then
-            LocalPlayer.OnTeleport:Connect(function()
-                if getgenv and getgenv()._SongHubSessionGeneration ~= myGen then return end
-                pcall(function()
-                    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
-                    if requestFn then
-                        requestFn({
-                            Url = CLOUDFLARE_URL .. "/api/v1/session/close",
-                            Method = "POST",
-                            Headers = { ["Content-Type"] = "application/json" },
-                            Body = HttpService:JSONEncode({ sessionToken = currentToken })
-                        })
-                    end
-                end)
+            local conn
+            conn = LocalPlayer.OnTeleport:Connect(function(state)
+                if getgenv and getgenv()._SongHubSessionGeneration ~= myGen then
+                    if conn then pcall(function() conn:Disconnect() end) end
+                    return
+                end
+                if state == Enum.TeleportState.InProgress then
+                    handleClientExit()
+                end
             end)
         end
+    end)
+
+    pcall(function()
+        local Players = game:GetService("Players")
+        if Players and Players.PlayerRemoving then
+            local conn
+            conn = Players.PlayerRemoving:Connect(function(plr)
+                if getgenv and getgenv()._SongHubSessionGeneration ~= myGen then
+                    if conn then pcall(function() conn:Disconnect() end) end
+                    return
+                end
+                if plr == LocalPlayer then
+                    handleClientExit()
+                end
+            end)
+        end
+    end)
+
+    pcall(function()
+        if LocalPlayer and LocalPlayer.AncestryChanged then
+            local conn
+            conn = LocalPlayer.AncestryChanged:Connect(function(_, parent)
+                if getgenv and getgenv()._SongHubSessionGeneration ~= myGen then
+                    if conn then pcall(function() conn:Disconnect() end) end
+                    return
+                end
+                if not parent then
+                    handleClientExit()
+                end
+            end)
+        end
+    end)
+
+    pcall(function()
+        game:BindToClose(function()
+            handleClientExit()
+        end)
     end)
 end
 
@@ -867,11 +978,27 @@ openKeyVerificationWindow = function(statusMessage)
         and ("⚠️ " .. statusMessage .. "\n\nPlease enter a new valid license key or claim a free 24h key below.")
         or "This Hub is protected by Song Hub Edge Whitelist.\nPlease enter your key to continue.\nDirect whitelisted users bypass this automatically."
 
-    TabKey:Paragraph({
+    local StatusParagraph = TabKey:Paragraph({
         Title = hasNotice and "License Verification Required" or "License Key Required",
         Desc = descText,
         Image = hasNotice and "alert-triangle" or "lock"
     })
+
+    local function setPromptStatus(title, desc, image)
+        pcall(function()
+            if StatusParagraph and type(StatusParagraph.SetTitle) == "function" then
+                StatusParagraph:SetTitle(title)
+            end
+            if StatusParagraph and type(StatusParagraph.SetDesc) == "function" then
+                StatusParagraph:SetDesc(desc)
+            elseif StatusParagraph and type(StatusParagraph.SetContent) == "function" then
+                StatusParagraph:SetContent(desc)
+            end
+            if image and StatusParagraph and type(StatusParagraph.SetImage) == "function" then
+                StatusParagraph:SetImage(image)
+            end
+        end)
+    end
 
     if hasNotice then
         pcall(function()
@@ -884,13 +1011,9 @@ openKeyVerificationWindow = function(statusMessage)
         end)
     end
 
-    local function sanitizeLicenseKey(raw)
-        if type(raw) ~= "string" then return "" end
-        return raw:gsub("[^%w%-_]+", "")
-    end
-
     local inputKey = ""
     local isVerifying = false
+    local KeyInputObj = nil
 
     local function readLiveInputBox()
         local foundText = ""
@@ -903,12 +1026,25 @@ openKeyVerificationWindow = function(statusMessage)
             for _, root in ipairs(containers) do
                 if root then
                     for _, desc in ipairs(root:GetDescendants()) do
-                        if desc:IsA("TextBox") then
-                            local ph = desc.PlaceholderText or ""
-                            if ph:find("SONGHUB", 1, true) then
-                                local t = desc.Text or ""
-                                if #t > 0 then
-                                    foundText = t
+                        if desc:IsA("TextBox") and desc.Visible then
+                            local sg = desc:FindFirstAncestorWhichIsA("ScreenGui")
+                            if not sg or sg.Enabled then
+                                local visOk = true
+                                local cur = desc.Parent
+                                while cur and cur ~= sg and visOk do
+                                    if cur:IsA("GuiObject") and not cur.Visible then
+                                        visOk = false
+                                    end
+                                    cur = cur.Parent
+                                end
+                                if visOk then
+                                    local ph = desc.PlaceholderText or ""
+                                    if ph:find("SONGHUB", 1, true) then
+                                        local t = desc.Text or ""
+                                        if #t > 0 then
+                                            foundText = t
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -916,12 +1052,18 @@ openKeyVerificationWindow = function(statusMessage)
                 end
             end
         end)
+        if #foundText > 0 then return foundText end
+        pcall(function()
+            if KeyInputObj and type(KeyInputObj.Value) == "string" and #KeyInputObj.Value > 0 then
+                foundText = KeyInputObj.Value
+            end
+        end)
         return foundText
     end
 
-    TabKey:Input({
+    KeyInputObj = TabKey:Input({
         Title = "Enter License Key",
-        Desc = "Paste your license key here (e.g. SONGHUB-XXXX)",
+        Desc = "Paste your license key here (e.g. FREE-XXXX or SONGHUB-XXXX)",
         Placeholder = "SONGHUB-XXXX-XXXX-XXXX",
         Callback = function(txt)
             local clean = sanitizeLicenseKey(txt)
@@ -946,11 +1088,13 @@ openKeyVerificationWindow = function(statusMessage)
             end
 
             if #inputKey == 0 then
+                setPromptStatus("Key Required", "Please paste or type your license key into the box below first.", "alert-circle")
                 WindUI:Notify({ Title = "Error", Content = "Please enter a license key!", Duration = 3, Icon = "alert-circle" })
                 return
             end
 
             isVerifying = true
+            setPromptStatus("Verifying Key...", "Contacting Cloudflare Edge for key: " .. inputKey, "loader")
             WindUI:Notify({ Title = "Verifying", Content = "Contacting Cloudflare Edge...", Duration = 2, Icon = "loader" })
             local ok, result = sendVerifyRequest(inputKey)
 
@@ -959,10 +1103,12 @@ openKeyVerificationWindow = function(statusMessage)
                 if not authOk then
                     isVerifying = false
                     clearSavedLicenseKey()
+                    local errMsg = authErr or "Invalid or expired key!"
+                    setPromptStatus("Access Denied ❌", errMsg, "x-circle")
                     WindUI:Notify({
                         Title = "Access Denied ❌",
-                        Content = authErr or "Invalid or expired key!",
-                        Duration = 4,
+                        Content = errMsg,
+                        Duration = 5,
                         Icon = "x-circle"
                     })
                     return
@@ -1000,10 +1146,12 @@ openKeyVerificationWindow = function(statusMessage)
                 if errCode == "KEY_EXPIRED" or errCode == "KEY_REVOKED" or errCode == "INVALID_KEY" then
                     clearSavedLicenseKey()
                 end
+                local errMsg = (result and result.message) or "Invalid or expired key!"
+                setPromptStatus("Access Denied ❌", errMsg, "x-circle")
                 WindUI:Notify({
                     Title = "Access Denied ❌",
-                    Content = (result and result.message) or "Invalid or expired key!",
-                    Duration = 4,
+                    Content = errMsg,
+                    Duration = 5,
                     Icon = "x-circle"
                 })
             end
@@ -1053,7 +1201,7 @@ if isfile and isfile(KEY_SAVE_PATH) then
     local savedKey = ""
     pcall(function() savedKey = readfile(KEY_SAVE_PATH) end)
     if savedKey and #savedKey > 3 then
-        local cleanSavedKey = savedKey:gsub("%s+", "")
+        local cleanSavedKey = sanitizeLicenseKey(savedKey)
         local keyOk, keyData = sendVerifyRequest(cleanSavedKey)
         if keyOk then
             local authOk, authErr = applyAuthenticatedSession(keyData, cleanSavedKey)
@@ -1069,7 +1217,7 @@ if isfile and isfile(KEY_SAVE_PATH) then
             end
         elseif type(keyData) == "table" then
             local code = keyData.code
-            if code == "KEY_EXPIRED" or code == "KEY_REVOKED" or code == "INVALID_KEY" or code == "HWID_MISMATCH" then
+            if code == "KEY_EXPIRED" or code == "KEY_REVOKED" or code == "INVALID_KEY" then
                 clearSavedLicenseKey()
                 shutdownActiveScript(keyData.message or "Saved key is no longer valid.", false)
             end

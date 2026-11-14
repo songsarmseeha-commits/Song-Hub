@@ -592,15 +592,54 @@
             lucide.createIcons();
         }
 
+        function fallbackCopyText(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                ta.setSelectionRange(0, ta.value.length);
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (ok) return true;
+            } catch (e) {}
+
+            try {
+                const el = document.getElementById('claimedKeyText');
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return document.execCommand('copy');
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function showCopySuccess() {
+            const copyBtnText = document.getElementById('copyBtnText');
+            copyBtnText.innerText = 'Copied!';
+            setTimeout(() => { copyBtnText.innerText = 'Copy Key'; }, 2500);
+        }
+
         function copyClaimedKey() {
-            const key = document.getElementById('claimedKeyText').innerText.trim();
+            const el = document.getElementById('claimedKeyText');
+            const key = (el ? el.innerText : '').trim();
             if (!key) return;
 
-            navigator.clipboard.writeText(key).then(() => {
-                const copyBtnText = document.getElementById('copyBtnText');
-                copyBtnText.innerText = 'Copied!';
-                setTimeout(() => { copyBtnText.innerText = 'Copy Key'; }, 2500);
-            });
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                navigator.clipboard.writeText(key).then(showCopySuccess).catch(() => {
+                    if (fallbackCopyText(key)) showCopySuccess();
+                });
+            } else {
+                if (fallbackCopyText(key)) showCopySuccess();
+            }
         }
 
         function showAlert(type, message) {
