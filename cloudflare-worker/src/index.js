@@ -846,17 +846,9 @@ export default {
         }
 
         // ----------------------------------------------------------------------
-        // 2. UNIVERSAL LOADER & GITHUB RAW SCRIPT PROXY (100% Zero-Cache)
+        // 2. UNIVERSAL LOADER (Zero-Cache Edge Embedded) & GAME SCRIPT PROXY
         // ----------------------------------------------------------------------
         if (path === "/loader.luau" || path === "/loader" || path === "/load") {
-            try {
-                const ghUrl = `https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=${Date.now()}`;
-                const ghRes = await fetch(ghUrl, { headers: { "User-Agent": "Cloudflare-Worker-Proxy", "Cache-Control": "no-cache" } });
-                if (ghRes.ok) {
-                    const code = await ghRes.text();
-                    return text(code, 200, "text/plain; charset=utf-8");
-                }
-            } catch (e) {}
             return text(FALLBACK_LOADER_LUAU, 200, "text/plain; charset=utf-8");
         }
 
