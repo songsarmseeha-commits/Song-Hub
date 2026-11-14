@@ -735,27 +735,34 @@ local function registerQueueOnTeleport(forceQueue)
             if getgenv and (getgenv()._HuntingTogetherRunning or getgenv()._UniversalLoaderLoading or getgenv()._SongHubLoading) then
                 return
             end
-            local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
-            local urls = {
-                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. cb,
-                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb,
-                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/Universal_Loader.luau?v=" .. cb,
-                "https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb,
-            }
-            local sOk, code = false, nil
-            for _, u in ipairs(urls) do
-                sOk, code = pcall(function() return game:HttpGet(u) end)
-                if sOk and type(code) == "string" and #code > 500 and not code:find("404: Not Found") then
-                    break
+            local reqFn = (syn and syn.request) or request or (http and http.request) or http_request
+            local compiledFn = nil
+            for attempt = 1, 2 do
+                local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999)) .. "_" .. tostring(attempt)
+                local urls = {
+                    "https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev/loader.luau?v=" .. cb,
+                    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb,
+                    "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. cb,
+                }
+                for _, u in ipairs(urls) do
+                    local sOk, code = pcall(function() return game:HttpGet(u) end)
+                    if sOk and type(code) == "string" and #code > 500 and not code:find("404: Not Found", 1, true) then
+                        local fn = loadstring(code)
+                        if fn then compiledFn = fn; break end
+                    end
+                    if reqFn then
+                        local rOk, resp = pcall(reqFn, { Url = u, Method = "GET", Headers = { ["Cache-Control"] = "no-cache" } })
+                        if rOk and type(resp) == "table" and type(resp.Body) == "string" and #resp.Body > 500 then
+                            local fn = loadstring(resp.Body)
+                            if fn then compiledFn = fn; break end
+                        end
+                    end
                 end
-                code = nil
+                if compiledFn then break end
+                if attempt < 2 then task.wait(0.8) end
             end
-            if code then
-                local fn = loadstring(code)
-                if fn then return fn() end
-            end
-            if isfile and isfile("hunting_together_script.lua") and readfile then
-                loadstring(readfile("hunting_together_script.lua"))()
+            if compiledFn then
+                return compiledFn()
             end
         ]]
         pcall(queue, execCode)
