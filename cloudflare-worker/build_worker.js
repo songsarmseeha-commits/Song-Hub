@@ -1051,32 +1051,68 @@ export default {
         // 4. FREE GET KEY / MONETIZATION FLOW (LOOTLABS & LINKVERTISE)
         // ----------------------------------------------------------------------
         if (path === "/api/v1/getkey/init") {
+            const cfgEnabled = (await db.getSetting("getkey_enabled", "1")) !== "0";
+            if (!cfgEnabled) {
+                return json({ success: false, error: "Get Key system is currently disabled by administrator." }, 403);
+            }
+
             const hwid = url.searchParams.get("hwid") || "";
             const sessionParam = url.searchParams.get("session") || "";
-            const reqProvider = (url.searchParams.get("provider") || "linkvertise").toLowerCase();
+            const cfgMode = String(await db.getSetting("getkey_mode", "dual")).toLowerCase();
+            const cfgSteps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
+            const cfgDurationHours = parseInt(await db.getSetting("getkey_duration_hours", "24")) || 24;
+            const queryProvider = String(url.searchParams.get("provider") || "").toLowerCase();
 
             if (sessionParam) {
                 const existing = await db.findGetKeySession(sessionParam);
                 if (existing) {
+                    if (existing.is_completed === 1 && existing.claimed_key) {
+                        return json({
+                            success: true,
+                            sessionId: existing.session_id,
+                            currentStep: existing.total_steps,
+                            totalSteps: existing.total_steps,
+                            provider: existing.provider,
+                            configuredMode: cfgMode,
+                            durationHours: cfgDurationHours,
+                            isCompleted: true,
+                            claimedKey: existing.claimed_key
+                        });
+                    }
+                    let effSteps = Number(existing.total_steps) || cfgSteps;
+                    let effProvider = existing.provider || cfgMode;
+                    if (Number(existing.current_step) <= 1 && (effSteps !== cfgSteps || (cfgMode !== "dual" && effProvider !== cfgMode))) {
+                        effSteps = cfgSteps;
+                        effProvider = cfgMode === "dual"
+                            ? (cfgSteps === 1 && (queryProvider === "lootlabs" || queryProvider === "linkvertise") ? queryProvider : "dual")
+                            : cfgMode;
+                        await db.updateSessionProvider(existing.session_id, effProvider, effSteps);
+                    }
                     return json({
                         success: true,
                         sessionId: existing.session_id,
                         currentStep: existing.current_step,
-                        totalSteps: existing.total_steps,
-                        provider: existing.provider,
+                        totalSteps: effSteps,
+                        provider: effProvider,
+                        configuredMode: cfgMode,
+                        durationHours: cfgDurationHours,
                         isCompleted: existing.is_completed === 1,
                         claimedKey: existing.claimed_key
                     });
                 }
             }
 
-            const totalSteps = (reqProvider === "dual") ? 2 : 1;
+            let initProvider = cfgMode;
+            if (cfgMode === "dual" && cfgSteps === 1 && (queryProvider === "lootlabs" || queryProvider === "linkvertise")) {
+                initProvider = queryProvider;
+            }
+            const totalSteps = cfgSteps;
             const sessionId = generateHex(16);
             await db.createGetKeySession({
                 sessionId,
                 hwid,
                 ipAddress: clientIp,
-                provider: reqProvider,
+                provider: initProvider,
                 totalSteps
             });
 
@@ -1085,7 +1121,9 @@ export default {
                 sessionId,
                 currentStep: 1,
                 totalSteps,
-                provider: reqProvider,
+                provider: initProvider,
+                configuredMode: cfgMode,
+                durationHours: cfgDurationHours,
                 isCompleted: false,
                 claimedKey: null
             });
@@ -1095,38 +1133,63 @@ export default {
             let body = {};
             try { body = await request.json(); } catch (e) {}
             const sessionId = body.sessionId || "";
-            const provider = (body.provider || "linkvertise").toLowerCase();
-            const totalSteps = (provider === "dual") ? 2 : 1;
+            const reqProv = String(body.provider || "lootlabs").toLowerCase();
+            const cfgMode = String(await db.getSetting("getkey_mode", "dual")).toLowerCase();
+            const cfgSteps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
+
+            let resolvedProvider = cfgMode;
+            if (cfgMode === "dual" && cfgSteps === 1 && (reqProv === "lootlabs" || reqProv === "linkvertise")) {
+                resolvedProvider = reqProv;
+            }
+            const totalSteps = cfgSteps;
 
             if (sessionId) {
-                await db.updateSessionProvider(sessionId, provider, totalSteps);
+                await db.updateSessionProvider(sessionId, resolvedProvider, totalSteps);
             }
-            return json({ success: true, provider, totalSteps });
+            return json({ success: true, provider: resolvedProvider, totalSteps, configuredMode: cfgMode });
         }
 
         if (path === "/api/v1/getkey/link") {
             const sessionId = url.searchParams.get("sessionId") || "";
-            const step = parseInt(url.searchParams.get("step") || "1");
+            let step = Math.max(1, parseInt(url.searchParams.get("step") || "1") || 1);
             const host = url.origin;
-            const sig = await hmacSha256(\`\${sessionId}_\${step}\`, apiSecret);
-            const destinationUrl = \`\${host}/api/v1/getkey/callback?session=\${sessionId}&step=\${step}&sig=\${sig}\`;
 
             let session = null;
             if (sessionId) {
                 session = await db.findGetKeySession(sessionId);
             }
-            const currentProvider = session ? session.provider : (url.searchParams.get("provider") || "linkvertise").toLowerCase();
+            const cfgMode = String(await db.getSetting("getkey_mode", "dual")).toLowerCase();
+            const cfgSteps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
+            const totalSteps = session ? (Number(session.total_steps) || cfgSteps) : cfgSteps;
+            if (step > totalSteps) step = totalSteps;
+            if (session && step > Number(session.current_step || 1)) {
+                step = Number(session.current_step || 1);
+            }
+
+            const sig = await hmacSha256(\`\${sessionId}_\${step}\`, apiSecret);
+            const destinationUrl = \`\${host}/api/v1/getkey/callback?session=\${sessionId}&step=\${step}&sig=\${sig}\`;
+
+            const sessionProvider = String(session ? session.provider : (url.searchParams.get("provider") || cfgMode)).toLowerCase();
+            let stepProvider = "lootlabs";
+            if (cfgMode === "linkvertise" || sessionProvider === "linkvertise") {
+                stepProvider = "linkvertise";
+            } else if (cfgMode === "lootlabs" || sessionProvider === "lootlabs") {
+                stepProvider = "lootlabs";
+            } else {
+                stepProvider = (step % 2 === 1) ? "lootlabs" : "linkvertise";
+            }
 
             let redirectUrl = destinationUrl;
 
-            // Generate based on provider
-            if (currentProvider === "linkvertise") {
+            if (stepProvider === "linkvertise") {
                 const pubId = await db.getSetting("getkey_linkvertise_id", CONFIG.GETKEY.LINKVERTISE_USER_ID);
                 const b64 = btoa(encodeURI(destinationUrl));
                 const slug = Math.floor(Math.random() * 90000) + 10000;
                 redirectUrl = \`https://link-to.net/\${pubId}/\${slug}/dynamic/?r=\${b64}\`;
-            } else if (currentProvider === "lootlabs") {
+            } else {
                 const lootKey = await db.getSetting("getkey_lootlabs_key", CONFIG.GETKEY.LOOTLABS_API_KEY);
+                const lootTier = parseInt(await db.getSetting("getkey_lootlabs_tier", "1")) || 1;
+                const lootTasks = parseInt(await db.getSetting("getkey_lootlabs_tasks", "2")) || 2;
                 try {
                     const llRes = await fetch("https://creators.lootlabs.gg/api/public/content_locker", {
                         method: "POST",
@@ -1135,10 +1198,10 @@ export default {
                             "Content-Type": "application/json"
                         },
                         body: JSON.stringify({
-                            title: \`Song Hub Key Checkpoint \${step}\`,
+                            title: \`Song Hub Key Checkpoint \${step}/\${totalSteps}\`,
                             url: destinationUrl,
-                            tier_id: 1,
-                            number_of_tasks: 2,
+                            tier_id: lootTier,
+                            number_of_tasks: lootTasks,
                             theme: 1
                         })
                     });
@@ -1148,45 +1211,14 @@ export default {
                 } catch (e) {
                     console.error("Lootlabs error:", e);
                 }
-            } else {
-                // Dual Mode: step 1 = Lootlabs, step 2 = Linkvertise
-                if (step === 1) {
-                    const lootKey = await db.getSetting("getkey_lootlabs_key", CONFIG.GETKEY.LOOTLABS_API_KEY);
-                    try {
-                        const llRes = await fetch("https://creators.lootlabs.gg/api/public/content_locker", {
-                            method: "POST",
-                            headers: {
-                                "Authorization": \`Bearer \${lootKey}\`,
-                                "Content-Type": "application/json"
-                            },
-                            body: JSON.stringify({
-                                title: "Song Hub Key Step 1",
-                                url: destinationUrl,
-                                tier_id: 1,
-                                number_of_tasks: 2,
-                                theme: 1
-                            })
-                        });
-                        const llData = await llRes.json();
-                        if (llData && llData.loot_url) redirectUrl = llData.loot_url;
-                        else if (llData && llData.message && llData.message[0] && llData.message[0].loot_url) redirectUrl = llData.message[0].loot_url;
-                    } catch (e) {
-                        console.error("Lootlabs error:", e);
-                    }
-                } else {
-                    const pubId = await db.getSetting("getkey_linkvertise_id", CONFIG.GETKEY.LINKVERTISE_USER_ID);
-                    const b64 = btoa(encodeURI(destinationUrl));
-                    const slug = Math.floor(Math.random() * 90000) + 10000;
-                    redirectUrl = \`https://link-to.net/\${pubId}/\${slug}/dynamic/?r=\${b64}\`;
-                }
             }
 
-            return json({ success: true, redirectUrl, step, provider: currentProvider });
+            return json({ success: true, redirectUrl, step, totalSteps, provider: stepProvider });
         }
 
         if (path === "/api/v1/getkey/callback") {
             const sessionId = url.searchParams.get("session") || "";
-            const step = parseInt(url.searchParams.get("step") || "1");
+            const step = parseInt(url.searchParams.get("step") || "1") || 1;
             const sig = url.searchParams.get("sig") || "";
 
             const expectedSig = await hmacSha256(\`\${sessionId}_\${step}\`, apiSecret);
@@ -1195,11 +1227,24 @@ export default {
             }
 
             const session = await db.findGetKeySession(sessionId);
-            const totalSteps = session ? session.total_steps : (step >= 2 ? step : 1);
+            if (session && session.is_completed === 1 && session.claimed_key) {
+                return Response.redirect(\`\${url.origin}/getkey?session=\${sessionId}&claimed=1&key=\${session.claimed_key}\`, 302);
+            }
+
+            const cfgSteps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
+            const totalSteps = session ? Math.max(1, Number(session.total_steps) || cfgSteps) : cfgSteps;
+            const currentStep = session ? Math.max(1, Number(session.current_step) || 1) : 1;
+
+            if (session && step < currentStep) {
+                return Response.redirect(\`\${url.origin}/getkey?session=\${sessionId}&step=\${currentStep}\`, 302);
+            }
+            if (session && step > currentStep) {
+                return Response.redirect(\`\${url.origin}/getkey?session=\${sessionId}&step=\${currentStep}&error=step_order\`, 302);
+            }
 
             if (step < totalSteps) {
                 await db.advanceSessionStep(sessionId, step + 1);
-                return Response.redirect(\`\${url.origin}/getkey?session=\${sessionId}&step=\${step + 1}\`, 302);
+                return Response.redirect(\`\${url.origin}/getkey?session=\${sessionId}&step=\${step + 1}&stepSuccess=1\`, 302);
             }
 
             // All checkpoints completed! Generate Free Key using configured limits
@@ -1411,22 +1456,46 @@ export default {
             if (path.endsWith("/getkey/settings")) {
                 if (method === "POST") {
                     const body = await request.json().catch(() => ({}));
+                    const mode = String(body.mode || "dual").toLowerCase();
+                    const steps = Math.max(1, Math.min(parseInt(body.steps) || 2, 10));
+                    const durationHours = Math.max(1, Math.min(parseInt(body.durationHours) || 24, 720));
+                    const maxHwid = Math.max(1, Math.min(parseInt(body.maxHwid !== undefined ? body.maxHwid : 1) || 1, 50));
+                    const maxSessions = Math.max(1, Math.min(parseInt(body.maxSessions !== undefined ? body.maxSessions : 1) || 1, 50));
+                    const lootlabsTierId = Math.max(1, Math.min(parseInt(body.lootlabsTierId) || 1, 4));
+                    const lootlabsTasks = Math.max(1, Math.min(parseInt(body.lootlabsTasks) || 2, 10));
+
                     await db.setSetting("getkey_enabled", body.enabled ? "1" : "0");
-                    await db.setSetting("getkey_mode", body.mode || "dual");
-                    await db.setSetting("getkey_steps", String(body.steps || 1));
-                    await db.setSetting("getkey_duration_hours", String(body.durationHours || 24));
-                    await db.setSetting("getkey_max_hwid", String(body.maxHwid !== undefined ? body.maxHwid : 1));
-                    await db.setSetting("getkey_max_sessions", String(body.maxSessions !== undefined ? body.maxSessions : 1));
+                    await db.setSetting("getkey_mode", mode);
+                    await db.setSetting("getkey_steps", String(steps));
+                    await db.setSetting("getkey_duration_hours", String(durationHours));
+                    await db.setSetting("getkey_max_hwid", String(maxHwid));
+                    await db.setSetting("getkey_max_sessions", String(maxSessions));
                     await db.setSetting("getkey_linkvertise_id", body.linkvertiseUserId || CONFIG.GETKEY.LINKVERTISE_USER_ID);
                     await db.setSetting("getkey_lootlabs_key", body.lootlabsApiKey || CONFIG.GETKEY.LOOTLABS_API_KEY);
-                    await db.setSetting("getkey_lootlabs_tier", String(body.lootlabsTierId || 1));
-                    await db.setSetting("getkey_lootlabs_tasks", String(body.lootlabsTasks || 2));
-                    return json({ success: true, message: "Settings saved successfully" });
+                    await db.setSetting("getkey_lootlabs_tier", String(lootlabsTierId));
+                    await db.setSetting("getkey_lootlabs_tasks", String(lootlabsTasks));
+                    return json({
+                        success: true,
+                        message: "Settings saved successfully",
+                        settings: {
+                            enabled: !!body.enabled,
+                            mode,
+                            steps,
+                            durationHours,
+                            maxHwid,
+                            maxSessions,
+                            linkvertiseUserId: body.linkvertiseUserId || CONFIG.GETKEY.LINKVERTISE_USER_ID,
+                            lootlabsApiKey: body.lootlabsApiKey || CONFIG.GETKEY.LOOTLABS_API_KEY,
+                            lootlabsTierId,
+                            lootlabsTasks,
+                            requireCaptcha: false
+                        }
+                    });
                 } else {
                     const maxHwid = parseInt(await db.getSetting("getkey_max_hwid", "1")) || 1;
                     const maxSessions = parseInt(await db.getSetting("getkey_max_sessions", "1")) || 1;
                     const durationHours = parseInt(await db.getSetting("getkey_duration_hours", "24")) || 24;
-                    const steps = parseInt(await db.getSetting("getkey_steps", "1")) || 1;
+                    const steps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
                     const lootlabsTierId = parseInt(await db.getSetting("getkey_lootlabs_tier", "1")) || 1;
                     const lootlabsTasks = parseInt(await db.getSetting("getkey_lootlabs_tasks", "2")) || 2;
                     return json({
@@ -1456,6 +1525,8 @@ export default {
                         const res = await env.DB.prepare("SELECT * FROM getkey_sessions ORDER BY id DESC LIMIT 50").all();
                         sessions = res.results || [];
                     } catch (e) {}
+                } else {
+                    sessions = Array.from(db.memoryStore.getkeySessions.values()).reverse().slice(0, 50);
                 }
                 return json({ success: true, sessions });
             }

@@ -778,6 +778,7 @@ async function saveGetkeySettings(e) {
         });
 
         if (res.success) {
+            await loadGetkeySettings();
             showToast('Monetization settings saved successfully!', 'success');
         } else {
             showToast(res.error || 'Failed to save settings', 'error');
@@ -803,11 +804,10 @@ async function loadGetkeySessions() {
         }
 
         tbody.innerHTML = res.sessions.map(s => {
-            const statusBadge = s.status === 'completed'
+            const isDone = s.is_completed === 1 || s.status === 'completed';
+            const statusBadge = isDone
                 ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Completed</span>`
-                : s.status === 'active'
-                ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">In Progress</span>`
-                : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-500/20 text-gray-400 border border-gray-500/30">${s.status}</span>`;
+                : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">${s.status || 'In Progress'}</span>`;
 
             const providerBadge = s.provider === 'dual'
                 ? `<span class="text-[10px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">Loot + Linkv</span>`
@@ -823,15 +823,19 @@ async function loadGetkeySessions() {
                 ? `<span title="${s.hwid}" class="font-mono text-[11px] text-gray-400">${s.hwid.length > 14 ? s.hwid.slice(0, 14) + '...' : s.hwid}</span>`
                 : `<span class="text-gray-500">-</span>`;
 
-            const dateStr = s.created_at ? new Date(s.created_at).toLocaleString() : '-';
+            const rawTs = Number(s.created_at || 0);
+            const dateStr = rawTs > 0 ? new Date(rawTs < 1e12 ? rawTs * 1000 : rawTs).toLocaleString() : '-';
+            const sid = String(s.session_id || s.id || '');
+            const totalS = Number(s.total_steps || 1);
+            const doneS = s.step_completed !== undefined ? s.step_completed : (isDone ? totalS : Math.max(0, Number(s.current_step || 1) - 1));
 
             return `
                 <tr class="hover:bg-white/[0.02] transition">
-                    <td class="p-3 font-mono text-[11px] text-gray-400">${s.id.slice(0, 8)}...</td>
+                    <td class="p-3 font-mono text-[11px] text-gray-400">${sid.slice(0, 8)}...</td>
                     <td class="p-3 text-gray-300 font-mono text-[11px]">${s.ip_address || '-'}</td>
                     <td class="p-3">${hwidDisplay}</td>
                     <td class="p-3">${providerBadge}</td>
-                    <td class="p-3 font-bold text-white text-[11px]">Step ${s.step_completed} / ${s.total_steps}</td>
+                    <td class="p-3 font-bold text-white text-[11px]">Step ${doneS} / ${totalS}</td>
                     <td class="p-3">${statusBadge}</td>
                     <td class="p-3">${keyDisplay}</td>
                     <td class="p-3 text-gray-400 text-[11px]">${dateStr}</td>

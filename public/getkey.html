@@ -64,7 +64,7 @@
                     </p>
                 </div>
             </div>
-            <a href="https://discord.gg/cecytf4MHE" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-gray-300 flex items-center space-x-2 transition">
+            <a href="https://discord.gg/Cpcg9wU5k" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-gray-300 flex items-center space-x-2 transition">
                 <i data-lucide="message-square" class="w-4 h-4 text-purple-400"></i>
                 <span>Discord Community</span>
             </a>
@@ -84,10 +84,10 @@
                     <span>Official Free Access Portal</span>
                 </div>
                 <h2 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-                    Get Your Free <span class="bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent">24-Hour Access Key</span>
+                    Get Your Free <span id="heroDurationText" class="bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent">24-Hour Access Key</span>
                 </h2>
-                <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
-                    Complete quick sponsor tasks via <span class="text-purple-300 font-medium">LootLabs</span> and <span class="text-cyan-300 font-medium">Linkvertise</span> to generate your license key instantly.
+                <p id="heroSubtitle" class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
+                    Complete the required sponsor checkpoints to generate your license key instantly.
                 </p>
             </div>
 
@@ -103,25 +103,24 @@
 
             <!-- Step Progress Indicator -->
             <div id="progressContainer" class="mb-8">
-                <div class="flex items-center justify-between relative mb-2">
+                <div class="relative mb-2">
                     <!-- Progress Line -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-white/10 w-full z-0 rounded-full"></div>
                     <div id="progressBar" class="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-gradient-to-r from-purple-500 to-cyan-500 w-0 z-0 transition-all duration-500 rounded-full"></div>
 
-                    <!-- Step 1 Dot -->
-                    <div id="step1Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30 transition">
-                        1
-                    </div>
-                    <!-- Step 2 Dot -->
-                    <div id="step2Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 z-10 transition">
-                        2
-                    </div>
-                    <!-- Claim Dot -->
-                    <div id="claimDot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 z-10 transition">
-                        <i data-lucide="check" class="w-4 h-4"></i>
+                    <div id="progressDotsRow" class="flex items-center justify-between relative z-10">
+                        <div id="step1Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white shadow-lg shadow-purple-500/30 transition">
+                            1
+                        </div>
+                        <div id="step2Dot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 transition">
+                            2
+                        </div>
+                        <div id="claimDot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 transition">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                        </div>
                     </div>
                 </div>
-                <div class="flex justify-between text-[11px] font-semibold text-gray-400 px-1">
+                <div id="progressLabelsRow" class="flex justify-between text-[11px] font-semibold text-gray-400 px-1">
                     <span id="step1Label" class="text-purple-400">Step 1: LootLabs</span>
                     <span id="step2Label">Step 2: Linkvertise</span>
                     <span id="claimLabel">Claim Key</span>
@@ -242,7 +241,7 @@
                 </div>
                 <div>
                     <h3 class="text-2xl font-black text-white">🎉 Access Granted!</h3>
-                    <p class="text-sm text-gray-400 mt-1">Your 24-Hour Free License Key is ready:</p>
+                    <p id="claimedDurationSubtitle" class="text-sm text-gray-400 mt-1">Your Free License Key is ready:</p>
                 </div>
 
                 <!-- Key Display Box -->
@@ -263,7 +262,7 @@
                 <div class="grid grid-cols-2 gap-3 text-left text-xs">
                     <div class="p-3 rounded-xl bg-white/5 border border-white/5">
                         <span class="text-gray-400 block mb-0.5">Duration:</span>
-                        <span class="font-bold text-white">24 Hours Active</span>
+                        <span id="claimedDurationValue" class="font-bold text-white">24 Hours Active</span>
                     </div>
                     <div class="p-3 rounded-xl bg-white/5 border border-white/5">
                         <span class="text-gray-400 block mb-0.5">Auto-Unlock in Game:</span>
@@ -282,7 +281,7 @@
                     <i data-lucide="crown" class="w-5 h-5 text-amber-400 flex-shrink-0"></i>
                     <span>Tired of checkpoints? Get <strong>Permanent VIP Whitelist</strong> to skip all keys forever.</span>
                 </div>
-                <a href="https://discord.gg/cecytf4MHE" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/20 flex-shrink-0 transition">
+                <a href="https://discord.gg/Cpcg9wU5k" target="_blank" class="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/20 flex-shrink-0 transition">
                     Get VIP Whitelist
                 </a>
             </div>
@@ -307,11 +306,22 @@
         const sessionParam = urlParams.get('session') || '';
         const claimedParam = urlParams.get('claimed');
         const stepSuccess = urlParams.get('stepSuccess');
-        let selectedProvider = (urlParams.get('provider') || 'lootlabs').toLowerCase();
+        const errorParam = urlParams.get('error');
+        let selectedProvider = (urlParams.get('provider') || '').toLowerCase();
 
         if (hwidParam) {
             document.getElementById('hwidBadge').classList.remove('hidden');
             document.getElementById('hwidText').innerText = hwidParam;
+        }
+
+        function getStepProvider(stepNum, totalSteps, mode, chosenSingle) {
+            const m = (mode || 'dual').toLowerCase();
+            if (m === 'linkvertise') return 'linkvertise';
+            if (m === 'lootlabs') return 'lootlabs';
+            if (totalSteps === 1) {
+                return (chosenSingle === 'linkvertise') ? 'linkvertise' : 'lootlabs';
+            }
+            return (stepNum % 2 === 1) ? 'lootlabs' : 'linkvertise';
         }
 
         function updateProviderUI(p) {
@@ -343,27 +353,90 @@
         }
 
         async function selectProvider(p) {
+            if (!sessionData || sessionData.totalSteps > 1 || sessionData.configuredMode !== 'dual') return;
             updateProviderUI(p);
-            if (sessionData && sessionData.sessionId && !sessionData.isCompleted) {
+            if (sessionData.sessionId && !sessionData.isCompleted) {
                 try {
-                    await fetch('/api/v1/getkey/switch-provider', {
+                    const res = await fetch('/api/v1/getkey/switch-provider', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ sessionId: sessionData.sessionId, provider: p })
                     });
-                    sessionData.provider = p;
-                    sessionData.totalSteps = 1;
+                    const data = await res.json();
+                    sessionData.provider = data.provider || p;
+                    sessionData.totalSteps = data.totalSteps || sessionData.totalSteps || 1;
                     sessionData.currentStep = 1;
-                    renderStep(1, 1);
+                    renderStep(sessionData.currentStep, sessionData.totalSteps);
                 } catch (e) {}
             }
+        }
+
+        function applyDurationText(hours) {
+            const h = parseInt(hours) || 24;
+            const heroEl = document.getElementById('heroDurationText');
+            const subEl = document.getElementById('claimedDurationSubtitle');
+            const valEl = document.getElementById('claimedDurationValue');
+            if (heroEl) heroEl.innerText = `${h}-Hour Access Key`;
+            if (subEl) subEl.innerText = `Your ${h}-Hour Free License Key is ready:`;
+            if (valEl) valEl.innerText = `${h} Hours Active`;
+        }
+
+        function renderProgressSteps(currentStep, totalSteps, completedAll = false) {
+            const dotsRow = document.getElementById('progressDotsRow');
+            const labelsRow = document.getElementById('progressLabelsRow');
+            const progressBar = document.getElementById('progressBar');
+            const mode = (sessionData && sessionData.configuredMode) || (sessionData && sessionData.provider) || 'dual';
+
+            let dotsHtml = '';
+            let labelsHtml = '';
+
+            for (let i = 1; i <= totalSteps; i++) {
+                const sp = getStepProvider(i, totalSteps, mode, selectedProvider);
+                const isDone = completedAll || i < currentStep;
+                const isCurrent = !completedAll && i === currentStep;
+                const activeColor = sp === 'linkvertise' ? 'border-cyan-500 shadow-cyan-500/30' : 'border-purple-500 shadow-purple-500/30';
+                const doneColor = sp === 'linkvertise' ? 'bg-cyan-600 border-cyan-500' : 'bg-purple-600 border-purple-500';
+                const labelActive = sp === 'linkvertise' ? 'text-cyan-400' : 'text-purple-400';
+                const provName = sp === 'linkvertise' ? 'Linkvertise' : 'LootLabs';
+
+                if (isDone) {
+                    dotsHtml += `<div class="w-9 h-9 rounded-full ${doneColor} border-2 flex items-center justify-center font-bold text-xs text-white transition"><i data-lucide="check" class="w-4 h-4"></i></div>`;
+                    labelsHtml += `<span class="${labelActive}">Step ${i}: ${provName}</span>`;
+                } else if (isCurrent) {
+                    dotsHtml += `<div class="w-9 h-9 rounded-full bg-brand-dark border-2 ${activeColor} flex items-center justify-center font-bold text-xs text-white shadow-lg transition">${i}</div>`;
+                    labelsHtml += `<span class="${labelActive}">Step ${i}: ${provName}</span>`;
+                } else {
+                    dotsHtml += `<div class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 transition">${i}</div>`;
+                    labelsHtml += `<span>Step ${i}: ${provName}</span>`;
+                }
+            }
+
+            if (completedAll) {
+                dotsHtml += `<div id="claimDot" class="w-9 h-9 rounded-full bg-emerald-600 border-2 border-emerald-400 flex items-center justify-center font-bold text-xs text-white shadow-lg shadow-emerald-500/40 transition"><i data-lucide="check" class="w-4 h-4"></i></div>`;
+                labelsHtml += `<span id="claimLabel" class="text-emerald-400">Claim Key</span>`;
+                if (progressBar) progressBar.style.width = '100%';
+            } else {
+                dotsHtml += `<div id="claimDot" class="w-9 h-9 rounded-full bg-brand-dark border-2 border-brand-border flex items-center justify-center font-bold text-xs text-gray-400 transition"><i data-lucide="check" class="w-4 h-4"></i></div>`;
+                labelsHtml += `<span id="claimLabel">Claim Key</span>`;
+                const pct = totalSteps <= 1 ? 35 : Math.min(90, Math.round(((currentStep - 0.5) / totalSteps) * 90));
+                if (progressBar) progressBar.style.width = `${pct}%`;
+            }
+
+            if (dotsRow) dotsRow.innerHTML = dotsHtml;
+            if (labelsRow) labelsRow.innerHTML = labelsHtml;
         }
 
         // Initialize Session
         async function initSession() {
             try {
-                updateProviderUI(selectedProvider);
-                const res = await fetch(`/api/v1/getkey/init?hwid=${encodeURIComponent(hwidParam)}&session=${encodeURIComponent(sessionParam)}&provider=${encodeURIComponent(selectedProvider)}`);
+                if (errorParam === 'invalid_signature') {
+                    showAlert('error', 'Verification signature invalid or expired. Please try again.');
+                } else if (errorParam === 'step_order') {
+                    showAlert('error', 'Please complete the checkpoints in sequence.');
+                }
+
+                const provQuery = selectedProvider ? `&provider=${encodeURIComponent(selectedProvider)}` : '';
+                const res = await fetch(`/api/v1/getkey/init?hwid=${encodeURIComponent(hwidParam)}&session=${encodeURIComponent(sessionParam)}${provQuery}`);
                 const data = await res.json();
 
                 if (!data.success) {
@@ -372,6 +445,7 @@
                 }
 
                 sessionData = data;
+                if (data.durationHours) applyDurationText(data.durationHours);
 
                 // Case 1: Already has active key or session claimed
                 if (data.isCompleted && data.claimedKey) {
@@ -379,16 +453,17 @@
                     return;
                 }
 
-                if (data.provider) {
-                    selectedProvider = data.provider;
-                    updateProviderUI(data.provider);
+                const keyParam = urlParams.get('key');
+                if (keyParam) {
+                    showClaimedKey(keyParam);
+                    return;
                 }
 
                 // Case 2: Render active step
                 renderStep(data.currentStep, data.totalSteps);
 
                 if (stepSuccess) {
-                    showAlert('success', 'Checkpoint completed successfully!');
+                    showAlert('success', `Checkpoint completed! (${data.currentStep} / ${data.totalSteps})`);
                 }
             } catch (err) {
                 showAlert('error', 'Cannot reach key server. Please check your internet connection.');
@@ -396,65 +471,57 @@
         }
 
         function renderStep(currentStep, totalSteps) {
-            const provider = (sessionData && sessionData.provider) || selectedProvider;
-            updateProviderUI(provider === 'linkvertise' ? 'linkvertise' : 'lootlabs');
+            const total = Math.max(1, parseInt(totalSteps) || 1);
+            const cur = Math.min(Math.max(1, parseInt(currentStep) || 1), total);
+            const cfgMode = (sessionData && sessionData.configuredMode) || (sessionData && sessionData.provider) || 'dual';
+            const provSelectBox = document.getElementById('providerSelectContainer');
 
-            const progressBar = document.getElementById('progressBar');
-            const step1Dot = document.getElementById('step1Dot');
-            const step2Dot = document.getElementById('step2Dot');
-            const claimDot = document.getElementById('claimDot');
+            if (provSelectBox) {
+                if (cfgMode === 'dual' && total === 1) {
+                    provSelectBox.classList.remove('hidden');
+                    updateProviderUI((sessionData && sessionData.provider === 'linkvertise') || selectedProvider === 'linkvertise' ? 'linkvertise' : 'lootlabs');
+                } else {
+                    provSelectBox.classList.add('hidden');
+                }
+            }
+
+            const chosenSingle = (sessionData && sessionData.provider) || selectedProvider || 'lootlabs';
+            const stepProvider = getStepProvider(cur, total, cfgMode, chosenSingle);
+            const durHours = (sessionData && sessionData.durationHours) || 24;
+
+            renderProgressSteps(cur, total, false);
 
             const cardStep1 = document.getElementById('cardStep1');
             const cardStep2 = document.getElementById('cardStep2');
             const cardClaimed = document.getElementById('cardClaimed');
+            cardClaimed.classList.add('hidden');
 
-            if (totalSteps === 1) {
-                // Single step mode (Either LootLabs OR Linkvertise only!)
-                step2Dot.style.display = 'none';
-                document.getElementById('step2Label').style.display = 'none';
-                document.getElementById('step1Label').innerText = provider === 'linkvertise' ? 'Linkvertise' : 'LootLabs';
+            const isFinal = cur === total;
+            const badgeText = total === 1 ? '1 Step Only' : (isFinal ? `Final Step (${cur}/${total})` : `Step ${cur} of ${total}`);
 
-                progressBar.style.width = '45%';
-                step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 ' + (provider === 'linkvertise' ? 'border-cyan-500 shadow-cyan-500/30' : 'border-purple-500 shadow-purple-500/30') + ' flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg';
-
-                if (provider === 'linkvertise') {
-                    cardStep1.classList.add('hidden');
-                    cardStep2.classList.remove('hidden');
-                    document.getElementById('step2Title').innerText = 'Linkvertise Checkpoint';
-                    document.getElementById('step2Badge').innerText = '1 Step Only';
-                    document.getElementById('step2Desc').innerText = 'Complete Linkvertise sponsor task to receive your key!';
-                    document.getElementById('btnStartStep2').innerHTML = '<i data-lucide="external-link" class="w-4 h-4"></i><span>Start Linkvertise Checkpoint (Get 24h Key)</span>';
-                    document.getElementById('btnStartStep2').onclick = function() { handleStartCheckpoint(1); };
-                } else {
-                    cardStep1.classList.remove('hidden');
-                    cardStep2.classList.add('hidden');
-                    document.getElementById('step1Title').innerText = 'LootLabs Checkpoint';
-                    document.getElementById('step1Badge').innerText = '1 Step Only';
-                    document.getElementById('step1Desc').innerText = 'Complete quick LootLabs task to receive your key!';
-                    document.getElementById('btnStartStep1').innerHTML = '<i data-lucide="external-link" class="w-4 h-4"></i><span>Start LootLabs Checkpoint (Get 24h Key)</span>';
-                    document.getElementById('btnStartStep1').onclick = function() { handleStartCheckpoint(1); };
-                }
-                cardClaimed.classList.add('hidden');
+            if (stepProvider === 'linkvertise') {
+                cardStep1.classList.add('hidden');
+                cardStep2.classList.remove('hidden');
+                document.getElementById('step2Title').innerText = `Checkpoint ${cur}/${total}: Linkvertise Task`;
+                document.getElementById('step2Badge').innerText = badgeText;
+                document.getElementById('step2Desc').innerText = isFinal
+                    ? `Complete this final Linkvertise task to unlock your ${durHours}-hour key!`
+                    : `Complete Linkvertise checkpoint ${cur} of ${total} to advance to the next step.`;
+                document.getElementById('btnStartStep2').innerHTML = `<i data-lucide="external-link" class="w-4 h-4"></i><span>${isFinal ? `Start Final Checkpoint ${cur}/${total} (Linkvertise)` : `Start Checkpoint ${cur}/${total} (Linkvertise)`}</span>`;
+                document.getElementById('btnStartStep2').onclick = function() { handleStartCheckpoint(cur); };
             } else {
-                // Dual Step mode
-                step2Dot.style.display = 'flex';
-                document.getElementById('step2Label').style.display = 'block';
-                if (currentStep === 1) {
-                    progressBar.style.width = '20%';
-                    step1Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-purple-500/30';
-                    cardStep1.classList.remove('hidden');
-                    cardStep2.classList.add('hidden');
-                    cardClaimed.classList.add('hidden');
-                } else if (currentStep === 2) {
-                    progressBar.style.width = '65%';
-                    step1Dot.className = 'w-9 h-9 rounded-full bg-purple-600 border-2 border-purple-500 flex items-center justify-center font-bold text-xs text-white z-10';
-                    step1Dot.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
-                    step2Dot.className = 'w-9 h-9 rounded-full bg-brand-dark border-2 border-cyan-500 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-cyan-500/30';
-                    document.getElementById('step2Label').className = 'text-cyan-400';
-                    cardStep1.classList.add('hidden');
-                    cardStep2.classList.remove('hidden');
-                    cardClaimed.classList.add('hidden');
-                }
+                cardStep1.classList.remove('hidden');
+                cardStep2.classList.add('hidden');
+                document.getElementById('step1Title').innerText = `Checkpoint ${cur}/${total}: LootLabs Sponsor Task`;
+                document.getElementById('step1Badge').innerText = badgeText;
+                document.getElementById('step1Desc').innerText = isFinal
+                    ? `Complete this final LootLabs task to receive your ${durHours}-hour key!`
+                    : `Complete LootLabs checkpoint ${cur} of ${total} to advance to the next step.`;
+                document.getElementById('step1Note').innerText = isFinal
+                    ? `Click the button below to complete Checkpoint ${cur} of ${total}. Once finished, your ${durHours}-hour key will be generated immediately!`
+                    : `Click the button below to complete Checkpoint ${cur} of ${total}. After completing it, you will automatically return for Checkpoint ${cur + 1} of ${total}.`;
+                document.getElementById('btnStartStep1').innerHTML = `<i data-lucide="external-link" class="w-4 h-4"></i><span>${isFinal ? `Start Final Checkpoint ${cur}/${total} (LootLabs)` : `Start Checkpoint ${cur}/${total} (LootLabs)`}</span>`;
+                document.getElementById('btnStartStep1').onclick = function() { handleStartCheckpoint(cur); };
             }
             lucide.createIcons();
         }
@@ -465,7 +532,9 @@
                 return;
             }
 
-            const btn = step === 1 ? document.getElementById('btnStartStep1') : document.getElementById('btnStartStep2');
+            const btn = !document.getElementById('cardStep1').classList.contains('hidden')
+                ? document.getElementById('btnStartStep1')
+                : document.getElementById('btnStartStep2');
             btn.disabled = true;
             btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>Generating Sponsor Link...</span>';
             lucide.createIcons();
@@ -490,15 +559,15 @@
         }
 
         function showClaimedKey(key) {
+            const provSelectBox = document.getElementById('providerSelectContainer');
+            if (provSelectBox) provSelectBox.classList.add('hidden');
             document.getElementById('cardStep1').classList.add('hidden');
             document.getElementById('cardStep2').classList.add('hidden');
             document.getElementById('cardClaimed').classList.remove('hidden');
             document.getElementById('claimedKeyText').innerText = key;
 
-            // Full progress bar
-            document.getElementById('progressBar').style.width = '100%';
-            document.getElementById('claimDot').className = 'w-9 h-9 rounded-full bg-emerald-600 border-2 border-emerald-400 flex items-center justify-center font-bold text-xs text-white z-10 shadow-lg shadow-emerald-500/40';
-            document.getElementById('claimLabel').className = 'text-emerald-400';
+            const total = (sessionData && sessionData.totalSteps) || 1;
+            renderProgressSteps(total, total, true);
 
             // Confetti Blast
             if (typeof confetti === 'function') {
