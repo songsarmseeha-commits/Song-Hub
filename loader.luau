@@ -229,57 +229,118 @@ local function startSessionHeartbeat(sessionToken, activeKey)
     end)
 end
 
-local function launchGameScript(sessionToken, activeKey)
-    print(string.format("[Song Hub] 🚀 Launching %s securely...", gameTitle))
-    local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-    local tokenQuery = (sessionToken and #sessionToken > 0) and ("&token=" .. sessionToken) or ""
-    local keyQuery = (activeKey and #activeKey > 0) and ("&key=" .. activeKey) or ""
-    local urls = {
-        CLOUDFLARE_URL .. "/scripts/" .. cleanFileName .. "?v=" .. cacheBuster .. tokenQuery .. keyQuery,
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. cleanFileName .. "?v=" .. cacheBuster,
-        "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/games/" .. cleanFileName .. "?v=" .. cacheBuster
-    }
+local function fetchVerifiedLua(url)
+    local function isValidCode(body)
+        if type(body) ~= "string" or #body <= 500 then
+            return nil
+        end
+        if body:find("403: Forbidden", 1, true) or body:find("404: Not Found", 1, true) or body:find("-- Game script not found", 1, true) then
+            return nil
+        end
+        local trimmed = body:match("^%s*(.-)%s*$") or ""
+        if trimmed:sub(1, 1) == "<" then
+            return nil
+        end
+        local fn = loadstring(body)
+        if fn then
+            return fn
+        end
+        return nil
+    end
 
-    local scriptCode = nil
-    for _, url in ipairs(urls) do
-        local ok, res = pcall(game.HttpGet, game, url)
-        if ok and type(res) == "string" and #res > 500 and not res:find("403: Forbidden") and not res:find("404: Not Found") then
-            scriptCode = res
-            break
+    local ok, res = pcall(game.HttpGet, game, url)
+    if ok then
+        local fn = isValidCode(res)
+        if fn then
+            return res, fn
         end
     end
 
-    if not scriptCode then
-        warn("[Song Hub] ⚠️ Failed to download from GitHub! Checking local backup...")
-        if isfile and isfile("games/" .. cleanFileName) then
-            local ok, localCode = pcall(readfile, "games/" .. cleanFileName)
-            if ok and type(localCode) == "string" and #localCode > 500 then
-                scriptCode = localCode
+    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
+    if requestFn then
+        local rOk, resp = pcall(requestFn, {
+            Url = url,
+            Method = "GET",
+            Headers = {
+                ["Cache-Control"] = "no-cache, no-store, must-revalidate",
+                ["Pragma"] = "no-cache",
+            }
+        })
+        if rOk and type(resp) == "table" then
+            local status = tonumber(resp.StatusCode) or 200
+            if status >= 200 and status < 300 then
+                local fn = isValidCode(resp.Body)
+                if fn then
+                    return resp.Body, fn
+                end
             end
         end
     end
 
-    if scriptCode then
+    return nil, nil
+end
+
+local function launchGameScript(sessionToken, activeKey)
+    print(string.format("[Song Hub] 🚀 Launching %s securely...", gameTitle))
+    local tokenQuery = (sessionToken and #sessionToken > 0) and ("&token=" .. sessionToken) or ""
+    local keyQuery = (activeKey and #activeKey > 0) and ("&key=" .. activeKey) or ""
+
+    local scriptCode, compiledFn = nil, nil
+    for attempt = 1, 2 do
+        local cacheBuster = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999)) .. "_" .. tostring(attempt)
+        local urls = {
+            CLOUDFLARE_URL .. "/scripts/" .. cleanFileName .. "?v=" .. cacheBuster .. tokenQuery .. keyQuery,
+            "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/games/" .. cleanFileName .. "?v=" .. cacheBuster,
+        }
+        for _, url in ipairs(urls) do
+            scriptCode, compiledFn = fetchVerifiedLua(url)
+            if compiledFn then
+                break
+            end
+        end
+        if compiledFn then
+            break
+        end
+        if attempt < 2 then
+            task.wait(0.75)
+        end
+    end
+
+    if not compiledFn then
+        warn("[Song Hub] ⚠️ Failed to download from online endpoints! Checking local backup...")
+        if isfile and isfile("games/" .. cleanFileName) then
+            local ok, localCode = pcall(readfile, "games/" .. cleanFileName)
+            if ok and type(localCode) == "string" and #localCode > 500 then
+                local fn = loadstring(localCode)
+                if fn then
+                    scriptCode = localCode
+                    compiledFn = fn
+                end
+            end
+        end
+    else
+        pcall(function()
+            if delfile and isfile and isfile("games/" .. cleanFileName) then
+                delfile("games/" .. cleanFileName)
+            end
+        end)
+    end
+
+    if compiledFn then
         pcall(function()
             if writefile then
                 if makefolder then pcall(makefolder, "autoexec") end
-                writefile("autoexec/SongHub.luau", 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()')
+                writefile("autoexec/SongHub.luau", 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. tostring(os.time())))()')
             end
         end)
 -- [Security] Local file dump removed to prevent code leak
 
-        local fn, err = loadstring(scriptCode)
-        if fn then
-            print("[Song Hub] ✅ Successfully compiled " .. gameTitle .. "! Launching UI...")
-            if getgenv then getgenv()._SongHubLoading = false end
-            task.spawn(fn)
-        else
-            if getgenv then getgenv()._SongHubLoading = false end
-            warn("[Song Hub] ❌ Compile error in " .. scriptFileName .. ": " .. tostring(err))
-        end
+        print("[Song Hub] ✅ Successfully compiled " .. gameTitle .. " (Online Latest)! Launching UI...")
+        if getgenv then getgenv()._SongHubLoading = false end
+        task.spawn(compiledFn)
     else
         if getgenv then getgenv()._SongHubLoading = false end
-        warn("[Song Hub] ❌ Could not download script from GitHub!")
+        warn("[Song Hub] ❌ Could not download or compile " .. scriptFileName .. " from GitHub / Cloudflare!")
     end
 end
 
