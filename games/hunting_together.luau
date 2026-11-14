@@ -272,9 +272,15 @@ local function stopCombatAndTargeting()
         if SetAutoSkillRemote then
             SetAutoSkillRemote:FireServer(false)
         end
-        local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
-        if LocalPlayer:GetAttribute("AutoOn") == true and LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
-            LumiMenuToggle:Fire("autoToggle")
+        if LocalPlayer:GetAttribute("AutoOn") == true then
+            local now = os.clock()
+            if (now - (BossHunt.lastDisableAutoAt or 0)) >= 2.0 then
+                BossHunt.lastDisableAutoAt = now
+                local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
+                if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
+                    pcall(LumiMenuToggle.Fire, LumiMenuToggle, "autoToggle")
+                end
+            end
         end
         LocalPlayer:SetAttribute("AutoOn", false)
         LocalPlayer:SetAttribute("TargetLocked", false)
@@ -312,25 +318,37 @@ end
 
 -- Safe helper to manage target attributes & ObjectValue without crashing
 local function setClientCurrentTarget(tgt)
-    pcall(function()
-        local ct = LocalPlayer:FindFirstChild("CurrentTarget")
-        if ct and ct:IsA("ObjectValue") then
+    local ct = LocalPlayer:FindFirstChild("CurrentTarget")
+    if ct and ct:IsA("ObjectValue") and ct.Value ~= tgt then
+        if tgt == nil or (typeof(tgt) == "Instance" and tgt.Parent ~= nil) then
             ct.Value = tgt
-        end
-        LocalPlayer:SetAttribute("TargetLocked", tgt ~= nil)
-        if tgt ~= nil then
-            LocalPlayer:SetAttribute("AutoOn", true)
-            LocalPlayer:SetAttribute("BotUseSkills", Config.AutoUseSkills == true)
         else
-            if not Config.AutoFarm and not (Config.AutoDungeon and isInsideDungeon()) then
-                LocalPlayer:SetAttribute("AutoOn", false)
+            ct.Value = nil
+        end
+    end
+    local wantLocked = (tgt ~= nil)
+    if LocalPlayer:GetAttribute("TargetLocked") ~= wantLocked then
+        LocalPlayer:SetAttribute("TargetLocked", wantLocked)
+    end
+    if tgt ~= nil then
+        -- Never force AutoOn = true during Hub combat: CombatClient's toggleAuto conflicts with disableGameAutoOn
+        local wantBotSkills = (Config.AutoUseSkills == true)
+        if LocalPlayer:GetAttribute("BotUseSkills") ~= wantBotSkills then
+            LocalPlayer:SetAttribute("BotUseSkills", wantBotSkills)
+        end
+    elseif not Config.AutoFarm and not (Config.AutoDungeon and isInsideDungeon()) then
+        if LocalPlayer:GetAttribute("AutoOn") == true then
+            local now = os.clock()
+            if (now - (BossHunt.lastDisableAutoAt or 0)) >= 2.0 then
+                BossHunt.lastDisableAutoAt = now
                 local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
-                if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") and LocalPlayer:GetAttribute("AutoOn") == true then
-                    LumiMenuToggle:Fire("autoToggle")
+                if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
+                    pcall(LumiMenuToggle.Fire, LumiMenuToggle, "autoToggle")
                 end
             end
+            LocalPlayer:SetAttribute("AutoOn", false)
         end
-    end)
+    end
 end
 
 local travelToZone = nil
@@ -355,13 +373,10 @@ isMonsterAlive = function(monster)
     local hum = monster:FindFirstChildOfClass("Humanoid")
     if hum then
         if hum.Health <= 0 then return false end
-        local isDeadState = false
-        pcall(function()
-            if hum:GetState() == Enum.HumanoidStateType.Dead then
-                isDeadState = true
-            end
-        end)
-        if isDeadState then return false end
+        local stOk, st = pcall(hum.GetState, hum)
+        if stOk and st == Enum.HumanoidStateType.Dead then
+            return false
+        end
     end
     local mHrp = monster:FindFirstChild("HumanoidRootPart")
         or monster.PrimaryPart
@@ -453,7 +468,7 @@ Config = {
     SafeFarmExploit = false,      -- ช่องโหว่มุมอับสายตา & ระยะปลอดภัย
     SafeFarmHeight = 5.5,        -- ความสูงลอยเหนือหัวมอนสเตอร์
     AdaptiveDistance = false,     -- ปรับระยะห่างตามอาวุธ
-    FarmDistance = 14.0,         -- ค่าตั้งต้นระยะฟาร์ม
+    FarmDistance = 4.5,          -- ค่าตั้งต้นระยะฟาร์ม
     AttackDelay = 0.08,
     SelectedMonster = "All",
     AutoBoss = false,            -- Automatically hunt Bosses & Mini-Bosses (ปิดไว้เป็นค่าเริ่มต้น)
@@ -463,7 +478,7 @@ Config = {
     SelectedBoss = "All Bosses",-- Specific Boss, summary string, or "All Bosses"
     SelectedBosses = { "All Bosses" }, -- Multi-select Boss names for BossOnly & BossServerHop
     BossServerHop = false,      -- Auto Server Hop when target boss is missing or defeated
-    BossHopDelay = 0,           -- Seconds to wait before Server Hop when selected boss is missing (0 = immediate)
+    BossHopDelay = 15,          -- Seconds to wait before Server Hop when selected boss is missing (15s safe default)
     BossTimedHop = false,       -- Enable periodic timed Server Hop for Boss Hunting
     BossTimedHopMinutes = 5,    -- Minutes interval for Timed Boss Server Hop
     ReturnToProgressionAfterBoss = false, -- ตีบอสเสร็จกลับไปฟาร์มตาม Auto Lv.99 ทันที
@@ -680,9 +695,43 @@ local function LoadConfig(silent)
                         Config.SelectedBosses = { "All Bosses" }
                     end
                 end
-                if Config.BossHopDelay == nil then Config.BossHopDelay = 0 end
+                if Config.BossHopDelay == nil then Config.BossHopDelay = 15 end
                 if Config.BossTimedHop == nil then Config.BossTimedHop = false end
                 if Config.BossTimedHopMinutes == nil then Config.BossTimedHopMinutes = 5 end
+                BossHunt.serverJoinAt = BossHunt.serverJoinAt or os.clock()
+                BossHunt.hopUnlockAt = BossHunt.serverJoinAt + 12.0
+                if not BossHunt._coldHopChecked then
+                    BossHunt._coldHopChecked = true
+                    local hopMarkerValid = false
+                    local markerPath = "HuntingTogether_HopSession_" .. tostring(LocalPlayer.UserId) .. ".json"
+                    if type(readfile) == "function" then
+                        local exists = true
+                        if type(isfile) == "function" then
+                            local isOk, res = pcall(isfile, markerPath)
+                            exists = (isOk and res == true)
+                        end
+                        if exists then
+                            local mOk, mRaw = pcall(readfile, markerPath)
+                            if mOk and type(mRaw) == "string" and #mRaw > 2 then
+                                local dOk, mData = pcall(HttpService.JSONDecode, HttpService, mRaw)
+                                if dOk and type(mData) == "table" and tonumber(mData.ts) and (os.time() - tonumber(mData.ts)) <= 90 and (os.time() - tonumber(mData.ts)) >= -5 then
+                                    hopMarkerValid = true
+                                end
+                            end
+                            if type(delfile) == "function" then
+                                pcall(delfile, markerPath)
+                            elseif type(writefile) == "function" then
+                                pcall(writefile, markerPath, "{}")
+                            end
+                        end
+                    end
+                    if not hopMarkerValid then
+                        -- Cold launch / manual rejoin / aborted session: never auto-resume a server hop loop
+                        Config.BossServerHop = false
+                        Config.BossTimedHop = false
+                        Config.ServerHopAuto = false
+                    end
+                end
                 if Config.SellRarities == nil then
                     if Config.MaxSellRarity == "Common Only" then
                         Config.SellRarities = { "Common (ธรรมดา / ขาว)" }
@@ -719,6 +768,8 @@ local function LoadConfig(silent)
 end
 
 LoadConfig(true)
+BossHunt.serverJoinAt = BossHunt.serverJoinAt or os.clock()
+BossHunt.hopUnlockAt = BossHunt.hopUnlockAt or (BossHunt.serverJoinAt + 12.0)
 _G.HT_Config = Config
 if getgenv then getgenv().HT_Config = Config end
 
@@ -748,7 +799,7 @@ local function registerQueueOnTeleport(forceQueue)
                     if type(code) ~= "string" or #code <= 500 then return nil end
                     local head = code:sub(1, 512):gsub("^%s+", "")
                     if head == "" or head:sub(1, 1) == "<" then return nil end
-                    if head:find("403: Forbidden", 1, true) or head:find("404: Not Found", 1, true) or head:find("-- Game script not found", 1, true) then return nil end
+                    if head:find("403" .. ": Forbidden", 1, true) or head:find("404" .. ": Not Found", 1, true) or head:find("-- Game script" .. " not found", 1, true) then return nil end
                     return loadstring(code)
                 end
                 for _, u in ipairs(urls) do
@@ -3049,17 +3100,20 @@ end
 
 function BossHunt.disableGameAutoOn()
     if LocalPlayer:GetAttribute("AutoOn") ~= true then return end
-    pcall(function()
-        local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
-        if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
-            LumiMenuToggle:Fire("autoToggle")
-        end
-        local BotAutoState = getRemote("BotAutoState")
-        if BotAutoState then BotAutoState:FireServer(false) end
-        local BotState = getRemote("BotState")
-        if BotState then BotState:FireServer(false) end
-        LocalPlayer:SetAttribute("AutoOn", false)
-    end)
+    LocalPlayer:SetAttribute("AutoOn", false)
+    local now = os.clock()
+    if (now - (BossHunt.lastDisableAutoAt or 0)) < 2.0 then
+        return
+    end
+    BossHunt.lastDisableAutoAt = now
+    local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
+    if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
+        pcall(LumiMenuToggle.Fire, LumiMenuToggle, "autoToggle")
+    end
+    local BotAutoState = getRemote("BotAutoState")
+    if BotAutoState then pcall(BotAutoState.FireServer, BotAutoState, false) end
+    local BotState = getRemote("BotState")
+    if BotState then pcall(BotState.FireServer, BotState, false) end
 end
 
 function BossHunt.hasPillarUnlocked(zoneName)
@@ -3783,9 +3837,32 @@ local function getTargetBossZone(level, selectedBoss)
 end
 
 function BossHunt.triggerOrDelayBossHop(selected, silent, soonestName, soonestRem)
+    if BossHunt.cancelHopRequested then
+        return false
+    end
     local selSummary = BossHunt.formatSelectionSummary(selected)
-    local hopDelay = math.max(0, tonumber(Config.BossHopDelay) or 0)
+    local hopDelay = math.max(0, tonumber(Config.BossHopDelay) or 15)
     local remStr = soonestRem and BossHunt.formatSeconds(soonestRem) or nil
+    local now = os.clock()
+    local joinUnlockLeft = math.max(0, (BossHunt.hopUnlockAt or ((BossHunt.serverJoinAt or now) + 12.0)) - now)
+    local editUnlockLeft = math.max(0, ((BossHunt.lastHopEditAt or 0) + 3.0) - now)
+    local guardLeft = math.max(joinUnlockLeft, editUnlockLeft)
+
+    if guardLeft > 0 then
+        BossHunt.missingSince = nil
+        if (now - (BossHunt.lastDelayNotify or 0)) >= 8 then
+            BossHunt.lastDelayNotify = now
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "🛡️ รอความปลอดภัยก่อนย้ายเซิร์ฟ",
+                    Content = string.format("รอกันย้ายเซิร์ฟรัวอีก %d วินาที (สามารถกดหยุดหรือปิด Auto Hop ได้ตลอดเวลา)", math.ceil(guardLeft)),
+                    Duration = 3,
+                    Icon = "shield",
+                })
+            end
+        end
+        return false
+    end
 
     if hopDelay <= 0 then
         BossHunt.missingSince = nil
@@ -3800,11 +3877,10 @@ function BossHunt.triggerOrDelayBossHop(selected, silent, soonestName, soonestRe
                 Icon = "zap",
             })
         end
-        BossHunt.serverHopForBoss(selSummary, silent)
+        BossHunt.serverHopForBoss(selSummary, silent, false)
         return true
     end
 
-    local now = os.clock()
     if not BossHunt.missingSince or BossHunt.lastMissingKey ~= selSummary then
         BossHunt.missingSince = now
         BossHunt.lastMissingKey = selSummary
@@ -3838,7 +3914,7 @@ function BossHunt.triggerOrDelayBossHop(selected, silent, soonestName, soonestRe
             Icon = "zap",
         })
     end
-    BossHunt.serverHopForBoss(selSummary, silent)
+    BossHunt.serverHopForBoss(selSummary, silent, false)
     return true
 end
 
@@ -3846,7 +3922,8 @@ local function executeBossInspection(silent, forceStart)
     if not isScriptAlive() then return end
     if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if isWarpingZone or isSelling or isReturningFromBoss or BossHunt.isServerHopping then return end
-    if not forceStart and activeBossFight and activeBossFight.model and isMonsterAlive(activeBossFight.model) and BossHunt.isMatchingBoss(activeBossFight.model, Config.SelectedBoss) then
+    local activeCheckSel = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
+    if not forceStart and activeBossFight and activeBossFight.model and isMonsterAlive(activeBossFight.model) and BossHunt.isMatchingBoss(activeBossFight.model, activeCheckSel) then
         return
     end
     if BossHunt.isInspecting and not forceStart then return end
@@ -4591,13 +4668,87 @@ do
     end
 
     local TeleportService = game:GetService("TeleportService")
+function BossHunt.getHopSessionPath()
+    return "HuntingTogether_HopSession_" .. tostring(LocalPlayer.UserId) .. ".json"
+end
+
+function BossHunt.markHopSession()
+    if type(writefile) ~= "function" then return end
+    local payloadOk, payload = pcall(HttpService.JSONEncode, HttpService, {
+        ts = os.time(),
+        job = tostring(game.JobId or ""),
+    })
+    if payloadOk and type(payload) == "string" then
+        pcall(writefile, BossHunt.getHopSessionPath(), payload)
+    end
+end
+
+function BossHunt.clearHopSession()
+    local path = BossHunt.getHopSessionPath()
+    if type(delfile) == "function" then
+        local exists = (type(isfile) ~= "function") or (pcall(isfile, path) and isfile(path))
+        if exists then
+            pcall(delfile, path)
+        end
+    elseif type(writefile) == "function" then
+        pcall(writefile, path, "{}")
+    end
+end
+
+function BossHunt.stopAllHops(resetUnsafeDelay)
+    Config.BossServerHop = false
+    Config.BossTimedHop = false
+    Config.ServerHopAuto = false
+    BossHunt.cancelHopRequested = true
+    BossHunt.isServerHopping = false
+    BossHunt.missingSince = nil
+    BossHunt.lastMissingKey = ""
+    BossHunt.bossTimedHopNextTick = 0
+    BossHunt.serverHopNextTick = 0
+    BossHunt.hopFailCount = 0
+    BossHunt.clearHopSession()
+    if resetUnsafeDelay and (tonumber(Config.BossHopDelay) or 0) < 10 then
+        Config.BossHopDelay = 15
+        local slider = BossHunt.uiRefs and BossHunt.uiRefs.bossHopDelaySlider
+        if slider then
+            if slider.SetValue then pcall(slider.SetValue, slider, 15)
+            elseif slider.Set then pcall(slider.Set, slider, 15) end
+        end
+    end
+    local function setOff(t)
+        if not t then return end
+        if t.SetValue then pcall(t.SetValue, t, false)
+        elseif t.Set then pcall(t.Set, t, false) end
+    end
+    if BossHunt.uiRefs then
+        setOff(BossHunt.uiRefs.bossHopToggle)
+        setOff(BossHunt.uiRefs.bossTimedHopToggle)
+        setOff(BossHunt.uiRefs.autoServerHopToggle)
+    end
+    if Config.AutoSave then SaveConfig(true) end
+end
+
     trackConn(TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
         if player ~= LocalPlayer then return end
         BossHunt.isServerHopping = false
+        BossHunt.clearHopSession()
+        BossHunt.hopFailCount = (BossHunt.hopFailCount or 0) + 1
         if BossHunt.lastHopJobId then
             BossHunt.lastFailedJobId = BossHunt.lastHopJobId
             BossHunt.recordVisitedServer(BossHunt.lastHopJobId)
             BossHunt.lastHopJobId = nil
+        end
+        if BossHunt.cancelHopRequested or BossHunt.hopFailCount >= 2 then
+            BossHunt.stopAllHops(false)
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "Teleport Failed (Auto Hop Paused)",
+                    Content = "ย้ายเซิร์ฟล้มเหลว (" .. tostring(teleportResult) .. ") ระบบหยุด Auto Server Hop อัตโนมัติแล้ว",
+                    Duration = 4,
+                    Icon = "shield-alert",
+                })
+            end
+            return
         end
         if WindUI and WindUI.Notify then
             WindUI:Notify({
@@ -4607,14 +4758,14 @@ do
                 Icon = "alert-circle",
             })
         end
-        if isScriptAlive() and (Config.BossServerHop or Config.BossTimedHop or Config.ServerHopAuto) and not isInsideDungeon() then
-            task.delay(1.8, function()
-                if isScriptAlive() and not BossHunt.isServerHopping and not isInsideDungeon() then
+        if isScriptAlive() and not BossHunt.cancelHopRequested and (Config.BossServerHop or Config.BossTimedHop or Config.ServerHopAuto) and not isInsideDungeon() then
+            task.delay(3.0, function()
+                if isScriptAlive() and not BossHunt.cancelHopRequested and not BossHunt.isServerHopping and not isInsideDungeon() then
                     if Config.BossServerHop or Config.BossTimedHop then
                         local activeSel = BossHunt.getSelectionList(Config.SelectedBosses and #Config.SelectedBosses > 0 and Config.SelectedBosses or Config.SelectedBoss)
-                        BossHunt.serverHopForBoss(activeSel, false)
+                        BossHunt.serverHopForBoss(activeSel, false, false)
                     elseif Config.ServerHopAuto then
-                        BossHunt.serverHop({ silent = true, forBoss = false })
+                        BossHunt.serverHop({ silent = true, forBoss = false, manual = false })
                     end
                 end
             end)
@@ -4626,11 +4777,22 @@ function BossHunt.serverHop(opts)
     opts = opts or {}
     local silent = opts.silent == true
     local forBoss = opts.forBoss == true
+    local manual = opts.manual == true
     local rawReason = opts.reasonBoss
     if rawReason == nil then
         rawReason = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
     end
     local reasonBoss = BossHunt.formatSelectionSummary(rawReason)
+
+    if not manual then
+        if BossHunt.cancelHopRequested then return end
+        local now = os.clock()
+        if forBoss and (now < (BossHunt.hopUnlockAt or 0) or (now - (BossHunt.lastHopEditAt or 0)) < 3.0) then
+            return
+        end
+    else
+        BossHunt.cancelHopRequested = false
+    end
 
     if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then
         if not silent and WindUI and WindUI.Notify then
@@ -4759,17 +4921,23 @@ function BossHunt.serverHop(opts)
         if WindUI and WindUI.Notify then
             WindUI:Notify({
                 Title = forBoss and "👑 พบเซิร์ฟเวอร์ใหม่แล้ว!" or "Server Hop Found!",
-                Content = string.format("เป้าหมาย: คนเล่น %d/%d คน (Ping: %s)\nกำลังย้ายไปหาบอส...", targetServer.playing, targetServer.maxPlayers, tostring(targetServer.ping or "N/A")),
+                Content = string.format("เป้าหมาย: คนเล่น %d/%d คน (Ping: %s)\nกำลังย้ายใน %s วิ (ปิด Auto Hop เพื่อยกเลิกได้)...", targetServer.playing, targetServer.maxPlayers, tostring(targetServer.ping or "N/A"), manual and "0.45" or "1.2"),
                 Duration = 3.5,
                 Icon = "zap"
             })
         end
 
+        task.wait(manual and 0.45 or 1.2)
+        if not isScriptAlive() or BossHunt.cancelHopRequested or (not manual and forBoss and not Config.BossServerHop and not Config.BossTimedHop) or (not manual and not forBoss and not Config.ServerHopAuto) then
+            BossHunt.isServerHopping = false
+            return
+        end
+
+        BossHunt.hopFailCount = 0
+        BossHunt.markHopSession()
         if Config.AutoSave then SaveConfig(true) end
         pcall(function() registerQueueOnTeleport(true) end)
         pcall(function() setClientCurrentTarget(nil) end)
-
-        task.wait(0.45)
 
         local TeleportService = game:GetService("TeleportService")
         local tpOk, tpErr = pcall(function()
@@ -4778,6 +4946,7 @@ function BossHunt.serverHop(opts)
 
         if not tpOk then
             BossHunt.isServerHopping = false
+            BossHunt.clearHopSession()
             BossHunt.lastFailedJobId = tostring(targetServer.id)
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
@@ -4791,7 +4960,7 @@ function BossHunt.serverHop(opts)
     end)
 end
 
-function BossHunt.serverHopForBoss(reasonBoss, silent)
+function BossHunt.serverHopForBoss(reasonBoss, silent, manual)
     local rawReason = reasonBoss
     if rawReason == nil then
         rawReason = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
@@ -4799,12 +4968,13 @@ function BossHunt.serverHopForBoss(reasonBoss, silent)
     BossHunt.serverHop({
         silent = (silent == true),
         forBoss = true,
+        manual = (manual == true),
         reasonBoss = BossHunt.formatSelectionSummary(rawReason),
     })
 end
 
-local function serverHopLowPlayer(silent)
-    BossHunt.serverHop({ silent = (silent == true), forBoss = false })
+local function serverHopLowPlayer(silent, manual)
+    BossHunt.serverHop({ silent = (silent == true), forBoss = false, manual = (manual == true) })
 end
 
 local function rejoinCurrentServer()
@@ -5259,13 +5429,10 @@ isMonsterAlive = function(monster)
     local hum = monster:FindFirstChildOfClass("Humanoid")
     if hum then
         if hum.Health <= 0 then return false end
-        local isDeadState = false
-        pcall(function()
-            if hum:GetState() == Enum.HumanoidStateType.Dead then
-                isDeadState = true
-            end
-        end)
-        if isDeadState then return false end
+        local stOk, st = pcall(hum.GetState, hum)
+        if stOk and st == Enum.HumanoidStateType.Dead then
+            return false
+        end
     end
     local mHrp = monster:FindFirstChild("HumanoidRootPart")
         or monster.PrimaryPart
@@ -6198,7 +6365,7 @@ local function getSmartFarmOffset(target)
 
     local mobRadius = 0.0
     if target then
-        mobRadius = tonumber(target:GetAttribute("Radius")) or (isBossMonster(target) and 8.0 or 1.5)
+        mobRadius = tonumber(target:GetAttribute("Radius")) or (isBossMonster(target) and 7.2 or 1.5)
     end
     local centerDist = surfDist + mobRadius
 
@@ -8084,6 +8251,7 @@ autoFarmToggle = FarmTab:Toggle({
         Config.AutoFarm = state
         if Config.AutoSave then SaveConfig(true) end
         if state then
+            BossHunt.lastDisableAutoAt = 0
             WindUI:Notify({ Title = "Auto Farm", Content = "เริ่มการฟาร์มอัตโนมัติ", Duration = 2, Icon = "play" })
         else
             stopCombatAndTargeting()
@@ -8102,15 +8270,14 @@ FarmTab:Button({
         Config.AutoBoss = false
         Config.AutoWarpToBoss = false
         Config.BossOnly = false
-        Config.BossServerHop = false
-        Config.BossTimedHop = false
-        Config.ServerHopAuto = false
         Config.AutoOpenLootBox = false
         Config.AutoTrickTreat = false
-        if BossHunt then
-            BossHunt.missingSince = nil
-            BossHunt.lastMissingKey = ""
-            BossHunt.bossTimedHopNextTick = 0
+        if BossHunt and BossHunt.stopAllHops then
+            BossHunt.stopAllHops(true)
+        else
+            Config.BossServerHop = false
+            Config.BossTimedHop = false
+            Config.ServerHopAuto = false
         end
         local function resetToggleVisual(t)
             if t then
@@ -8125,9 +8292,6 @@ FarmTab:Button({
             resetToggleVisual(BossHunt.uiRefs.autoBossToggle)
             resetToggleVisual(BossHunt.uiRefs.autoWarpBossToggle)
             resetToggleVisual(BossHunt.uiRefs.bossOnlyToggle)
-            resetToggleVisual(BossHunt.uiRefs.bossHopToggle)
-            resetToggleVisual(BossHunt.uiRefs.bossTimedHopToggle)
-            resetToggleVisual(BossHunt.uiRefs.autoServerHopToggle)
         end
         stopCombatAndTargeting()
         if Config.AutoSave then SaveConfig(true) end
@@ -8186,7 +8350,7 @@ FarmTab:Slider({
 BossHunt.uiRefs.farmDistSlider = FarmTab:Slider({
     Title = "Farm Distance (ระยะห่างจากมอนสเตอร์)",
     Desc = "ปรับระยะห่างจริงจากมอนสเตอร์และบอสทุกตัว (1 - 35 studs | ตีใกล้แนะนำ 2-6 / ตีไกลแนะนำ 12-28)",
-    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 14, 1, 35) },
+    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 4.5, 1, 35) },
     Step = 0.5,
     Callback = function(val)
         local n = tonumber(val)
@@ -8451,14 +8615,17 @@ FarmTab:Toggle({
 })
 
 BossHunt.uiRefs.bossHopToggle = FarmTab:Toggle({
-    Title = "🌐 Auto Server Hop for Boss (ไม่เจอบอสที่เลือก ย้ายเซิฟทันที)",
-    Desc = "วาร์ปเช็คบอสที่เลือก (1 ตัว / หลายตัว / All Bosses) หากไม่มีบอสเกิดจะย้ายเซิร์ฟทันที หรือรอครบตามวินาทีที่ตั้งไว้",
+    Title = "🌐 Auto Server Hop for Boss (ไม่เจอบอสที่เลือก ย้ายเซิฟอัตโนมัติ)",
+    Desc = "วาร์ปเช็คบอสที่เลือก (1 ตัว / หลายตัว / All Bosses) หากไม่มีบอสเกิดจะย้ายเซิร์ฟตาม Delay ที่ตั้ง (กันย้ายรัว 12 วิหลังเข้าห้อง)",
     Value = Config.BossServerHop,
     Callback = function(state)
         Config.BossServerHop = state
+        BossHunt.lastHopEditAt = os.clock()
         BossHunt.missingSince = nil
         BossHunt.lastMissingKey = ""
         if state then
+            BossHunt.cancelHopRequested = false
+            BossHunt.hopFailCount = 0
             local activeSel = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
             if currentCombatTarget and not BossHunt.isMatchingBoss(currentCombatTarget, activeSel) then
                 currentCombatTarget = nil
@@ -8477,6 +8644,9 @@ BossHunt.uiRefs.bossHopToggle = FarmTab:Toggle({
             if Config.AutoSave then SaveConfig(true) end
             task.spawn(function() executeBossInspection(false, true) end)
         else
+            BossHunt.cancelHopRequested = true
+            BossHunt.isServerHopping = false
+            BossHunt.clearHopSession()
             BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
             BossHunt.isInspecting = false
             isCheckingBossArena = false
@@ -8485,18 +8655,37 @@ BossHunt.uiRefs.bossHopToggle = FarmTab:Toggle({
     end,
 })
 
-FarmTab:Slider({
+BossHunt.uiRefs.bossHopDelaySlider = FarmTab:Slider({
     Title = "⏱️ Boss Server Hop Delay (ตั้งเวลารอก่อนย้ายเซิฟ - วินาที)",
-    Desc = "0 วินาที = ไม่เจอบอสที่เลือก ย้ายเซิร์ฟทันที | >0 = รอจับเวลาครบตามวิฯ ก่อนย้ายเซิร์ฟ (ยกเลิกทันทีหากบอสเกิด)",
-    Value = { Min = 0, Max = 300, Default = math.clamp(tonumber(Config.BossHopDelay) or 0, 0, 300) },
+    Desc = "0 วินาที = ย้ายเมื่อไม่มีบอส (มีระบบหน่วงปลอดภัยหลังเข้าเซิร์ฟ 12 วิ) | แนะนำ >= 10 วิ กันเผลอโดน 1 วิแล้วย้ายรัว",
+    Value = { Min = 0, Max = 300, Default = math.clamp(tonumber(Config.BossHopDelay) or 15, 0, 300) },
     Step = 1,
     Callback = function(val)
         local n = tonumber(val)
         if n ~= nil then
             Config.BossHopDelay = math.clamp(math.floor(n + 0.5), 0, 300)
+            BossHunt.lastHopEditAt = os.clock()
             BossHunt.missingSince = nil
             BossHunt.lastMissingKey = ""
             if Config.AutoSave then SaveConfig(true) end
+        end
+    end,
+})
+
+FarmTab:Button({
+    Title = "🛑 Stop Boss Server Hop Now (หยุดย้ายเซิร์ฟ + รีเซ็ต 15 วิ)",
+    Desc = "กดปุ่มนี้เพื่อยกเลิกการย้ายเซิร์ฟเวอร์รัวทันที ปิด Auto Server Hop และรีเซ็ตค่าหน่วง 1 วิ กลับเป็น 15 วิ",
+    Callback = function()
+        if BossHunt and BossHunt.stopAllHops then
+            BossHunt.stopAllHops(true)
+        end
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "🛑 หยุดย้ายเซิร์ฟเวอร์เรียบร้อย",
+                Content = "ปิด Auto Server Hop และรีเซ็ต Delay เป็นค่าปลอดภัยแล้ว!",
+                Duration = 3,
+                Icon = "shield-check",
+            })
         end
     end,
 })
@@ -8508,6 +8697,8 @@ BossHunt.uiRefs.bossTimedHopToggle = FarmTab:Toggle({
     Callback = function(state)
         Config.BossTimedHop = state
         if state then
+            BossHunt.cancelHopRequested = false
+            BossHunt.hopFailCount = 0
             local mins = math.clamp(math.floor((tonumber(Config.BossTimedHopMinutes) or 5) + 0.5), 1, 60)
             BossHunt.bossTimedHopNextTick = os.clock() + (mins * 60)
             if WindUI and WindUI.Notify then
@@ -8520,6 +8711,7 @@ BossHunt.uiRefs.bossTimedHopToggle = FarmTab:Toggle({
             end
         else
             BossHunt.bossTimedHopNextTick = 0
+            BossHunt.clearHopSession()
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
@@ -8548,7 +8740,7 @@ FarmTab:Button({
     Desc = "ย้ายไปเซิร์ฟเวอร์คนน้อยที่ยังไม่เคยเช็คทันที เพื่อหาบอสที่เลือกไว้ใน Select Boss Names",
     Callback = function()
         local activeSel = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
-        BossHunt.serverHopForBoss(activeSel, false)
+        BossHunt.serverHopForBoss(activeSel, false, true)
     end,
 })
 
@@ -9113,7 +9305,7 @@ DungeonTab:Slider({
 BossHunt.uiRefs.dungeonDistSlider = DungeonTab:Slider({
     Title = "Dungeon Farm Distance (ระยะห่างจากมอนสเตอร์ในดันเจี้ยน)",
     Desc = "ปรับระยะห่างจากมอนสเตอร์และบอสในดันเจี้ยน (ซิงค์กับ Farm Distance | จำกัดอัตโนมัติหากติดกำแพงแคบ)",
-    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 14, 1, 35) },
+    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 4.5, 1, 35) },
     Step = 0.5,
     Callback = function(val)
         local n = tonumber(val)
@@ -10448,9 +10640,12 @@ BossHunt.uiRefs.autoServerHopToggle = TeleportTab:Toggle({
     Callback = function(state)
         Config.ServerHopAuto = state
         if state then
+            BossHunt.cancelHopRequested = false
+            BossHunt.hopFailCount = 0
             BossHunt.serverHopNextTick = os.clock() + ((tonumber(Config.ServerHopInterval) or 15) * 60)
         else
             BossHunt.serverHopNextTick = 0
+            BossHunt.clearHopSession()
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
@@ -10479,7 +10674,7 @@ TeleportTab:Button({
     Title = "🚀 Server Hop Now (ย้ายไปเซิร์ฟคนน้อยทันที)",
     Desc = "ค้นหาเซิร์ฟเวอร์คนน้อยที่สุดในขณะนี้และย้ายทันที ไม่ต้องรอรอบเวลา",
     Callback = function()
-        serverHopLowPlayer(false)
+        serverHopLowPlayer(false, true)
     end,
 })
 
@@ -10488,7 +10683,7 @@ TeleportTab:Button({
     Desc = "ย้ายไปเซิร์ฟเวอร์ใหม่เพื่อล่าบอสตามชื่อที่เลือกไว้ใน Select Boss Names",
     Callback = function()
         local activeSel = (Config.SelectedBosses and #Config.SelectedBosses > 0) and Config.SelectedBosses or Config.SelectedBoss
-        BossHunt.serverHopForBoss(activeSel, false)
+        BossHunt.serverHopForBoss(activeSel, false, true)
     end,
 })
 
@@ -11075,13 +11270,21 @@ task.spawn(function()
                 local target = getTargetMonster()
                 if target and isMonsterAlive(target) then
                     if isBossMonster(target) then
-                        trackBossDeath(target)
-                        activeBossFight = {
-                            model = target,
-                            name = target.Name,
-                            pos = getMonsterCombatPart(target) and getMonsterCombatPart(target).Position,
-                            time = os.clock(),
-                        }
+                        local bPart = getMonsterCombatPart(target)
+                        if not activeBossFight or activeBossFight.model ~= target then
+                            trackBossDeath(target)
+                            activeBossFight = {
+                                model = target,
+                                name = target.Name,
+                                pos = bPart and bPart.Position,
+                                time = os.clock(),
+                            }
+                        else
+                            activeBossFight.time = os.clock()
+                            if bPart then
+                                activeBossFight.pos = bPart.Position
+                            end
+                        end
                     end
                     local targetHrp = getMonsterCombatPart(target)
 
@@ -11099,7 +11302,8 @@ task.spawn(function()
                         local now = os.clock()
                         local isHoldingSafe = (currentSafeHoldTarget ~= nil and now < safeHoldUntil)
 
-                        local safeDist, safeHeight, isRanged = getSmartFarmOffset(target)
+                        local safeDist, safeHeight, isRanged, _, mobRadius = getSmartFarmOffset(target)
+                        local walkTargetDist = safeDist
 
                         -- 1000% Flank Defense: if monster turns to face player, slip behind it at configured distance & height
                         -- (Skipped in dungeon to prevent corridor wall pin, skipped in Walk Mode, and skipped while holding green circle)
@@ -11139,14 +11343,28 @@ task.spawn(function()
                                 playerPos = getDungeonSafeCombatPosition(targetPos, flatLook, safeDist, isRanged, isBoss, isPillar, farmH)
                                 targetFloorY = playerPos.Y
                             else
-                                local rayParams = RaycastParams.new()
-                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                                local ignoreList = { char, target }
                                 local mFolder = workspace:FindFirstChild("Monsters")
                                 local dFolder = workspace:FindFirstChild("Drops")
-                                if mFolder then table.insert(ignoreList, mFolder) end
-                                if dFolder then table.insert(ignoreList, dFolder) end
-                                rayParams.FilterDescendantsInstances = ignoreList
+                                local rayParams = BossHunt.groundRayParams
+                                if not rayParams then
+                                    rayParams = RaycastParams.new()
+                                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                    BossHunt.groundRayParams = rayParams
+                                end
+                                if BossHunt.rayChar ~= char or BossHunt.rayTarget ~= target or BossHunt.rayMFolder ~= mFolder or BossHunt.rayDFolder ~= dFolder then
+                                    BossHunt.rayChar = char
+                                    BossHunt.rayTarget = target
+                                    BossHunt.rayMFolder = mFolder
+                                    BossHunt.rayDFolder = dFolder
+                                    local ignoreList = BossHunt.rayIgnoreList or {}
+                                    table.clear(ignoreList)
+                                    ignoreList[1] = char
+                                    ignoreList[2] = target
+                                    if mFolder then ignoreList[#ignoreList + 1] = mFolder end
+                                    if dFolder then ignoreList[#ignoreList + 1] = dFolder end
+                                    BossHunt.rayIgnoreList = ignoreList
+                                    rayParams.FilterDescendantsInstances = ignoreList
+                                end
 
                                 local inBossZone, bossZoneName = isPlayerInBossArena()
                                 local arenaCenter = (inBossZone and bossZoneName and ZoneCoordinates[bossZoneName]) or nil
@@ -11171,32 +11389,48 @@ task.spawn(function()
                                     end
                                 end
 
+                                local minCoreDist = math.max(3.0, (mobRadius or 1.5) * 0.65)
                                 if Config.FarmMode == "Walk" then
-                                    -- Maintain exact horizontal surface distance along player's current angle, clamped inside Boss Arena bounds
+                                    -- Maintain 3D-compensated distance along player's current angle, clamped inside Boss Arena bounds
                                     local flatFromMob = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z)
                                     local awayDir = (flatFromMob.Magnitude > 0.5) and flatFromMob.Unit or -flatLook
-                                    local standXZ = clampBossArenaXZ(targetPos + (awayDir * safeDist))
-                                    if arenaCenter then
-                                        local actualD = Vector3.new(standXZ.X - targetPos.X, 0, standXZ.Z - targetPos.Z).Magnitude
-                                        if actualD < (safeDist * 0.72) then
-                                            local toCenter = Vector3.new(arenaCenter.X - targetPos.X, 0, arenaCenter.Z - targetPos.Z)
-                                            if toCenter.Magnitude > 1 then
-                                                standXZ = clampBossArenaXZ(targetPos + (toCenter.Unit * safeDist))
-                                            end
-                                        end
-                                    end
-                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, standXZ.Z), Vector3.new(0, -80, 0), rayParams)
+                                    local initialXZ = clampBossArenaXZ(targetPos + (awayDir * safeDist))
+                                    local groundRay = workspace:Raycast(Vector3.new(initialXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, initialXZ.Z), Vector3.new(0, -80, 0), rayParams)
                                     if not groundRay then
                                         groundRay = workspace:Raycast(targetPos + Vector3.new(0, 18, 0), Vector3.new(0, -80, 0), rayParams)
                                     end
                                     local groundY = groundRay and (groundRay.Position.Y + 2.8) or hrp.Position.Y
+                                    local dy = math.abs(targetPos.Y - groundY)
+                                    local effDist = safeDist
+                                    if dy > 1.0 and (safeDist * safeDist) > (dy * dy) then
+                                        effDist = math.max(minCoreDist, math.sqrt((safeDist * safeDist) - (dy * dy)))
+                                    end
+                                    walkTargetDist = effDist
+                                    local standXZ = (effDist ~= safeDist) and clampBossArenaXZ(targetPos + (awayDir * effDist)) or initialXZ
+                                    if arenaCenter then
+                                        local actualD = Vector3.new(standXZ.X - targetPos.X, 0, standXZ.Z - targetPos.Z).Magnitude
+                                        if actualD < (effDist * 0.72) then
+                                            local toCenter = Vector3.new(arenaCenter.X - targetPos.X, 0, arenaCenter.Z - targetPos.Z)
+                                            if toCenter.Magnitude > 1 then
+                                                standXZ = clampBossArenaXZ(targetPos + (toCenter.Unit * effDist))
+                                            end
+                                        end
+                                    end
                                     playerPos = Vector3.new(standXZ.X, groundY, standXZ.Z)
                                     targetFloorY = groundY
                                 else
-                                    local standXZ = clampBossArenaXZ(targetPos - (flatLook * safeDist))
-                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, standXZ.Z), Vector3.new(0, -80, 0), rayParams)
+                                    local initialXZ = clampBossArenaXZ(targetPos - (flatLook * safeDist))
+                                    local groundRay = workspace:Raycast(Vector3.new(initialXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, initialXZ.Z), Vector3.new(0, -80, 0), rayParams)
                                     local baseY = groundRay and math.min(targetPos.Y, groundRay.Position.Y + 2.8) or targetPos.Y
-                                    playerPos = Vector3.new(standXZ.X, baseY + farmH, standXZ.Z)
+                                    local desiredY = baseY + farmH
+                                    local dy = math.abs(desiredY - targetPos.Y)
+                                    local effDist = safeDist
+                                    if dy > 1.0 and (safeDist * safeDist) > (dy * dy) then
+                                        effDist = math.max(minCoreDist, math.sqrt((safeDist * safeDist) - (dy * dy)))
+                                    end
+                                    walkTargetDist = effDist
+                                    local standXZ = (effDist ~= safeDist) and clampBossArenaXZ(targetPos - (flatLook * effDist)) or initialXZ
+                                    playerPos = Vector3.new(standXZ.X, desiredY, standXZ.Z)
                                     targetFloorY = playerPos.Y
                                 end
                             end
@@ -11219,18 +11453,18 @@ task.spawn(function()
                                 local flatDiff = Vector3.new(playerPos.X - hrp.Position.X, 0, playerPos.Z - hrp.Position.Z)
                                 local flatDist = flatDiff.Magnitude
                                 local curMobDist = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z).Magnitude
-                                local stopTol = inDungeon and 1.1 or 0.9
-                                tooCloseWalk = (curMobDist < (safeDist - 1.2))
+                                local stopTol = inDungeon and 0.9 or 0.75
+                                tooCloseWalk = (curMobDist < (walkTargetDist - 1.2))
 
                                 if inDungeon then
-                                    if flatDist > stopTol then
+                                    if curMobDist > (walkTargetDist + 0.15) or flatDist > stopTol then
                                         hum:MoveTo(playerPos)
                                     else
                                         hum:Move(Vector3.zero, false)
                                         hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
                                     end
                                 else
-                                    if math.abs(curMobDist - safeDist) > stopTol or flatDist > (stopTol + 0.5) then
+                                    if curMobDist > (walkTargetDist + 0.15) or (flatDist > 0.25 and (curMobDist < (walkTargetDist - stopTol) or flatDist > (stopTol + 0.6))) then
                                         hum:MoveTo(playerPos)
                                     else
                                         hum:Move(Vector3.zero, false)
@@ -11247,22 +11481,18 @@ task.spawn(function()
                                 hrp.AssemblyAngularVelocity = Vector3.zero
                             end
 
-                            -- 2. Target Lock & Server Combat Activation (avoid spamming LumiLockTarget every frame)
+                            -- 2. Target Lock & Server Combat Activation (avoid LumiLockTarget chase hijack & 0.8s range-entry blackout)
                             local curObj = LocalPlayer:FindFirstChild("CurrentTarget")
                             local targetChanged = (currentCombatTarget ~= target) or (not curObj or curObj.Value ~= target)
                             setClientCurrentTarget(target)
                             currentCombatTarget = target
-                            if targetChanged or (os.clock() - (BossHunt.lastTargetSync or 0)) >= 0.8 then
-                                BossHunt.lastTargetSync = os.clock()
-                                pcall(function()
-                                    SetTarget:FireServer(target, false, true)
-                                    if not tooCloseWalk then
-                                        local lTarget = LocalPlayer:FindFirstChild("LumiLockTarget")
-                                        if lTarget and lTarget:IsA("BindableEvent") then
-                                            lTarget:Fire(target)
-                                        end
-                                    end
-                                end)
+                            local inAttackReach = ((targetPos - hrp.Position).Magnitude <= (safeDist + 2.5))
+                            local enteredReach = inAttackReach and (BossHunt.wasInAttackRange ~= true or BossHunt.lastSyncedTarget ~= target)
+                            BossHunt.wasInAttackRange = inAttackReach
+                            if targetChanged or enteredReach or (inAttackReach and (now - (BossHunt.lastTargetSync or 0)) >= 0.45) or ((now - (BossHunt.lastTargetSync or 0)) >= 0.8) then
+                                BossHunt.lastTargetSync = now
+                                BossHunt.lastSyncedTarget = target
+                                pcall(SetTarget.FireServer, SetTarget, target, false, true)
                             end
                         else
                             -- Still ensure Target Lock if targetHrp missing
@@ -11286,6 +11516,8 @@ task.spawn(function()
                         end
                     end
                 else
+                    BossHunt.wasInAttackRange = false
+                    BossHunt.lastSyncedTarget = nil
                     setClientCurrentTarget(nil)
                     currentCombatTarget = nil
                     if inDungeon and Config.AutoDungeon then
