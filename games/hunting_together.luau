@@ -224,6 +224,21 @@ local BossHunt = {
     lastHopJobId = nil,
     dynamicZoneMap = {},
     uiRefs = {},
+    pillarData = {
+        Town   = { Tier = 0, Pillar = Vector3.new(22.3, 3.6, 71.5),       Arena = Vector3.new(0, 5, 0),       BridgeZ = 40 },
+        Boss01 = { Tier = 1, Pillar = Vector3.new(18.8, 59.8, -798.8),   Arena = Vector3.new(0, 60, -906),   BridgeZ = -855 },
+        Boss02 = { Tier = 2, Pillar = Vector3.new(18.8, 115.8, -1692.8), Arena = Vector3.new(0, 116, -1800), BridgeZ = -1750 },
+        Boss03 = { Tier = 3, Pillar = Vector3.new(18.8, 171.8, -2586.8), Arena = Vector3.new(0, 172, -2694), BridgeZ = -2642 },
+        Boss04 = { Tier = 4, Pillar = Vector3.new(18.8, 227.8, -3480.8), Arena = Vector3.new(0, 228, -3588), BridgeZ = -3535 },
+        Boss05 = { Tier = 5, Pillar = Vector3.new(18.8, 283.4, -4372.8), Arena = Vector3.new(0, 284, -4540), BridgeZ = -4450 },
+    },
+    worldBosses = {
+        { Id = "terra_colossus",               Name = "Gorilla King",         Zone = "Boss01", MinLevel = 18, MaxLevel = 38 },
+        { Id = "bigboss_thornback_behemoth",   Name = "Whitefang Sabertooth", Zone = "Boss02", MinLevel = 39, MaxLevel = 62 },
+        { Id = "bigboss_obsidian_pharaoh",     Name = "Obsidian Pharaoh",     Zone = "Boss03", MinLevel = 63, MaxLevel = 84 },
+        { Id = "bigboss_tempest_dragon_king",  Name = "Tempest Dragon King",  Zone = "Boss04", MinLevel = 85, MaxLevel = 97 },
+        { Id = "bigboss_volcano_turtle_king",  Name = "Volcano Turtle King",  Zone = "Boss05", MinLevel = 98, MaxLevel = 999 },
+    },
 }
 
 local function isInsideDungeon()
@@ -755,23 +770,23 @@ local ZoneCoordinates = {
     Field01 = Vector3.new(0, 5, -203),
     Field02 = Vector3.new(0, 33, -459),
     Field03 = Vector3.new(0, 61, -715),
-    Boss01  = Vector3.new(0, 61, -906),
+    Boss01  = Vector3.new(0, 60, -906),
     Field04 = Vector3.new(0, 62, -1097),
     Field05 = Vector3.new(0, 90, -1353),
     Field06 = Vector3.new(0, 118, -1609),
-    Boss02  = Vector3.new(0, 118, -1800),
+    Boss02  = Vector3.new(0, 116, -1800),
     Field07 = Vector3.new(0, 118, -1991),
     Field08 = Vector3.new(0, 146, -2247),
     Field09 = Vector3.new(0, 174, -2503),
-    Boss03  = Vector3.new(0, 174, -2694),
+    Boss03  = Vector3.new(0, 172, -2694),
     Field10 = Vector3.new(0, 174, -2885),
     Field11 = Vector3.new(0, 202, -3141),
     Field12 = Vector3.new(0, 230, -3397),
-    Boss04  = Vector3.new(0, 230, -3588),
+    Boss04  = Vector3.new(0, 228, -3588),
     Field13 = Vector3.new(0, 230, -3779),
     Field14 = Vector3.new(0, 258, -4035),
     Field15     = Vector3.new(0, 286, -4291),
-    Boss05      = Vector3.new(0, 286, -4482),
+    Boss05      = Vector3.new(0, 284, -4540),
     Town        = Vector3.new(0, 5, 0),
     Village     = Vector3.new(0, 5, 0),
     DungeonGate = Vector3.new(4.8, 5.0, 112.5),
@@ -935,7 +950,7 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
     if baseDist == nil then
         baseDist = isRanged and 12.0 or (isBoss and 5.0 or 3.5)
     end
-    local effectiveDist = math.clamp(baseDist, 1.0, 35.0)
+    local effectiveDist = math.clamp(baseDist, 1.0, 65.0)
 
     local flatLook = mobLook and Vector3.new(mobLook.X, 0, mobLook.Z) or Vector3.new(0, 0, -1)
     flatLook = (flatLook.Magnitude > 0.05) and flatLook.Unit or Vector3.new(0, 0, -1)
@@ -2945,8 +2960,9 @@ local function isPlayerInBossArena()
     local pPos = hrp.Position
     for bName, bPos in pairs(ZoneCoordinates) do
         if bName:find("^Boss") then
-            -- Boss arena boundary is strictly 90 studs (neighbors are 191 studs away)
-            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 90 then
+            -- Boss05 has a 170x170 zone (wider radius), Boss01-04 are smaller arenas
+            local arenaRad = (bName == "Boss05") and 115 or 90
+            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= arenaRad then
                 return true, bName
             end
         end
@@ -2998,6 +3014,79 @@ local function getReturnField()
     return optField, optName
 end
 
+function BossHunt.disableGameAutoOn()
+    if LocalPlayer:GetAttribute("AutoOn") ~= true then return end
+    pcall(function()
+        local LumiMenuToggle = LocalPlayer:FindFirstChild("LumiMenuToggle")
+        if LumiMenuToggle and LumiMenuToggle:IsA("BindableEvent") then
+            LumiMenuToggle:Fire("autoToggle")
+        end
+        local BotAutoState = getRemote("BotAutoState")
+        if BotAutoState then BotAutoState:FireServer(false) end
+        local BotState = getRemote("BotState")
+        if BotState then BotState:FireServer(false) end
+        LocalPlayer:SetAttribute("AutoOn", false)
+    end)
+end
+
+function BossHunt.hasPillarUnlocked(zoneName)
+    if not zoneName then return false end
+    local unlockedRaw = tostring(LocalPlayer:GetAttribute("WarpPillars") or "")
+    for token in string.gmatch(unlockedRaw, "[^,]+") do
+        if token:match("^%s*(.-)%s*$") == zoneName then
+            return true
+        end
+    end
+    return false
+end
+
+function BossHunt.getLivePillarPos(zoneName)
+    local pData = BossHunt.pillarData and BossHunt.pillarData[zoneName]
+    local fallback = pData and pData.Pillar
+    pcall(function()
+        local mapFolder = workspace:FindFirstChild("Map")
+        local wpFolder = mapFolder and mapFolder:FindFirstChild("WarpPillars")
+        local pillarObj = wpFolder and wpFolder:FindFirstChild("WarpPillar_" .. tostring(zoneName))
+        if pillarObj then
+            if pillarObj:IsA("BasePart") then
+                fallback = pillarObj.Position
+            elseif pillarObj:IsA("Model") then
+                fallback = pillarObj:GetPivot().Position
+            end
+        end
+    end)
+    return fallback
+end
+
+function BossHunt.walkToPoint(pt, stopTol, timeoutSec)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return false end
+    local tol = stopTol or 4.5
+    local limit = os.clock() + (timeoutSec or 5.5)
+    local targetSpeed = math.max(hum.WalkSpeed or 16, tonumber(Config and Config.WalkFarmSpeed) or 28, 30)
+    while os.clock() < limit and isScriptAlive() and hrp.Parent and hum.Health > 0 do
+        if isInsideDungeon() then break end
+        BossHunt.disableGameAutoOn()
+        if (hum.WalkSpeed or 0) < targetSpeed then
+            pcall(function() hum.WalkSpeed = targetSpeed end)
+        end
+        local dx = pt.X - hrp.Position.X
+        local dz = pt.Z - hrp.Position.Z
+        if math.sqrt(dx * dx + dz * dz) <= tol then
+            pcall(function() hum:Move(Vector3.zero, false) end)
+            return true
+        end
+        pcall(function() hum:MoveTo(Vector3.new(pt.X, hrp.Position.Y, pt.Z)) end)
+        task.wait(0.15)
+    end
+    pcall(function() hum:Move(Vector3.zero, false) end)
+    local finalDx = pt.X - hrp.Position.X
+    local finalDz = pt.Z - hrp.Position.Z
+    return math.sqrt(finalDx * finalDx + finalDz * finalDz) <= (tol + 2.5)
+end
+
 travelToZone = function(targetField, fieldName, isManual)
     if isInsideDungeon() or isWarpingZone then return end
     if not isManual and (isEnteringDungeon or isWaitingForParty or not canScriptMoveOrWarp()) and not isCheckingBossArena then return end
@@ -3010,8 +3099,9 @@ travelToZone = function(targetField, fieldName, isManual)
     currentCombatTarget = nil
     local targetPos = getZonePosition(targetField)
 
-    -- 1. Detach from current targets cleanly
+    -- 1. Detach from current targets cleanly & stop built-in game AutoOn override
     setClientCurrentTarget(nil)
+    BossHunt.disableGameAutoOn()
 
     -- 2. Notify player
     if WindUI and WindUI.Notify then
@@ -3023,43 +3113,128 @@ travelToZone = function(targetField, fieldName, isManual)
         })
     end
 
-    -- 3. Sync zone warp with server remote
+    -- 3. Legitimate PillarWarp when travelling to Boss01-Boss05/Town from near any WarpPillar (0 CheatTag!)
+    local arrivedSafely = false
     pcall(function()
-        if RemotesLazy.WarpTo then
-            RemotesLazy.WarpTo:FireServer(targetField)
-        end
-    end)
+        local dstData = BossHunt.pillarData and BossHunt.pillarData[targetField]
+        if not dstData then return end
 
-    -- 4. Smooth Step-wise Teleport (prevents rubberband, void fall, or anticheat kick)
-    pcall(function()
-        local startPos = hrp.Position
-        local totalDist = (targetPos - startPos).Magnitude
-        if totalDist > 70 then
-            local steps = math.max(1, math.ceil(totalDist / 55))
-            for i = 1, steps do
-                if not char or not hrp.Parent then break end
-                local alpha = i / steps
-                local intermediate = startPos:Lerp(targetPos, alpha)
-                hrp.CFrame = CFrame.new(intermediate + Vector3.new(0, 4, 0))
-                hrp.Velocity = Vector3.zero
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                task.wait(0.06)
+        local myPos = hrp.Position
+        local dstPillarPos = BossHunt.getLivePillarPos(targetField) or dstData.Pillar
+        local distToDstArenaXZ = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(dstData.Arena.X, 0, dstData.Arena.Z)).Magnitude
+        local distToDstPillarXZ = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(dstPillarPos.X, 0, dstPillarPos.Z)).Magnitude
+
+        -- Already in target rest area / doorway: simply walk inside the arena cleanly
+        if targetField:find("^Boss") and (distToDstArenaXZ <= 185 or distToDstPillarXZ <= 95) then
+            if distToDstArenaXZ > 55 then
+                BossHunt.walkToPoint(Vector3.new(0, myPos.Y, dstPillarPos.Z), 6.0, 4.0)
+                BossHunt.walkToPoint(Vector3.new(0, myPos.Y, dstData.Arena.Z + ((targetField == "Boss05") and 40 or 25)), 6.0, 5.5)
+            end
+            arrivedSafely = true
+            return
+        end
+
+        if not (RemotesLazy.PillarWarp and BossHunt.hasPillarUnlocked(targetField)) then return end
+        local isPremium = (LocalPlayer:GetAttribute("Premium") == true)
+        local silver = tonumber(LocalPlayer:GetAttribute("Silver")) or 0
+        if not isPremium and silver < (dstData.Tier * 1000) then return end
+
+        -- Find nearest reachable WarpPillar (Town or Boss01-05)
+        local curZone, curData, curPillarPos, bestPillarDist = nil, nil, nil, math.huge
+        for zName, zData in pairs(BossHunt.pillarData) do
+            local pPos = BossHunt.getLivePillarPos(zName) or zData.Pillar
+            local dXZ = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(pPos.X, 0, pPos.Z)).Magnitude
+            local aXZ = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(zData.Arena.X, 0, zData.Arena.Z)).Magnitude
+            local minD = math.min(dXZ, aXZ)
+            if minD <= 190 and minD < bestPillarDist then
+                bestPillarDist = minD
+                curZone = zName
+                curData = zData
+                curPillarPos = pPos
             end
         end
 
-        if hrp and hrp.Parent then
-            hrp.CFrame = CFrame.new(targetPos)
-            hrp.Velocity = Vector3.zero
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
+        if not curZone or not curData or not curPillarPos then return end
+
+        local nowP = hrp.Position
+        local curDist3D = (nowP - curPillarPos).Magnitude
+        if curZone ~= targetField and curDist3D > 10 then
+            if curZone ~= "Town" and nowP.Z < (curPillarPos.Z - 25) then
+                BossHunt.walkToPoint(Vector3.new(0, nowP.Y, curData.BridgeZ), 6.0, 4.5)
+                BossHunt.walkToPoint(Vector3.new(0, nowP.Y, curPillarPos.Z), 6.0, 4.5)
+            end
+            BossHunt.walkToPoint(Vector3.new(curPillarPos.X - 4, curPillarPos.Y + 2, curPillarPos.Z), 4.0, 4.5)
+            task.wait(0.28)
+        end
+
+        if curZone ~= targetField and hrp and hrp.Parent and (hrp.Position - curPillarPos).Magnitude <= 12 and (os.clock() - (BossHunt.lastWarpTime or 0)) >= 2.5 then
+            BossHunt.lastWarpTime = os.clock()
+            BossHunt.warpLog = BossHunt.warpLog or {}
+            table.insert(BossHunt.warpLog, { t = os.clock(), from = curZone, to = targetField, dist = (hrp.Position - curPillarPos).Magnitude })
+            getgenv()._HT_WarpLog = BossHunt.warpLog
+            local prevPos = hrp.Position
+            RemotesLazy.PillarWarp:FireServer(targetField)
+            local waitUntil = os.clock() + 3.2
+            while os.clock() < waitUntil and hrp and hrp.Parent do
+                local freshDst = BossHunt.getLivePillarPos(targetField) or dstData.Pillar
+                local landedDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(freshDst.X, 0, freshDst.Z)).Magnitude
+                if landedDist <= 45 and (hrp.Position - prevPos).Magnitude > 60 then
+                    dstPillarPos = freshDst
+                    break
+                end
+                task.wait(0.1)
+            end
+            if hrp and hrp.Parent then
+                local landedDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(dstPillarPos.X, 0, dstPillarPos.Z)).Magnitude
+                if landedDist <= 50 then
+                    if dstData.BridgeZ then
+                        BossHunt.walkToPoint(Vector3.new(0, hrp.Position.Y, dstPillarPos.Z), 6.0, 3.0)
+                        BossHunt.walkToPoint(Vector3.new(0, hrp.Position.Y, dstData.Arena.Z + ((targetField == "Boss05") and 40 or 25)), 6.0, 5.5)
+                    end
+                    arrivedSafely = true
+                end
+            end
         end
     end)
+
+    -- 4. Fallback: Sync zone & Smooth Step-wise Teleport (for distant Field -> Boss0X or locked pillars)
+    if not arrivedSafely then
+        pcall(function()
+            if RemotesLazy.WarpTo then
+                RemotesLazy.WarpTo:FireServer(targetField)
+            end
+        end)
+
+        pcall(function()
+            local startPos = hrp.Position
+            local totalDist = (targetPos - startPos).Magnitude
+            if totalDist > 70 then
+                local steps = math.max(1, math.ceil(totalDist / 55))
+                for i = 1, steps do
+                    if not char or not hrp.Parent then break end
+                    local alpha = i / steps
+                    local intermediate = startPos:Lerp(targetPos, alpha)
+                    hrp.CFrame = CFrame.new(intermediate + Vector3.new(0, 4, 0))
+                    hrp.Velocity = Vector3.zero
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    task.wait(0.06)
+                end
+            end
+
+            if hrp and hrp.Parent then
+                hrp.CFrame = CFrame.new(targetPos)
+                hrp.Velocity = Vector3.zero
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
+    end
 
     Config.CurrentZone = targetField
     if not targetField:find("Boss") then
         lastNormalFarmZone = targetField
     end
-    task.wait(0.4)
+    task.wait(0.35)
 
     -- 5. Reset target monster to "All" so auto farm engages immediately in the new field
     Config.SelectedMonster = "All"
@@ -3080,26 +3255,19 @@ activeBossFight = nil
 isReturningFromBoss = false
 isCheckingBossArena = false
 
-BossHunt.bossZones = {
-    { Name = "Gorilla King", Zone = "Boss01", MinLevel = 18, MaxLevel = 38 },
-    { Name = "Whitefang Sabertooth", Zone = "Boss02", MinLevel = 39, MaxLevel = 62 },
-    { Name = "Obsidian Pharaoh", Zone = "Boss03", MinLevel = 63, MaxLevel = 84 },
-    { Name = "Tempest Dragon King", Zone = "Boss04", MinLevel = 85, MaxLevel = 97 },
-    { Name = "Volcano Turtle King", Zone = "Boss05", MinLevel = 98, MaxLevel = 999 },
-}
+BossHunt.bossZones = BossHunt.worldBosses
 
 BossHunt.bossZoneMap = {
-    ["Volcano Turtle King"] = { Zone = "Boss05", Name = "Volcano Turtle King", Level = 99 },
-    ["Tempest Dragon King"] = { Zone = "Boss04", Name = "Tempest Dragon King", Level = 85 },
-    ["Obsidian Pharaoh"] = { Zone = "Boss03", Name = "Obsidian Pharaoh", Level = 63 },
-    ["Whitefang Sabertooth"] = { Zone = "Boss02", Name = "Whitefang Sabertooth", Level = 39 },
-    ["Gorilla King"] = { Zone = "Boss01", Name = "Gorilla King", Level = 18 },
-    ["Pumpkin Spider"] = { Zone = "Boss03", Name = "Pumpkin Spider", Level = 60 },
-    ["Ram King"] = { Zone = "Field08", Name = "Ram King", Level = 60 },
-    ["Leader Fang Hyena"] = { Zone = "Field04", Name = "Leader Fang Hyena", Level = 30 },
-    ["Leader Saber Tiger"] = { Zone = "Field06", Name = "Leader Saber Tiger", Level = 45 },
-    ["Leader Spiked Stone Golem"] = { Zone = "Field09", Name = "Leader Spiked Stone Golem", Level = 70 },
-    ["Leader Spiked Ice Golem"] = { Zone = "Field12", Name = "Leader Spiked Ice Golem", Level = 95 },
+    ["Volcano Turtle King"]      = { Zone = "Boss05", Name = "Volcano Turtle King",      Id = "bigboss_volcano_turtle_king", Level = 99 },
+    ["Tempest Dragon King"]      = { Zone = "Boss04", Name = "Tempest Dragon King",      Id = "bigboss_tempest_dragon_king", Level = 85 },
+    ["Obsidian Pharaoh"]         = { Zone = "Boss03", Name = "Obsidian Pharaoh",         Id = "bigboss_obsidian_pharaoh",    Level = 63 },
+    ["Whitefang Sabertooth"]     = { Zone = "Boss02", Name = "Whitefang Sabertooth",     Id = "bigboss_thornback_behemoth",  Level = 39 },
+    ["Gorilla King"]             = { Zone = "Boss01", Name = "Gorilla King",             Id = "terra_colossus",              Level = 18 },
+    ["Ram King"]                 = { Zone = "Field08", Name = "Ram King",                Level = 60 },
+    ["Leader Fang Hyena"]        = { Zone = "Field04", Name = "Leader Fang Hyena",        Level = 30 },
+    ["Leader Saber Tiger"]       = { Zone = "Field06", Name = "Leader Saber Tiger",       Level = 45 },
+    ["Leader Spiked Stone Golem"]= { Zone = "Field09", Name = "Leader Spiked Stone Golem",Level = 70 },
+    ["Leader Spiked Ice Golem"]  = { Zone = "Field12", Name = "Leader Spiked Ice Golem",  Level = 95 },
 }
 
 BossHunt.leaderZones = {
@@ -3118,7 +3286,99 @@ function BossHunt.normalizeChoice(val)
     end
     val = val:match("^%s*(.-)%s*$") or ""
     if val == "" then return "All Bosses" end
+    val = val:gsub("%s*%(Boss%d%d%)%s*$", "")
+    if val == "World Bosses Only" then
+        return "All Bosses"
+    end
     return val
+end
+
+function BossHunt.formatSeconds(secs)
+    local s = math.max(0, math.floor(tonumber(secs) or 0))
+    return string.format("%d:%02d", math.floor(s / 60), s % 60)
+end
+
+function BossHunt.isWorldBoss(monster)
+    if not monster or not monster.Parent then return false end
+    if monster:GetAttribute("IsLeader") == true then return false end
+    local mId = tostring(monster:GetAttribute("MonsterId") or ""):lower()
+    for _, wb in ipairs(BossHunt.worldBosses) do
+        if mId == wb.Id then
+            return true
+        end
+    end
+    if monster:GetAttribute("IsBoss") == true and monster:GetAttribute("IsMiniBoss") ~= true then
+        return true
+    end
+    local hum = monster:FindFirstChildOfClass("Humanoid")
+    local rawNames = {
+        monster.Name,
+        monster:GetAttribute("DisplayName"),
+        monster:GetAttribute("MonsterName"),
+        hum and hum.DisplayName,
+    }
+    for _, raw in ipairs(rawNames) do
+        if type(raw) == "string" and raw ~= "" then
+            local c = raw:lower()
+            for _, wb in ipairs(BossHunt.worldBosses) do
+                local wnl = wb.Name:lower()
+                if c == wnl or c:find(wnl, 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function BossHunt.findWorldBossEntry(selectedBoss)
+    local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
+    local selLower = sel:lower()
+    for _, wb in ipairs(BossHunt.worldBosses) do
+        local wnl = wb.Name:lower()
+        if selLower == wnl or selLower == wb.Id or selLower:find(wnl, 1, true) or (#selLower >= 5 and wnl:find(selLower, 1, true)) then
+            return wb
+        end
+    end
+    return nil
+end
+
+function BossHunt.getWorldBossEntries(selectedBoss, level)
+    level = tonumber(level) or getPlayerLevel()
+    local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
+    if sel == "Pack Leaders Only" then
+        return nil, false
+    end
+    local single = BossHunt.findWorldBossEntry(sel)
+    if single then
+        return { single }, true
+    end
+    if sel == "All Bosses" or sel == "All Bosses + Leaders" then
+        local entries = {}
+        local effLevel = math.max(level, 18)
+        for i = #BossHunt.worldBosses, 1, -1 do
+            local wb = BossHunt.worldBosses[i]
+            if wb.MinLevel <= effLevel then
+                table.insert(entries, wb)
+            end
+        end
+        if #entries == 0 then
+            table.insert(entries, BossHunt.worldBosses[1])
+        end
+        return entries, true
+    end
+    return nil, false
+end
+
+function BossHunt.getWorldBossStatus(entry)
+    if not entry or not entry.Id then return nil, nil, false end
+    local aliveAttr = workspace:GetAttribute("BossAlive_" .. entry.Id)
+    local nextTs = tonumber(workspace:GetAttribute("BossNext_" .. entry.Id))
+    local remaining = nil
+    if nextTs and nextTs > 0 then
+        remaining = math.max(0, nextTs - workspace:GetServerTimeNow())
+    end
+    return aliveAttr, remaining, (type(aliveAttr) == "boolean")
 end
 
 function BossHunt.isMatchingBoss(monster, selectedBoss)
@@ -3126,13 +3386,25 @@ function BossHunt.isMatchingBoss(monster, selectedBoss)
         return false
     end
     local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
+    if sel == "All Bosses + Leaders" then
+        return true
+    end
     if sel == "All Bosses" then
+        -- In Boss Only mode, "All Bosses" strictly targets Boss Room World Bosses (Boss01-05), never field Pack Leaders!
+        if Config and Config.BossOnly then
+            return BossHunt.isWorldBoss(monster)
+        end
         return true
     end
     if sel == "Pack Leaders Only" then
         if monster:GetAttribute("IsLeader") == true then return true end
         local n = tostring(monster.Name or ""):lower()
         return n:find("leader", 1, true) ~= nil
+    end
+
+    local matchedWb = BossHunt.findWorldBossEntry(sel)
+    if matchedWb and tostring(monster:GetAttribute("MonsterId") or ""):lower() == matchedWb.Id then
+        return true
     end
 
     local selLower = sel:lower()
@@ -3208,16 +3480,16 @@ function BossHunt.getInspectionZones(level, selectedBoss)
     level = tonumber(level) or getPlayerLevel()
     local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
 
-    if sel ~= "All Bosses" and sel ~= "Pack Leaders Only" then
+    if sel ~= "All Bosses" and sel ~= "All Bosses + Leaders" and sel ~= "Pack Leaders Only" then
         if BossHunt.bossZoneMap[sel] then
             local entry = BossHunt.bossZoneMap[sel]
-            return { { Zone = entry.Zone, Name = entry.Name } }
+            return { { Zone = entry.Zone, Name = entry.Name, Id = entry.Id } }
         end
         local selLower = sel:lower()
         for name, data in pairs(BossHunt.bossZoneMap) do
             local nl = name:lower()
             if selLower:find(nl, 1, true) or nl:find(selLower, 1, true) then
-                return { { Zone = data.Zone, Name = data.Name } }
+                return { { Zone = data.Zone, Name = data.Name, Id = data.Id } }
             end
         end
         if BossHunt.dynamicZoneMap[sel] then
@@ -3237,13 +3509,20 @@ function BossHunt.getInspectionZones(level, selectedBoss)
         end
         return eligible
     else
-        -- All Bosses: check eligible World Boss arenas from highest appropriate tier down to Boss01
+        -- All Bosses / All Bosses + Leaders: check eligible World Boss arenas from highest appropriate tier down to Boss01
         local zones = {}
         local effLevel = math.max(level, 18)
         for i = #BossHunt.bossZones, 1, -1 do
             local bz = BossHunt.bossZones[i]
             if bz.MinLevel <= effLevel then
-                table.insert(zones, { Zone = bz.Zone, Name = bz.Name })
+                table.insert(zones, { Zone = bz.Zone, Name = bz.Name, Id = bz.Id })
+            end
+        end
+        if sel == "All Bosses + Leaders" then
+            for _, lz in ipairs(BossHunt.leaderZones) do
+                if lz.Level <= (level + 10) then
+                    table.insert(zones, { Zone = lz.Zone, Name = lz.Name })
+                end
             end
         end
         if #zones > 0 then
@@ -3252,15 +3531,15 @@ function BossHunt.getInspectionZones(level, selectedBoss)
     end
 
     if level >= 98 then
-        return { { Zone = "Boss05", Name = "Volcano Turtle King" } }
+        return { { Zone = "Boss05", Name = "Volcano Turtle King", Id = "bigboss_volcano_turtle_king" } }
     elseif level >= 85 then
-        return { { Zone = "Boss04", Name = "Tempest Dragon King" } }
+        return { { Zone = "Boss04", Name = "Tempest Dragon King", Id = "bigboss_tempest_dragon_king" } }
     elseif level >= 63 then
-        return { { Zone = "Boss03", Name = "Obsidian Pharaoh" } }
+        return { { Zone = "Boss03", Name = "Obsidian Pharaoh", Id = "bigboss_obsidian_pharaoh" } }
     elseif level >= 39 then
-        return { { Zone = "Boss02", Name = "Whitefang Sabertooth" } }
+        return { { Zone = "Boss02", Name = "Whitefang Sabertooth", Id = "bigboss_thornback_behemoth" } }
     else
-        return { { Zone = "Boss01", Name = "Gorilla King" } }
+        return { { Zone = "Boss01", Name = "Gorilla King", Id = "terra_colossus" } }
     end
 end
 
@@ -3313,18 +3592,37 @@ local function executeBossInspection(silent, forceStart)
     Config.SelectedBoss = selected
     local pLevel = getPlayerLevel()
 
-    -- Fast global check: if the matching boss is already spawned & loaded anywhere, engage immediately!
+    -- 0. Local arena check FIRST: never leave the current arena/zone if an alive matching boss is already here!
+    local localBoss = BossHunt.findMatchingBoss(selected, hrp.Position, 260)
+    if localBoss then
+        local mPart = getMonsterCombatPart(localBoss)
+        activeBossFight = {
+            model = localBoss,
+            name = localBoss.Name,
+            pos = (mPart and mPart.Position) or hrp.Position,
+            time = os.clock(),
+        }
+        currentCombatTarget = localBoss
+        trackBossDeath(localBoss)
+        BossHunt.isInspecting = false
+        BossHunt.lastCheckTime = os.clock()
+        return
+    end
+
+    -- 1. Fast global check: if a matching boss model is ALREADY spawned & loaded elsewhere, travel/engage immediately!
     local liveGlobal = BossHunt.findMatchingBoss(selected, nil, math.huge)
     if liveGlobal then
         local mPart = getMonsterCombatPart(liveGlobal)
         local mPos = mPart and mPart.Position
-        if mPos and (hrp.Position - mPos).Magnitude > 220 then
-            local nearZone = BossHunt.nearestZoneName(mPos) or getTargetBossZone(pLevel, selected)
+        local flatDist = mPos and (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(mPos.X, 0, mPos.Z)).Magnitude or 0
+        if mPos and flatDist > 160 then
+            local wbMatch = BossHunt.findWorldBossEntry(liveGlobal.Name)
+            local nearZone = (wbMatch and wbMatch.Zone) or BossHunt.nearestZoneName(mPos) or getTargetBossZone(pLevel, selected)
             isCheckingBossArena = true
             if not silent and WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "👑 World Boss Found",
-                    Content = string.format("พบบอส %s! กำลังวาร์ปไปที่ %s", liveGlobal.Name, tostring(nearZone)),
+                    Content = string.format("พบบอส %s! กำลังเดินทางไปที่ %s", liveGlobal.Name, tostring(nearZone)),
                     Duration = 3,
                     Icon = "swords",
                 })
@@ -3347,7 +3645,128 @@ local function executeBossInspection(silent, forceStart)
         return
     end
 
-    local zones = BossHunt.getInspectionZones(pLevel, selected)
+    -- 2. Replicated World Boss attribute pre-check (workspace BossAlive_<id> & BossNext_<id>)
+    -- Avoids blindly visiting 5 empty boss arenas under StreamingEnabled & enables instant Server Hop!
+    local wbEntries, isWorldTarget = BossHunt.getWorldBossEntries(selected, pLevel)
+    local zones = nil
+
+    if isWorldTarget and wbEntries and #wbEntries > 0 then
+        local aliveList, deadList, unknownList = {}, {}, {}
+        for _, wb in ipairs(wbEntries) do
+            local aliveAttr, remSecs, known = BossHunt.getWorldBossStatus(wb)
+            if not known then
+                table.insert(unknownList, wb)
+            elseif aliveAttr == true then
+                table.insert(aliveList, wb)
+            else
+                table.insert(deadList, { entry = wb, rem = remSecs or math.huge })
+            end
+        end
+
+        if #aliveList > 0 then
+            zones = {}
+            for _, wb in ipairs(aliveList) do
+                table.insert(zones, { Zone = wb.Zone, Name = wb.Name, Id = wb.Id })
+            end
+        elseif #unknownList > 0 then
+            zones = BossHunt.getInspectionZones(pLevel, selected)
+        else
+            -- ALL matching World Bosses confirmed dead on this server!
+            table.sort(deadList, function(a, b) return a.rem < b.rem end)
+            local soonest = deadList[1] and deadList[1].entry or wbEntries[1]
+            local soonestRem = deadList[1] and deadList[1].rem
+
+            if Config.BossServerHop then
+                BossHunt.isInspecting = false
+                BossHunt.lastCheckTime = os.clock()
+                local remStr = soonestRem and BossHunt.formatSeconds(soonestRem) or "N/A"
+                if WindUI and WindUI.Notify then
+                    WindUI:Notify({
+                        Title = "🌐 ไม่มีบอสในเซิร์ฟ — ย้ายเซิร์ฟทันที",
+                        Content = string.format("บอสที่เลือก (%s) ตายหมดแล้ว (เกิดเร็วสุด: %s อีก %s)\nกำลังย้ายไปหาเซิร์ฟเวอร์ใหม่!", selected, soonest.Name, remStr),
+                        Duration = 3,
+                        Icon = "zap",
+                    })
+                end
+                BossHunt.serverHopForBoss(selected, silent)
+                return
+            elseif Config.BossOnly then
+                local waitEntry = (#wbEntries == 1) and wbEntries[1] or soonest
+                local remVal = nil
+                for _, dl in ipairs(deadList) do
+                    if dl.entry.Id == waitEntry.Id then remVal = dl.rem; break end
+                end
+                local waitZonePos = getZonePosition(waitEntry.Zone)
+                local distXZ = waitZonePos and (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(waitZonePos.X, 0, waitZonePos.Z)).Magnitude or math.huge
+                local nowT = os.clock()
+
+                if distXZ > 95 then
+                    BossHunt.inspectToken = myToken
+                    task.spawn(function()
+                        if not isScriptAlive() or BossHunt.inspectToken ~= myToken then return end
+                        isCheckingBossArena = true
+                        if WindUI and WindUI.Notify then
+                            WindUI:Notify({
+                                Title = "👑 ไปห้องบอสรอดักเกิด",
+                                Content = string.format("กำลังเดินทางไป %s (%s) — เกิดอีก %s", waitEntry.Name, waitEntry.Zone, remVal and BossHunt.formatSeconds(remVal) or "N/A"),
+                                Duration = 3,
+                                Icon = "clock",
+                            })
+                        end
+                        travelToZone(waitEntry.Zone, waitEntry.Name .. " Zone", true)
+                        isCheckingBossArena = false
+                        BossHunt.isInspecting = false
+                        BossHunt.lastCheckTime = os.clock()
+                        BossHunt.lastStayZone = waitEntry.Zone
+                        BossHunt.lastStayNotify = os.clock()
+                    end)
+                    return
+                end
+
+                if (not silent or forceStart) or (nowT - BossHunt.lastStayNotify) >= 25 or BossHunt.lastStayZone ~= waitEntry.Zone then
+                    BossHunt.lastStayNotify = nowT
+                    BossHunt.lastStayZone = waitEntry.Zone
+                    if WindUI and WindUI.Notify then
+                        WindUI:Notify({
+                            Title = "⏳ รอดักเกิดในห้องบอส",
+                            Content = string.format("กำลังรอ %s (%s) — เกิดอีก %s", waitEntry.Name, waitEntry.Zone, remVal and BossHunt.formatSeconds(remVal) or "N/A"),
+                            Duration = 3,
+                            Icon = "clock",
+                        })
+                    end
+                end
+                BossHunt.isInspecting = false
+                BossHunt.lastCheckTime = os.clock()
+                return
+            else
+                -- AutoBoss + AutoWarpToBoss (BossOnly OFF): stay out of empty Boss Rooms
+                if not silent and WindUI and WindUI.Notify then
+                    WindUI:Notify({
+                        Title = "บอสยังไม่เกิด (Cooldown)",
+                        Content = string.format("บอสที่เลือก (%s) กำลังคูลดาวน์ (เร็วสุด %s อีก %s)", selected, soonest.Name, soonestRem and BossHunt.formatSeconds(soonestRem) or "N/A"),
+                        Duration = 2.5,
+                        Icon = "clock",
+                    })
+                end
+                if isPlayerInBossArena() then
+                    BossHunt.inspectToken = myToken
+                    task.spawn(function()
+                        if not isScriptAlive() or BossHunt.inspectToken ~= myToken then return end
+                        local targetField, fieldName = getReturnField()
+                        travelToZone(targetField, fieldName)
+                        BossHunt.isInspecting = false
+                        BossHunt.lastCheckTime = os.clock()
+                    end)
+                    return
+                end
+                BossHunt.isInspecting = false
+                BossHunt.lastCheckTime = os.clock()
+                return
+            end
+        end
+    end
+
+    zones = zones or BossHunt.getInspectionZones(pLevel, selected)
     if not zones or #zones == 0 then
         BossHunt.isInspecting = false
         return
@@ -3388,7 +3807,7 @@ local function executeBossInspection(silent, forceStart)
                     if (not silent or forceStart or idx == 1) and WindUI and WindUI.Notify then
                         WindUI:Notify({
                             Title = "👑 Boss Hunter",
-                            Content = string.format("กำลังวาร์ปไปหาบอส: %s (%s)", bName, bZone),
+                            Content = string.format("กำลังเดินทางไปหาบอส: %s (%s)", bName, bZone),
                             Duration = 2.5,
                             Icon = "swords",
                         })
@@ -3399,8 +3818,8 @@ local function executeBossInspection(silent, forceStart)
                 if shouldAbort() then aborted = true; break end
 
                 -- Poll while chunks & monsters stream in (returns the instant matching boss appears)
-                local zoneRadius = bZone:find("^Boss") and 155 or 270
-                local waitSecs = alreadyNear and 0.75 or ((#zones == 1) and 3.4 or 2.2)
+                local zoneRadius = bZone:find("^Boss") and 175 or 270
+                local waitSecs = alreadyNear and 1.2 or ((#zones == 1) and 4.5 or 3.0)
                 local deadline = os.clock() + waitSecs
 
                 while os.clock() <= deadline do
@@ -3574,11 +3993,33 @@ local function handlePostBossReturn(bossName, deathPos)
                     }
                     currentCombatTarget = anotherAlive
                     trackBossDeath(anotherAlive)
-                elseif Config.BossServerHop then
-                    task.wait(0.5)
-                    local globalAlive = BossHunt.findMatchingBoss(selected, nil, math.huge)
-                    if not globalAlive then
-                        shouldBossHopNow = true
+                else
+                    local wbEntries, isWorldTarget = BossHunt.getWorldBossEntries(selected, getPlayerLevel())
+                    local hasOtherWorldAlive = false
+                    if isWorldTarget and wbEntries then
+                        for _, wb in ipairs(wbEntries) do
+                            if workspace:GetAttribute("BossAlive_" .. wb.Id) == true then
+                                hasOtherWorldAlive = true
+                                break
+                            end
+                        end
+                    end
+
+                    if hasOtherWorldAlive then
+                        BossHunt.lastCheckTime = -999
+                        task.delay(0.55, function()
+                            if isScriptAlive() and Config.BossOnly and not BossHunt.isServerHopping and not isInsideDungeon() then
+                                executeBossInspection(false, true)
+                            end
+                        end)
+                    elseif Config.BossServerHop then
+                        if not isWorldTarget then
+                            task.wait(0.5)
+                        end
+                        local globalAlive = BossHunt.findMatchingBoss(selected, nil, math.huge)
+                        if not globalAlive then
+                            shouldBossHopNow = true
+                        end
                     end
                 end
                 return
@@ -3604,11 +4045,28 @@ local function handlePostBossReturn(bossName, deathPos)
             end
 
             if Config.BossServerHop then
+                local wbEntries, isWorldTarget = BossHunt.getWorldBossEntries(selected, getPlayerLevel())
+                local hasOtherWorldAlive = false
+                if isWorldTarget and wbEntries then
+                    for _, wb in ipairs(wbEntries) do
+                        if workspace:GetAttribute("BossAlive_" .. wb.Id) == true then
+                            hasOtherWorldAlive = true
+                            break
+                        end
+                    end
+                end
                 local anotherAlive = BossHunt.findMatchingBoss(selected, nil, math.huge)
-                if not anotherAlive then
-                    shouldBossHopNow = true
+                if anotherAlive or hasOtherWorldAlive then
+                    BossHunt.lastCheckTime = -999
+                    task.delay(0.55, function()
+                        if isScriptAlive() and Config.BossServerHop and not BossHunt.isServerHopping and not isInsideDungeon() then
+                            executeBossInspection(false, true)
+                        end
+                    end)
                     return
                 end
+                shouldBossHopNow = true
+                return
             end
 
             local inBoss = isPlayerInBossArena()
@@ -4240,21 +4698,48 @@ local function getHotbarSkillInSlot(slotNum)
     return nil
 end
 
-local function isHotbarSlotReady(slotNum, sInfo)
-    local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
+function SkillState.getCachedSlot(slotNum)
+    SkillState.slotCache = SkillState.slotCache or {}
+    local cached = SkillState.slotCache[slotNum]
+    if cached and cached.slot and cached.slot.Parent then
+        if not cached.cdLabel or not cached.cdLabel.Parent then
+            cached.cdLabel = cached.slot:FindFirstChild("Cooldown", true)
+        end
+        if not cached.shade or not cached.shade.Parent then
+            cached.shade = cached.slot:FindFirstChild("CooldownShade", true)
+        end
+        return cached
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local ap = pg and pg:FindFirstChild("LumiHotbar")
     local pad = ap and ap:FindFirstChild("ActionPad")
     local slot = pad and pad:FindFirstChild("Slot" .. slotNum)
+    if not slot then
+        SkillState.slotCache[slotNum] = nil
+        return nil
+    end
+    cached = {
+        slot = slot,
+        cdLabel = slot:FindFirstChild("Cooldown", true),
+        shade = slot:FindFirstChild("CooldownShade", true),
+    }
+    SkillState.slotCache[slotNum] = cached
+    return cached
+end
 
-    -- 1. Check UI Cooldown Label if active
-    if slot then
-        local cdLabel = slot:FindFirstChild("Cooldown", true)
+local function isHotbarSlotReady(slotNum, sInfo)
+    local cached = SkillState.getCachedSlot(slotNum)
+
+    -- 1. Check UI Cooldown Label if active (cached refs, zero recursive scan in hot loop)
+    if cached then
+        local cdLabel = cached.cdLabel
         if cdLabel and cdLabel.Visible and cdLabel.Text ~= "" and cdLabel.Text ~= "0" and cdLabel.Text ~= "0.0" then
             local cdNum = tonumber((cdLabel.Text:gsub("[^%d%.]", "")))
             if cdNum and cdNum > 0.05 then
                 return false
             end
         end
-        local shade = slot:FindFirstChild("CooldownShade", true)
+        local shade = cached.shade
         if shade and shade.Visible and shade.Size.Y.Scale > 0.08 then
             return false
         end
@@ -4269,7 +4754,7 @@ local function isHotbarSlotReady(slotNum, sInfo)
     -- 3. Safety micro-gap between repeated casts of same skill
     local now = os.clock()
     local sKey = (sInfo and sInfo.id) or tostring(slotNum)
-    if (now - (SkillState.skillLastCast[sKey] or 0)) < 0.035 then
+    if (now - (SkillState.skillLastCast[sKey] or 0)) < 0.15 then
         return false
     end
 
@@ -4308,20 +4793,18 @@ local function executeSmartSkill(slotNum, sInfo, target, castTrigger)
         success = true
     end
 
-    -- Method 3: Trigger Client Slot Button connections
-    pcall(function()
-        local ap = LocalPlayer.PlayerGui:FindFirstChild("LumiHotbar")
-        local pad = ap and ap:FindFirstChild("ActionPad")
-        local slotBtn = pad and pad:FindFirstChild("Slot" .. slotNum)
-        if slotBtn and typeof(getconnections) == "function" then
-            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Click)) do
-                pcall(function() conn:Fire() end)
+    -- Method 3: Fallback Client Slot Button connections ONLY if Method 1 & 2 failed
+    if not success and typeof(getconnections) == "function" then
+        pcall(function()
+            local cached = SkillState.getCachedSlot(slotNum)
+            local slotBtn = cached and cached.slot
+            if slotBtn then
+                for _, conn in ipairs(getconnections(slotBtn.MouseButton1Click)) do
+                    pcall(function() conn:Fire() end)
+                end
             end
-            for _, conn in ipairs(getconnections(slotBtn.MouseButton1Down)) do
-                pcall(function() conn:Fire() end)
-            end
-        end
-    end)
+        end)
+    end
 
     local sKey = (sInfo and sInfo.id) or tostring(slotNum)
     SkillState.skillLastCast[sKey] = now
@@ -4333,7 +4816,7 @@ evaluateAndCastBestSkill = function(target)
     if not Config.AutoUseSkills then return false end
     if isEnteringDungeon or isWaitingForParty then return false end
     local now = os.clock()
-    if (now - SkillState.lastGlobalSkillCast) < 0.02 then return false end
+    if (now - SkillState.lastGlobalSkillCast) < 0.08 then return false end
 
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -4506,8 +4989,18 @@ isBossMonster = function(monster)
 end
 
 getBossList = function()
-    local list = {"All Bosses", "Pack Leaders Only"}
-    local seen = {["All Bosses"] = true, ["Pack Leaders Only"] = true}
+    local list = {
+        "All Bosses",
+        "All Bosses + Leaders",
+        "Pack Leaders Only",
+        "Gorilla King",
+        "Whitefang Sabertooth",
+        "Obsidian Pharaoh",
+        "Tempest Dragon King",
+        "Volcano Turtle King",
+    }
+    local seen = {}
+    for _, v in ipairs(list) do seen[v] = true end
     local savedSel = BossHunt and BossHunt.normalizeChoice and BossHunt.normalizeChoice(Config.SelectedBoss) or Config.SelectedBoss
     if savedSel and savedSel ~= "" and not seen[savedSel] then
         seen[savedSel] = true
@@ -4532,17 +5025,12 @@ getBossList = function()
         end
     end
     local known = {
-        "Gorilla King",
-        "Whitefang Sabertooth",
-        "Obsidian Pharaoh",
-        "Tempest Dragon King",
-        "Volcano Turtle King",
-        "Pumpkin Spider",
-        "Ram King",
         "Leader Fang Hyena",
         "Leader Saber Tiger",
         "Leader Spiked Stone Golem",
         "Leader Spiked Ice Golem",
+        "Ram King",
+        "Pumpkin Spider",
     }
     for _, b in ipairs(known) do
         if not seen[b] then
@@ -5374,22 +5862,28 @@ local function getSmartFarmOffset(target)
         baseHeight = 5.5
     end
 
-    -- Honor user-configured FarmDistance & SafeFarmHeight across ALL mobs & bosses (Walk, Warp, Dungeon)
-    local dist = math.clamp(baseDist, 1.0, 35.0)
+    -- Measure configured distance from monster hitbox surface so large bosses (e.g. Volcano Turtle King) never trap player inside collider
+    local surfDist = math.clamp(baseDist, 1.0, 35.0)
     local height = isWalk and 0.0 or math.clamp(baseHeight, 0.0, 25.0)
 
     -- Only apply weapon-reach clamp when the user explicitly opts into AdaptiveDistance
     if Config.AdaptiveDistance then
         if isRanged then
             local rangedMax = math.min(35.0, math.max(12.0, atkRange - 2.0))
-            dist = math.clamp(dist, 1.0, rangedMax)
+            surfDist = math.clamp(surfDist, 1.0, rangedMax)
         else
-            local meleeMax = math.min(35.0, math.max(4.5, atkRange - 0.5))
-            dist = math.clamp(dist, 1.0, meleeMax)
+            local meleeMax = math.min(35.0, math.max(4.0, atkRange - 0.5))
+            surfDist = math.clamp(surfDist, 1.0, meleeMax)
         end
     end
 
-    return dist, height, isRanged
+    local mobRadius = 0.0
+    if target then
+        mobRadius = tonumber(target:GetAttribute("Radius")) or (isBossMonster(target) and 8.0 or 1.5)
+    end
+    local centerDist = surfDist + mobRadius
+
+    return centerDist, height, isRanged, surfDist, mobRadius
 end
 
 local function performDodge(reason, evadeDir, customDist, customDuration, sourceMob, targetOverridePos)
@@ -5471,9 +5965,11 @@ local function performDodge(reason, evadeDir, customDist, customDuration, source
         local upOffset = (Config.FarmMode == "Walk") and 0.0 or 1.2
         targetDodgePos = startPos + (evadeVec * dodgeDist) + Vector3.new(0, upOffset, 0)
     end
-    if isInsideDungeon() or Config.FarmMode == "Walk" then
+    if isInsideDungeon() then
         local floorY = (targetOverridePos and targetOverridePos.Y) or startPos.Y
         targetDodgePos = Vector3.new(targetDodgePos.X, floorY, targetDodgePos.Z)
+    elseif Config.FarmMode == "Walk" then
+        targetDodgePos = Vector3.new(targetDodgePos.X, startPos.Y, targetDodgePos.Z)
     end
 
     task.spawn(function()
@@ -6088,6 +6584,14 @@ end
 
 local function executeAutoSell(silent)
     if not canScriptMoveOrWarp() or not Config.AutoSell or isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
+    if silent then
+        if isWarpingZone or isCheckingBossArena or BossHunt.isInspecting or isReturningFromBoss or activeBossFight then return end
+        if isPlayerInBossArena() then
+            local used = LocalPlayer:GetAttribute("BagSlotsUsed") or 0
+            local max = LocalPlayer:GetAttribute("BagSlotsMax") or 50
+            if used < max then return end
+        end
+    end
     if isSelling then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -7465,8 +7969,8 @@ FarmTab:Toggle({
 })
 
 BossHunt.uiRefs.bossOnlyToggle = FarmTab:Toggle({
-    Title = "Bosses Only Mode (ล่าเฉพาะบอสเท่านั้น)",
-    Desc = "ไม่ตีมอนสเตอร์ขยะทั่วไป วาร์ปไปหาและดักตีเฉพาะบอสที่เลือกไว้ (เปิด Auto Farm ให้อัตโนมัติ)",
+    Title = "Bosses Only Mode (ล่าเฉพาะบอสในห้องบอสเท่านั้น)",
+    Desc = "ไม่ตีมอนสเตอร์ขยะทั่วไป วาร์ปไปห้องบอสตามชื่อที่เลือก (All Bosses = ห้องบอส Boss01-05) และรอดักเกิด/ย้ายเซิร์ฟตามตั้งค่า",
     Value = Config.BossOnly,
     Callback = function(state)
         Config.BossOnly = state
@@ -10019,6 +10523,9 @@ task.spawn(function()
         end
 
         if shouldCombat then
+            -- Ensure game's built-in AutoOn bot never hijacks Humanoid:Move / CurrentTarget during Hub combat
+            BossHunt.disableGameAutoOn()
+
             if inDungeon and (isDungeonDowned() or isOpeningDungeonChest or getDungeonState() == "cleared") then
                 task.wait(0.5)
                 continue
@@ -10169,23 +10676,64 @@ task.spawn(function()
                                 playerPos = getDungeonSafeCombatPosition(targetPos, flatLook, safeDist, isRanged, isBoss, isPillar, farmH)
                                 targetFloorY = playerPos.Y
                             else
+                                local rayParams = RaycastParams.new()
+                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                local ignoreList = { char, target }
+                                local mFolder = workspace:FindFirstChild("Monsters")
+                                local dFolder = workspace:FindFirstChild("Drops")
+                                if mFolder then table.insert(ignoreList, mFolder) end
+                                if dFolder then table.insert(ignoreList, dFolder) end
+                                rayParams.FilterDescendantsInstances = ignoreList
+
+                                local inBossZone, bossZoneName = isPlayerInBossArena()
+                                local arenaCenter = (inBossZone and bossZoneName and ZoneCoordinates[bossZoneName]) or nil
+
+                                local function clampBossArenaXZ(pt)
+                                    if not arenaCenter then return pt end
+                                    if bossZoneName == "Boss05" then
+                                        local dx = pt.X - arenaCenter.X
+                                        local dz = pt.Z - arenaCenter.Z
+                                        local r = math.sqrt(dx * dx + dz * dz)
+                                        if r > 78 then
+                                            local s = 78 / r
+                                            return Vector3.new(arenaCenter.X + dx * s, pt.Y, arenaCenter.Z + dz * s)
+                                        end
+                                        return pt
+                                    else
+                                        return Vector3.new(
+                                            math.clamp(pt.X, -64, 64),
+                                            pt.Y,
+                                            math.clamp(pt.Z, arenaCenter.Z - 49, arenaCenter.Z + 49)
+                                        )
+                                    end
+                                end
+
                                 if Config.FarmMode == "Walk" then
-                                    -- Maintain exact horizontal ring distance along player's current angle so character steps in/out cleanly
+                                    -- Maintain exact horizontal surface distance along player's current angle, clamped inside Boss Arena bounds
                                     local flatFromMob = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z)
                                     local awayDir = (flatFromMob.Magnitude > 0.5) and flatFromMob.Unit or -flatLook
-                                    local standXZ = targetPos + (awayDir * safeDist)
-                                    local rayParams = RaycastParams.new()
-                                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                                    rayParams.FilterDescendantsInstances = {char, target}
-                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 12, standXZ.Z), Vector3.new(0, -60, 0), rayParams)
+                                    local standXZ = clampBossArenaXZ(targetPos + (awayDir * safeDist))
+                                    if arenaCenter then
+                                        local actualD = Vector3.new(standXZ.X - targetPos.X, 0, standXZ.Z - targetPos.Z).Magnitude
+                                        if actualD < (safeDist * 0.72) then
+                                            local toCenter = Vector3.new(arenaCenter.X - targetPos.X, 0, arenaCenter.Z - targetPos.Z)
+                                            if toCenter.Magnitude > 1 then
+                                                standXZ = clampBossArenaXZ(targetPos + (toCenter.Unit * safeDist))
+                                            end
+                                        end
+                                    end
+                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, standXZ.Z), Vector3.new(0, -80, 0), rayParams)
                                     if not groundRay then
-                                        groundRay = workspace:Raycast(targetPos + Vector3.new(0, 10, 0), Vector3.new(0, -50, 0), rayParams)
+                                        groundRay = workspace:Raycast(targetPos + Vector3.new(0, 18, 0), Vector3.new(0, -80, 0), rayParams)
                                     end
                                     local groundY = groundRay and (groundRay.Position.Y + 2.8) or hrp.Position.Y
                                     playerPos = Vector3.new(standXZ.X, groundY, standXZ.Z)
                                     targetFloorY = groundY
                                 else
-                                    playerPos = targetPos - (flatLook * safeDist) + Vector3.new(0, farmH, 0)
+                                    local standXZ = clampBossArenaXZ(targetPos - (flatLook * safeDist))
+                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 18, standXZ.Z), Vector3.new(0, -80, 0), rayParams)
+                                    local baseY = groundRay and math.min(targetPos.Y, groundRay.Position.Y + 2.8) or targetPos.Y
+                                    playerPos = Vector3.new(standXZ.X, baseY + farmH, standXZ.Z)
                                     targetFloorY = playerPos.Y
                                 end
                             end
@@ -10200,13 +10748,16 @@ task.spawn(function()
                             end
 
                             local distToTarget = (playerPos - hrp.Position).Magnitude
+                            local tooCloseWalk = false
                             if Config.FarmMode == "Walk" then
                                 -- ==================== WALK MODE (DUNGEON & FIELD) ====================
-                                hum.WalkSpeed = Config.WalkFarmSpeed or 28
+                                local cfgWalkSpd = tonumber(Config.WalkFarmSpeed) or 28
+                                hum.WalkSpeed = (cfgWalkSpd > 16) and math.max(hum.WalkSpeed, cfgWalkSpd) or math.max(hum.WalkSpeed, 26)
                                 local flatDiff = Vector3.new(playerPos.X - hrp.Position.X, 0, playerPos.Z - hrp.Position.Z)
                                 local flatDist = flatDiff.Magnitude
                                 local curMobDist = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z).Magnitude
                                 local stopTol = inDungeon and 1.1 or 0.9
+                                tooCloseWalk = (curMobDist < (safeDist - 1.2))
 
                                 if inDungeon then
                                     if flatDist > stopTol then
@@ -10226,28 +10777,34 @@ task.spawn(function()
                             else
                                 -- ==================== WARP / TELEPORT MODE (DUNGEON & FIELD) ====================
                                 -- Instant zero-latency warp straight to safe combat position (never clipped into wall)
-                                hrp.CFrame = CFrame.lookAt(playerPos, targetPos + Vector3.new(0, 0.6, 0))
+                                local lookPt = targetPos + Vector3.new(0, 0.6, 0)
+                                hrp.CFrame = ((lookPt - playerPos).Magnitude > 0.1) and CFrame.lookAt(playerPos, lookPt) or CFrame.new(playerPos)
                                 hrp.Velocity = Vector3.zero
                                 hrp.AssemblyLinearVelocity = Vector3.zero
                                 hrp.AssemblyAngularVelocity = Vector3.zero
                             end
-                        end
 
-                        -- 2. Target Lock & Server Combat Activation (Safe setter)
-                        setClientCurrentTarget(target)
-                        pcall(function()
-                            SetTarget:FireServer(target, false, true)
-                            local lTarget = LocalPlayer:FindFirstChild("LumiLockTarget")
-                            if lTarget and lTarget:IsA("BindableEvent") then
-                                lTarget:Fire(target)
+                            -- 2. Target Lock & Server Combat Activation (avoid spamming LumiLockTarget every frame)
+                            local curObj = LocalPlayer:FindFirstChild("CurrentTarget")
+                            local targetChanged = (currentCombatTarget ~= target) or (not curObj or curObj.Value ~= target)
+                            setClientCurrentTarget(target)
+                            currentCombatTarget = target
+                            if targetChanged or (os.clock() - (BossHunt.lastTargetSync or 0)) >= 0.8 then
+                                BossHunt.lastTargetSync = os.clock()
+                                pcall(function()
+                                    SetTarget:FireServer(target, false, true)
+                                    if not tooCloseWalk then
+                                        local lTarget = LocalPlayer:FindFirstChild("LumiLockTarget")
+                                        if lTarget and lTarget:IsA("BindableEvent") then
+                                            lTarget:Fire(target)
+                                        end
+                                    end
+                                end)
                             end
-                            if AttackAnim then
-                                AttackAnim:FireServer()
-                            end
-                            if AttackAnimU then
-                                AttackAnimU:FireServer()
-                            end
-                        end)
+                        else
+                            -- Still ensure Target Lock if targetHrp missing
+                            setClientCurrentTarget(target)
+                        end
 
 
                         -- 3. Smart Skills Trigger (Weaves optimal ready skill smoothly with attack)
@@ -10324,7 +10881,7 @@ end)
 -- 5. Dedicated High-Speed Smart Skill & Buff Engine Loop (Runs independently of basic attack)
 task.spawn(function()
     while isScriptAlive() do
-        task.wait(0.02) -- ~50 FPS responsive skill evaluation
+        task.wait(0.08) -- ~12.5 Hz responsive skill evaluation without starving scheduler
         if Config.AutoUseSkills and canScriptMoveOrWarp() and not isEnteringDungeon and not isWaitingForParty then
             local inDungeon = isInsideDungeon()
             local activeCombat = inDungeon and (Config.AutoDungeon or Config.AutoFarm) or Config.AutoFarm
@@ -10360,9 +10917,19 @@ task.spawn(function()
 end)
 
 -- 7. Auto Map Progression & Auto World Boss Hunter Loop
+pcall(function()
+    trackConn(workspace.AttributeChanged:Connect(function(attrName)
+        if type(attrName) == "string" and attrName:find("^BossAlive_") and workspace:GetAttribute(attrName) == true then
+            if isScriptAlive() and (Config.BossOnly or Config.BossServerHop or Config.AutoBoss) then
+                BossHunt.lastCheckTime = -999
+            end
+        end
+    end))
+end)
+
 task.spawn(function()
     while isScriptAlive() do
-        task.wait(1.5)
+        task.wait((Config.BossOnly or Config.BossServerHop) and 1.0 or 1.5)
         if isInsideDungeon() or isEnteringDungeon or isWaitingForParty or BossHunt.isServerHopping then continue end
 
         -- 1. Track last normal farm zone when in normal field
@@ -10376,6 +10943,26 @@ task.spawn(function()
             local m = activeBossFight.model
             if not m or not m.Parent or not isMonsterAlive(m) or not BossHunt.isMatchingBoss(m, Config.SelectedBoss) then
                 activeBossFight = nil
+            end
+        end
+
+        -- Adopt any alive matching boss in the current arena BEFORE Periodic Inspection can warp away
+        if not activeBossFight and inBoss then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local localBoss = BossHunt.findMatchingBoss(Config.SelectedBoss, hrp.Position, 260)
+                if localBoss then
+                    local bp = getMonsterCombatPart(localBoss)
+                    activeBossFight = {
+                        model = localBoss,
+                        name = localBoss.Name,
+                        pos = (bp and bp.Position) or hrp.Position,
+                        time = os.clock(),
+                    }
+                    currentCombatTarget = localBoss
+                    trackBossDeath(localBoss)
+                end
             end
         end
 
@@ -10410,7 +10997,7 @@ task.spawn(function()
         if (Config.BossOnly or Config.BossServerHop or Config.AutoBoss) and not isEnteringDungeon and not isWaitingForParty and not isReturningFromBoss and not isSelling and not isWarpingZone and not isCheckingBossArena and not BossHunt.isInspecting and not BossHunt.isServerHopping then
             if not activeBossFight then
                 local now = os.clock()
-                local interval = (Config.BossOnly or Config.BossServerHop) and 3.5 or 12
+                local interval = (Config.BossOnly or Config.BossServerHop) and 2.2 or 12
                 if (now - (BossHunt.lastCheckTime or -999)) >= interval then
                     BossHunt.lastCheckTime = now
                     pcall(function()
