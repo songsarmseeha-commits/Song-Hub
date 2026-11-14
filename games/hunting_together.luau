@@ -926,39 +926,55 @@ local function hasDungeonLineOfSight(pos1, pos2)
     return (hit == nil)
 end
 
-local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar)
+local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar, farmH)
     local wallInstances = getDungeonWallInstances()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-    -- Optimal melee combat distance in dungeon: 3.4 - 3.6 studs (or 4.8 - 5.2 for large bosses)
-    local effectiveDist = isRanged and math.clamp(safeDist, 8.0, 13.0) or (isBoss and 5.0 or 3.5)
+    local baseDist = tonumber(safeDist)
+    if baseDist == nil then
+        baseDist = isRanged and 12.0 or (isBoss and 5.0 or 3.5)
+    end
+    local effectiveDist = math.clamp(baseDist, 1.0, 35.0)
+
+    local flatLook = mobLook and Vector3.new(mobLook.X, 0, mobLook.Z) or Vector3.new(0, 0, -1)
+    flatLook = (flatLook.Magnitude > 0.05) and flatLook.Unit or Vector3.new(0, 0, -1)
 
     -- Accurate ground detection excluding characters and monsters
     local floorY = targetPos.Y
+    local rayParamsEnv = RaycastParams.new()
+    rayParamsEnv.FilterType = Enum.RaycastFilterType.Exclude
+    local envIgnore = { char }
+    local monstersFolder = workspace:FindFirstChild("Monsters")
+    if monstersFolder then table.insert(envIgnore, monstersFolder) end
+    rayParamsEnv.FilterDescendantsInstances = envIgnore
     pcall(function()
-        local rayParamsFloor = RaycastParams.new()
-        rayParamsFloor.FilterType = Enum.RaycastFilterType.Exclude
-        local ignore = { char }
-        local monstersFolder = workspace:FindFirstChild("Monsters")
-        if monstersFolder then table.insert(ignore, monstersFolder) end
-        rayParamsFloor.FilterDescendantsInstances = ignore
-        local floorRay = workspace:Raycast(Vector3.new(targetPos.X, targetPos.Y + 15.0, targetPos.Z), Vector3.new(0, -35.0, 0), rayParamsFloor)
+        local floorRay = workspace:Raycast(Vector3.new(targetPos.X, targetPos.Y + 15.0, targetPos.Z), Vector3.new(0, -35.0, 0), rayParamsEnv)
         if floorRay and floorRay.Instance and floorRay.Instance.Name:lower():find("ceiling") == nil then
             floorY = floorRay.Position.Y + 2.8
         end
     end)
 
-    -- If fly / warp mode (not Walk), keep slight hover
+    -- If fly / warp mode (not Walk), apply configured hover clamped under dungeon ceilings
     local isWalk = (Config.FarmMode == "Walk")
     if not isWalk then
-        local hover = (isBoss or isPillar) and 2.5 or 0.8
+        local hover = tonumber(farmH)
+        if hover == nil then
+            hover = (isBoss or isPillar) and (tonumber(Config.DungeonSafeHeight) or 3.5) or 0.8
+        end
+        hover = math.clamp(hover, 0.0, 15.0)
+        pcall(function()
+            local ceilRay = workspace:Raycast(Vector3.new(targetPos.X, floorY, targetPos.Z), Vector3.new(0, hover + 3.5, 0), rayParamsEnv)
+            if ceilRay and ceilRay.Distance then
+                hover = math.max(0.0, math.min(hover, ceilRay.Distance - 2.5))
+            end
+        end)
         floorY = floorY + hover
     end
 
-    -- If no wall instances detected in game, default safely in front of monster
+    -- If no wall instances detected in game, position directly at requested distance behind monster
     if #wallInstances == 0 then
-        local p = targetPos - (mobLook * effectiveDist)
+        local p = targetPos - (flatLook * effectiveDist)
         return Vector3.new(p.X, floorY, p.Z)
     end
 
@@ -1000,11 +1016,10 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
         local hitWall = workspace:Raycast(rayOrigin, dir * checkDist, rayParams)
         local wallDist = hitWall and hitWall.Distance or checkDist
 
-        -- If a wall is right next to the monster (< 2.2 studs), discard this direction
-        if wallDist >= 2.2 then
+        -- If a wall is right next to the monster (< 1.5 studs), discard this direction
+        if wallDist >= 1.5 then
             -- Maximum safe distance the player can stand along this direction without touching the wall
-            -- Giving at least 1.8 studs buffer from the wall surface
-            local maxAllowedDist = math.max(2.4, wallDist - 1.8)
+            local maxAllowedDist = math.max(1.0, wallDist - 1.5)
             local standDist = math.min(effectiveDist, maxAllowedDist)
 
             local candPos = Vector3.new(targetPos.X + dir.X * standDist, floorY, targetPos.Z + dir.Z * standDist)
@@ -1016,16 +1031,14 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
 
             -- Must have 100% clean line of sight (no wall between player and monster!)
             if not losHit then
-                -- 3. Check clearance behind player (cast 2.5 studs behind player)
-                local behindHit = workspace:Raycast(candRayPos, dir * 2.5, rayParams)
-                local behindClearance = behindHit and behindHit.Distance or 2.5
+                -- 3. Check clearance behind player (cast 2.0 studs behind player)
+                local behindHit = workspace:Raycast(candRayPos, dir * 2.0, rayParams)
+                local behindClearance = behindHit and behindHit.Distance or 2.0
 
-                if behindClearance >= 1.0 then
-                    -- Scoring:
-                    -- + Clearance behind player (open room = huge bonus)
-                    -- + Alignment with open hallway / waypoint (hallwayDir)
-                    -- + Alignment with player's current direction (currentDir) to prevent spinning
-                    local score = wallDist * 10 + behindClearance * 20
+                if behindClearance >= 0.8 then
+                    -- Prefer unobstructed directions that closely match the user's configured effectiveDist
+                    local distPenalty = math.abs(effectiveDist - standDist) * 35
+                    local score = wallDist * 10 + behindClearance * 20 - distPenalty
                     if hallwayDir then
                         score = score + (dir:Dot(hallwayDir) * 25)
                     end
@@ -1047,13 +1060,15 @@ local function getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRang
     end
 
     -- Ultimate Fail-safe: Stand between monster and the nearest dungeon hallway waypoint!
-    -- Since waypoints are always in the open center of corridors, (hallwayDir * 3.4) is GUARANTEED to be inside the room!
     if hallwayDir then
-        local safeHallwayPos = Vector3.new(targetPos.X + hallwayDir.X * 3.4, floorY, targetPos.Z + hallwayDir.Z * 3.4)
+        local hwHit = workspace:Raycast(rayOrigin, hallwayDir * (effectiveDist + 1.5), rayParams)
+        local hwMax = hwHit and math.max(1.2, hwHit.Distance - 1.5) or effectiveDist
+        local safeDistHw = math.min(effectiveDist, hwMax)
+        local safeHallwayPos = Vector3.new(targetPos.X + hallwayDir.X * safeDistHw, floorY, targetPos.Z + hallwayDir.Z * safeDistHw)
         return safeHallwayPos
     end
 
-    local fallback = targetPos - (mobLook * 3.4)
+    local fallback = targetPos - (flatLook * effectiveDist)
     return Vector3.new(fallback.X, floorY, fallback.Z)
 end
 
@@ -5348,41 +5363,30 @@ local function getSmartFarmOffset(target)
     local job = LocalPlayer:GetAttribute("Job") or ""
     local isRanged = (job == "Archer" or job == "Mage" or job == "Cleric" or LocalPlayer:GetAttribute("AttackType") == "ranged")
     local atkRange = tonumber(LocalPlayer:GetAttribute("AttackRange")) or (isRanged and 32 or 7)
+    local isWalk = (Config.FarmMode == "Walk")
 
-    local isLeader = target and (target:GetAttribute("IsLeader") == true or target.Name:find("Leader"))
-    local isBoss = target and (target:GetAttribute("IsBoss") == true or target:GetAttribute("IsMiniBoss") == true or target.Name:lower():find("boss") or target.Name:lower():find("witch"))
-    local dist
-    local height
-
-    -- Walk Mode: Keep feet firmly on ground level (height = 0)
-    if Config.FarmMode == "Walk" then
-        height = 0.0
-        if Config.AdaptiveDistance then
-            if isRanged then
-                dist = (isBoss or isLeader) and 15.0 or math.clamp(atkRange * 0.45, 12.0, 15.0)
-            else
-                dist = isBoss and 5.0 or (isLeader and 4.8 or math.clamp(Config.FarmDistance or 4.0, 3.2, 4.8))
-            end
-        else
-            dist = isBoss and 5.0 or math.clamp(Config.FarmDistance or 4.5, 2.5, 20.0)
-        end
-        return dist, height, isRanged
+    local baseDist = tonumber(Config.FarmDistance)
+    if baseDist == nil then
+        baseDist = isRanged and 14.0 or 5.0
+    end
+    local baseHeight = tonumber(Config.SafeFarmHeight)
+    if baseHeight == nil then
+        baseHeight = 5.5
     end
 
-    local baseDist = tonumber(Config.FarmDistance) or 5.5
-    local baseHeight = tonumber(Config.SafeFarmHeight) or 5.2
-    if isBoss then
+    -- Honor user-configured FarmDistance & SafeFarmHeight across ALL mobs & bosses (Walk, Warp, Dungeon)
+    local dist = math.clamp(baseDist, 1.0, 35.0)
+    local height = isWalk and 0.0 or math.clamp(baseHeight, 0.0, 25.0)
+
+    -- Only apply weapon-reach clamp when the user explicitly opts into AdaptiveDistance
+    if Config.AdaptiveDistance then
         if isRanged then
-            dist = math.clamp(math.max(baseDist, 14.0), 12.0, 25.0)
-            height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(math.max(baseHeight, 6.0), 5.5, 10.0)
+            local rangedMax = math.min(35.0, math.max(12.0, atkRange - 2.0))
+            dist = math.clamp(dist, 1.0, rangedMax)
         else
-            -- Melee classes (Samurai, Swordsman, Thief) MUST be within weapon reach (atkRange ~7 studs)!
-            dist = math.clamp(Config.FarmDistance or 5.0, 3.5, math.min(atkRange - 1.2, 5.5))
-            height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(baseHeight, 1.5, 4.5)
+            local meleeMax = math.min(35.0, math.max(4.5, atkRange - 0.5))
+            dist = math.clamp(dist, 1.0, meleeMax)
         end
-    else
-        dist = math.clamp(baseDist, 3.0, 25.0)
-        height = (Config.FarmMode == "Walk") and 0.0 or math.clamp(baseHeight, 0.5, 15.0)
     end
 
     return dist, height, isRanged
@@ -5576,10 +5580,12 @@ local function hookMonsterEvasion(mob)
         -- Check if mob is targeting local player or in dangerous melee reach
         if isTargetingMe or dist <= 14 then
             local mobLook = mHrp.CFrame.LookVector
+            local flatMobLook = Vector3.new(mobLook.X, 0, mobLook.Z)
+            flatMobLook = (flatMobLook.Magnitude > 0.05) and flatMobLook.Unit or Vector3.new(0, 0, -1)
             local toPlayer = (hrp.Position - mHrp.Position)
             local isFacingPlayer = (toPlayer.Magnitude > 0.1) and (mobLook:Dot(toPlayer.Unit) > 0.25)
 
-            -- If mob is facing us, slip behind it immediately while staying within safe exploit reach!
+            -- If mob is facing us, slip behind it at the configured distance & height!
             if isFacingPlayer then
                 local animSet = mob:GetAttribute("AnimSet")
                 local attackTime = 0.35
@@ -5588,8 +5594,8 @@ local function hookMonsterEvasion(mob)
                 end
 
                 local safeDist, safeHeight = getSmartFarmOffset(mob)
-                local targetPos = mHrp.Position - (mobLook * safeDist) + Vector3.new(0, safeHeight, 0)
-                performDodge("Pre-Hit Flank: " .. mob.Name, -mobLook, safeDist, attackTime + 0.05, mob, targetPos)
+                local targetPos = mHrp.Position - (flatMobLook * safeDist) + Vector3.new(0, safeHeight, 0)
+                performDodge("Pre-Hit Flank: " .. mob.Name, -flatMobLook, safeDist, attackTime + 0.05, mob, targetPos)
             end
         end
     end)
@@ -7335,22 +7341,47 @@ FarmTab:Slider({
 
 FarmTab:Slider({
     Title = "Farm Height (ความสูงลอยตัวขณะบิน)",
-    Desc = "ปรับความสูงลอยตัวเหนือมอนสเตอร์ขณะฟาร์มในโหมดบิน (Fly Mode)",
-    Value = { Min = 1, Max = 15, Default = Config.SafeFarmHeight or 5 },
+    Desc = "ปรับความสูงลอยตัวเหนือมอนสเตอร์ขณะฟาร์มในโหมดวาร์ป/บิน (0 - 25)",
+    Value = { Min = 0, Max = 25, Default = math.clamp(tonumber(Config.SafeFarmHeight) or 5.5, 0, 25) },
     Step = 0.5,
     Callback = function(val)
-        Config.SafeFarmHeight = val
-        if Config.AutoSave then SaveConfig(true) end
+        local n = tonumber(val)
+        if n ~= nil then
+            Config.SafeFarmHeight = math.clamp(n, 0, 25)
+            if Config.AutoSave then SaveConfig(true) end
+        end
     end,
 })
 
-FarmTab:Slider({
-    Title = "Farm Distance (ระยะห่าง)",
-    Desc = "ปรับระยะห่างจากมอนสเตอร์ขณะทำการโจมตี",
-    Value = { Min = 3, Max = 25, Default = Config.FarmDistance or 5 },
+BossHunt.uiRefs.farmDistSlider = FarmTab:Slider({
+    Title = "Farm Distance (ระยะห่างจากมอนสเตอร์)",
+    Desc = "ปรับระยะห่างจริงจากมอนสเตอร์และบอสทุกตัว (1 - 35 studs | ตีใกล้แนะนำ 2-6 / ตีไกลแนะนำ 12-28)",
+    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 14, 1, 35) },
     Step = 0.5,
     Callback = function(val)
-        Config.FarmDistance = val
+        local n = tonumber(val)
+        if n == nil then return end
+        local clamped = math.clamp(n, 1, 35)
+        Config.FarmDistance = clamped
+        if Config.AutoSave then SaveConfig(true) end
+        if BossHunt and BossHunt.uiRefs and not BossHunt.uiRefs._syncingDist then
+            local other = BossHunt.uiRefs.dungeonDistSlider
+            if other then
+                BossHunt.uiRefs._syncingDist = true
+                if other.SetValue then pcall(function() other:SetValue(clamped) end)
+                elseif other.Set then pcall(function() other:Set(clamped) end) end
+                BossHunt.uiRefs._syncingDist = false
+            end
+        end
+    end,
+})
+
+BossHunt.uiRefs.adaptiveDistToggle = FarmTab:Toggle({
+    Title = "Auto Adapt Distance by Weapon (จำกัดระยะอัตโนมัติตามอาวุธ)",
+    Desc = "ปิด (ค่าเริ่มต้น) = ใช้ระยะห่างตาม Farm Distance จริง 100% ทุกมอนและบอส | เปิด = จำกัดไม่ให้เกินระยะอาวุธ",
+    Value = Config.AdaptiveDistance == true,
+    Callback = function(state)
+        Config.AdaptiveDistance = state
         if Config.AutoSave then SaveConfig(true) end
     end,
 })
@@ -8102,10 +8133,37 @@ DungeonTab:Dropdown({
 
 DungeonTab:Slider({
     Title = "Dungeon Safe Height (ความสูงลอยตัวหลบกราวด์แอตแทก)",
-    Value = { Min = 3.5, Max = 10, Default = Config.DungeonSafeHeight },
+    Value = { Min = 0, Max = 15, Default = math.clamp(tonumber(Config.DungeonSafeHeight) or 3.5, 0, 15) },
+    Step = 0.5,
     Callback = function(val)
-        Config.DungeonSafeHeight = val
+        local n = tonumber(val)
+        if n ~= nil then
+            Config.DungeonSafeHeight = math.clamp(n, 0, 15)
+            if Config.AutoSave then SaveConfig(true) end
+        end
+    end,
+})
+
+BossHunt.uiRefs.dungeonDistSlider = DungeonTab:Slider({
+    Title = "Dungeon Farm Distance (ระยะห่างจากมอนสเตอร์ในดันเจี้ยน)",
+    Desc = "ปรับระยะห่างจากมอนสเตอร์และบอสในดันเจี้ยน (ซิงค์กับ Farm Distance | จำกัดอัตโนมัติหากติดกำแพงแคบ)",
+    Value = { Min = 1, Max = 35, Default = math.clamp(tonumber(Config.FarmDistance) or 14, 1, 35) },
+    Step = 0.5,
+    Callback = function(val)
+        local n = tonumber(val)
+        if n == nil then return end
+        local clamped = math.clamp(n, 1, 35)
+        Config.FarmDistance = clamped
         if Config.AutoSave then SaveConfig(true) end
+        if BossHunt and BossHunt.uiRefs and not BossHunt.uiRefs._syncingDist then
+            local other = BossHunt.uiRefs.farmDistSlider
+            if other then
+                BossHunt.uiRefs._syncingDist = true
+                if other.SetValue then pcall(function() other:SetValue(clamped) end)
+                elseif other.Set then pcall(function() other:Set(clamped) end) end
+                BossHunt.uiRefs._syncingDist = false
+            end
+        end
     end,
 })
 
@@ -10060,6 +10118,8 @@ task.spawn(function()
                     if targetHrp then
                         local targetPos = targetHrp.Position
                         local mobLook = targetHrp.CFrame.LookVector
+                        local flatLook = Vector3.new(mobLook.X, 0, mobLook.Z)
+                        flatLook = (flatLook.Magnitude > 0.05) and flatLook.Unit or Vector3.new(0, 0, -1)
                         local toPlayer = (hrp.Position - targetPos)
                         local mName = (target.Name or ""):lower()
                         local mId = tostring(target:GetAttribute("MonsterId") or "")
@@ -10071,12 +10131,12 @@ task.spawn(function()
 
                         local safeDist, safeHeight, isRanged = getSmartFarmOffset(target)
 
-                        -- 1000% Flank Defense: if monster turns to face player, slip behind it while keeping weapon reach
+                        -- 1000% Flank Defense: if monster turns to face player, slip behind it at configured distance & height
                         -- (Skipped in dungeon to prevent corridor wall pin, skipped in Walk Mode, and skipped while holding green circle)
                         if Config.AutoDodge and Config.DodgeFlank and (Config.FarmMode ~= "Walk") and not isHoldingSafe and not inDungeon then
                             if toPlayer.Magnitude < (safeDist + 4) and (toPlayer.Magnitude > 0.1 and mobLook:Dot(toPlayer.Unit) > 0.15) then
-                                local behindPos = targetPos - (mobLook * safeDist) + Vector3.new(0, safeHeight, 0)
-                                performDodge("Combat Flank Behind", -mobLook, safeDist, 0.25, target, behindPos)
+                                local behindPos = targetPos - (flatLook * safeDist) + Vector3.new(0, safeHeight, 0)
+                                performDodge("Combat Flank Behind", -flatLook, safeDist, 0.25, target, behindPos)
                             end
                         end
 
@@ -10090,9 +10150,9 @@ task.spawn(function()
                             local farmH = 0.2
                             if inDungeon then
                                 if isPillar or isBoss then
-                                    farmH = Config.DungeonSafeHeight or 3.5
+                                    farmH = tonumber(Config.DungeonSafeHeight) or 3.5
                                 else
-                                    farmH = 0.2
+                                    farmH = math.min(safeHeight, 6.0)
                                 end
                             else
                                 farmH = (Config.FarmMode == "Walk") and 0.0 or safeHeight
@@ -10106,20 +10166,26 @@ task.spawn(function()
                             end
                             local targetFloorY = 62.8
                             if inDungeon then
-                                playerPos = getDungeonSafeCombatPosition(targetPos, mobLook, safeDist, isRanged, isBoss, isPillar)
+                                playerPos = getDungeonSafeCombatPosition(targetPos, flatLook, safeDist, isRanged, isBoss, isPillar, farmH)
                                 targetFloorY = playerPos.Y
                             else
                                 if Config.FarmMode == "Walk" then
+                                    -- Maintain exact horizontal ring distance along player's current angle so character steps in/out cleanly
+                                    local flatFromMob = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z)
+                                    local awayDir = (flatFromMob.Magnitude > 0.5) and flatFromMob.Unit or -flatLook
+                                    local standXZ = targetPos + (awayDir * safeDist)
                                     local rayParams = RaycastParams.new()
                                     rayParams.FilterType = Enum.RaycastFilterType.Exclude
                                     rayParams.FilterDescendantsInstances = {char, target}
-                                    local groundRay = workspace:Raycast(targetPos + Vector3.new(0, 10, 0), Vector3.new(0, -50, 0), rayParams)
-                                    local groundY = groundRay and (groundRay.Position.Y + 2.8) or targetPos.Y
-                                    playerPos = targetPos - (mobLook * safeDist)
-                                    playerPos = Vector3.new(playerPos.X, groundY, playerPos.Z)
+                                    local groundRay = workspace:Raycast(Vector3.new(standXZ.X, math.max(hrp.Position.Y, targetPos.Y) + 12, standXZ.Z), Vector3.new(0, -60, 0), rayParams)
+                                    if not groundRay then
+                                        groundRay = workspace:Raycast(targetPos + Vector3.new(0, 10, 0), Vector3.new(0, -50, 0), rayParams)
+                                    end
+                                    local groundY = groundRay and (groundRay.Position.Y + 2.8) or hrp.Position.Y
+                                    playerPos = Vector3.new(standXZ.X, groundY, standXZ.Z)
                                     targetFloorY = groundY
                                 else
-                                    playerPos = targetPos - (mobLook * safeDist) + Vector3.new(0, farmH, 0)
+                                    playerPos = targetPos - (flatLook * safeDist) + Vector3.new(0, farmH, 0)
                                     targetFloorY = playerPos.Y
                                 end
                             end
@@ -10139,16 +10205,23 @@ task.spawn(function()
                                 hum.WalkSpeed = Config.WalkFarmSpeed or 28
                                 local flatDiff = Vector3.new(playerPos.X - hrp.Position.X, 0, playerPos.Z - hrp.Position.Z)
                                 local flatDist = flatDiff.Magnitude
-                                local minStandDist = isRanged and 12.0 or 3.5
+                                local curMobDist = Vector3.new(hrp.Position.X - targetPos.X, 0, hrp.Position.Z - targetPos.Z).Magnitude
+                                local stopTol = inDungeon and 1.1 or 0.9
 
-                                if flatDist > (minStandDist + 1.2) then
-                                    hum:MoveTo(playerPos)
-                                elseif flatDist > 1.8 then
-                                    hum:MoveTo(playerPos)
-                                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                if inDungeon then
+                                    if flatDist > stopTol then
+                                        hum:MoveTo(playerPos)
+                                    else
+                                        hum:Move(Vector3.zero, false)
+                                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                    end
                                 else
-                                    hum:Move(Vector3.zero, false)
-                                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                    if math.abs(curMobDist - safeDist) > stopTol or flatDist > (stopTol + 0.5) then
+                                        hum:MoveTo(playerPos)
+                                    else
+                                        hum:Move(Vector3.zero, false)
+                                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                                    end
                                 end
                             else
                                 -- ==================== WARP / TELEPORT MODE (DUNGEON & FIELD) ====================
