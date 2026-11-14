@@ -211,6 +211,20 @@ local lastDungeonEnterAttempt = 0
 local lastDungeonReviveTime = 0
 local lastSealNotifyTime = 0
 local dungeonChestsClaimed = 0
+local BossHunt = {
+    trackedDeaths = {},
+    lastCheckTime = -999,
+    inspectToken = 0,
+    isInspecting = false,
+    lastStayNotify = 0,
+    lastStayZone = "",
+    isServerHopping = false,
+    hopStartedAt = 0,
+    serverHopNextTick = 0,
+    lastHopJobId = nil,
+    dynamicZoneMap = {},
+    uiRefs = {},
+}
 
 local function isInsideDungeon()
     local placeRole = workspace:GetAttribute("PlaceRole")
@@ -269,6 +283,10 @@ local function stopCombatAndTargeting()
     isOpeningDungeonChest = false
     currentDungeonPillar = nil
     isCheckingBossArena = false
+    if BossHunt then
+        BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+        BossHunt.isInspecting = false
+    end
     isWarpingZone = false
     isReturningFromBoss = false
     isSelling = false
@@ -428,6 +446,7 @@ Config = {
     PrioritizeBoss = false,      -- Attack Boss first when present (ปิดไว้เป็นค่าเริ่มต้น)
     BossOnly = false,           -- Farm ONLY Bosses and Mini-Bosses
     SelectedBoss = "All Bosses",-- Specific Boss or "All Bosses"
+    BossServerHop = false,      -- Auto Server Hop when target boss is missing or defeated
     ReturnToProgressionAfterBoss = false, -- ตีบอสเสร็จกลับไปฟาร์มตาม Auto Lv.99 ทันที
     BossCheckInterval = 75,     -- Seconds between periodic Boss Arena inspections
     KillAura = false,
@@ -585,7 +604,7 @@ local function canScriptMoveOrWarp()
     if isInsideDungeon() then
         return Config.AutoDungeon == true
     else
-        return (Config.AutoFarm == true) or (Config.AutoProgression == true) or (Config.AutoDungeon == true)
+        return (Config.AutoFarm == true) or (Config.AutoProgression == true) or (Config.AutoDungeon == true) or (Config.BossOnly == true) or (Config.BossServerHop == true)
     end
 end
 
@@ -669,27 +688,33 @@ if getgenv then getgenv().HT_Config = Config end
 
 -- ==================== AUTO EXECUTE ON TELEPORT ====================
 local hasRegisteredQueue = false
-local function registerQueueOnTeleport()
-    if not Config.AutoExecuteOnTeleport then return end
-    if hasRegisteredQueue then return end -- Guard: Only queue once per game session to prevent multiple executions
+local function registerQueueOnTeleport(forceQueue)
+    if not Config.AutoExecuteOnTeleport and not forceQueue then return end
+    if hasRegisteredQueue and not forceQueue then return end -- Guard: Only queue once per game session unless forced for retry
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if queue then
         hasRegisteredQueue = true
         local execCode = [[
             task.wait(2.0)
-            if getgenv and (getgenv()._HuntingTogetherRunning or getgenv()._UniversalLoaderLoading) then
+            if getgenv and (getgenv()._HuntingTogetherRunning or getgenv()._UniversalLoaderLoading or getgenv()._SongHubLoading) then
                 return
             end
             local cb = tostring(os.time()) .. "_" .. tostring(math.random(100, 999))
-            local sOk, code = pcall(function()
-                return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
-            end)
-            if not sOk or not code or #code < 500 then
-                sOk, code = pcall(function()
-                    return game:HttpGet("https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb)
-                end)
+            local urls = {
+                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. cb,
+                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb,
+                "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub-Server/main/Universal_Loader.luau?v=" .. cb,
+                "https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb,
+            }
+            local sOk, code = false, nil
+            for _, u in ipairs(urls) do
+                sOk, code = pcall(function() return game:HttpGet(u) end)
+                if sOk and type(code) == "string" and #code > 500 and not code:find("404: Not Found") then
+                    break
+                end
+                code = nil
             end
-            if sOk and code and #code > 500 then
+            if code then
                 local fn = loadstring(code)
                 if fn then return fn() end
             end
@@ -2632,6 +2657,10 @@ local function executeDungeonEnterRoutine(isManual)
     -- 🛑 Immediately stop AutoProgression (Auto Lv.99) when entering dungeon!
     Config.AutoProgression = false
     isCheckingBossArena = false
+    if BossHunt then
+        BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+        BossHunt.isInspecting = false
+    end
     activeBossFight = nil
     isWarpingZone = false
     pcall(function()
@@ -2900,20 +2929,26 @@ local function isPlayerInBossArena()
     if not hrp then return false, nil end
     local pPos = hrp.Position
     for bName, bPos in pairs(ZoneCoordinates) do
-        if bName:find("Boss") then
-            -- Boss arena boundary is strictly 70 studs (prevents false triggering on adjacent fields)
-            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 70 then
+        if bName:find("^Boss") then
+            -- Boss arena boundary is strictly 90 studs (neighbors are 191 studs away)
+            if (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 90 then
                 return true, bName
             end
         end
     end
-    if Config.CurrentZone and Config.CurrentZone:find("Boss") then
+    if Config.CurrentZone and Config.CurrentZone:find("^Boss") then
         return true, Config.CurrentZone
     end
     return false, nil
 end
 
-local function isAnyBossAliveInArena(arenaName)
+local function isAnyBossAliveInArena(arenaName, selectedBoss)
+    if BossHunt and BossHunt.findMatchingBoss then
+        local arenaPos = arenaName and ZoneCoordinates[arenaName]
+        local maxDist = arenaPos and 155 or math.huge
+        local found = BossHunt.findMatchingBoss(selectedBoss or Config.SelectedBoss, arenaPos, maxDist)
+        return found ~= nil, found
+    end
     local arenaPos = arenaName and ZoneCoordinates[arenaName]
     local folder = workspace:FindFirstChild("Monsters")
     if not folder then return false, nil end
@@ -2923,7 +2958,7 @@ local function isAnyBossAliveInArena(arenaName)
             if mHrp then
                 if arenaPos then
                     local d = (Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z) - Vector3.new(arenaPos.X, 0, arenaPos.Z)).Magnitude
-                    if d <= 260 then
+                    if d <= 155 then
                         return true, m
                     end
                 else
@@ -3017,22 +3052,20 @@ travelToZone = function(targetField, fieldName, isManual)
         if monsterDropdown then
             monsterDropdown:SetValues(getMonsterList())
         end
-        if bossDropdown then
-            bossDropdown:SetValues(getBossList())
+        if BossHunt and BossHunt.refreshBossDropdown then
+            BossHunt.refreshBossDropdown()
         end
     end)
 
     isWarpingZone = false
 end
 
--- ==================== AUTO RETURN TO PROGRESSION AFTER BOSS ====================
+-- ==================== AUTO RETURN TO PROGRESSION & BOSS HUNT ENGINE ====================
 activeBossFight = nil
 isReturningFromBoss = false
-local trackedBossDeaths = {}
 isCheckingBossArena = false
-local lastBossWarpCheckTime = 0
 
-local BossZones = {
+BossHunt.bossZones = {
     { Name = "Gorilla King", Zone = "Boss01", MinLevel = 18, MaxLevel = 38 },
     { Name = "Whitefang Sabertooth", Zone = "Boss02", MinLevel = 39, MaxLevel = 62 },
     { Name = "Obsidian Pharaoh", Zone = "Boss03", MinLevel = 63, MaxLevel = 84 },
@@ -3040,7 +3073,7 @@ local BossZones = {
     { Name = "Volcano Turtle King", Zone = "Boss05", MinLevel = 98, MaxLevel = 999 },
 }
 
-local BossZoneMap = {
+BossHunt.bossZoneMap = {
     ["Volcano Turtle King"] = { Zone = "Boss05", Name = "Volcano Turtle King", Level = 99 },
     ["Tempest Dragon King"] = { Zone = "Boss04", Name = "Tempest Dragon King", Level = 85 },
     ["Obsidian Pharaoh"] = { Zone = "Boss03", Name = "Obsidian Pharaoh", Level = 63 },
@@ -3054,105 +3087,384 @@ local BossZoneMap = {
     ["Leader Spiked Ice Golem"] = { Zone = "Field12", Name = "Leader Spiked Ice Golem", Level = 95 },
 }
 
-local function getTargetBossZone(level, selectedBoss)
-    level = tonumber(level) or getPlayerLevel()
-    if selectedBoss and selectedBoss ~= "All Bosses" and selectedBoss ~= "Pack Leaders Only" then
-        if BossZoneMap[selectedBoss] then
-            return BossZoneMap[selectedBoss].Zone, BossZoneMap[selectedBoss].Name
-        end
-        for name, data in pairs(BossZoneMap) do
-            if selectedBoss:lower():find(name:lower()) or name:lower():find(selectedBoss:lower()) then
-                return data.Zone, data.Name
+BossHunt.leaderZones = {
+    { Zone = "Field12", Name = "Leader Spiked Ice Golem", Level = 95 },
+    { Zone = "Field09", Name = "Leader Spiked Stone Golem", Level = 70 },
+    { Zone = "Field06", Name = "Leader Saber Tiger", Level = 45 },
+    { Zone = "Field04", Name = "Leader Fang Hyena", Level = 30 },
+}
+
+function BossHunt.normalizeChoice(val)
+    if type(val) == "table" then
+        val = val.Title or val.Name or val.Value or val[1]
+    end
+    if type(val) ~= "string" then
+        return "All Bosses"
+    end
+    val = val:match("^%s*(.-)%s*$") or ""
+    if val == "" then return "All Bosses" end
+    return val
+end
+
+function BossHunt.isMatchingBoss(monster, selectedBoss)
+    if not monster or not monster.Parent or not isBossMonster(monster) then
+        return false
+    end
+    local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
+    if sel == "All Bosses" then
+        return true
+    end
+    if sel == "Pack Leaders Only" then
+        if monster:GetAttribute("IsLeader") == true then return true end
+        local n = tostring(monster.Name or ""):lower()
+        return n:find("leader", 1, true) ~= nil
+    end
+
+    local selLower = sel:lower()
+    local hum = monster:FindFirstChildOfClass("Humanoid")
+    local candidates = {
+        monster.Name,
+        monster:GetAttribute("DisplayName"),
+        monster:GetAttribute("MonsterName"),
+        monster:GetAttribute("Name"),
+        monster:GetAttribute("MonsterId"),
+        hum and hum.DisplayName,
+    }
+    for _, raw in ipairs(candidates) do
+        if type(raw) == "string" and raw ~= "" then
+            local c = raw:match("^%s*(.-)%s*$"):lower()
+            if c == selLower or c:find(selLower, 1, true) or (#c >= 4 and selLower:find(c, 1, true)) then
+                return true
             end
+        end
+    end
+    return false
+end
+
+function BossHunt.nearestZoneName(pos)
+    if not pos then return nil end
+    local bestZone, bestDist = nil, math.huge
+    for zName, zPos in pairs(ZoneCoordinates) do
+        if zName:find("^Boss") or zName:find("^Field") then
+            local d = (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(zPos.X, 0, zPos.Z)).Magnitude
+            if d < bestDist then
+                bestDist = d
+                bestZone = zName
+            end
+        end
+    end
+    return bestZone
+end
+
+function BossHunt.findMatchingBoss(selectedBoss, centerPos, maxDist)
+    local folder = workspace:FindFirstChild("Monsters")
+    if not folder then return nil, math.huge end
+    local limit = maxDist or math.huge
+    local refPos = centerPos
+    if not refPos then
+        local ch = LocalPlayer.Character
+        local h = ch and ch:FindFirstChild("HumanoidRootPart")
+        refPos = h and h.Position
+    end
+    local best, bestD = nil, math.huge
+    for _, m in ipairs(folder:GetChildren()) do
+        if m:IsA("Model") and isMonsterAlive(m) and BossHunt.isMatchingBoss(m, selectedBoss) then
+            local mPart = getMonsterCombatPart(m)
+            if mPart then
+                local d
+                if centerPos then
+                    d = (Vector3.new(mPart.Position.X, 0, mPart.Position.Z) - Vector3.new(centerPos.X, 0, centerPos.Z)).Magnitude
+                elseif refPos then
+                    d = (mPart.Position - refPos).Magnitude
+                else
+                    d = 0
+                end
+                if d <= limit and d < bestD then
+                    bestD = d
+                    best = m
+                end
+            end
+        end
+    end
+    return best, bestD
+end
+
+function BossHunt.getInspectionZones(level, selectedBoss)
+    level = tonumber(level) or getPlayerLevel()
+    local sel = BossHunt.normalizeChoice(selectedBoss or Config.SelectedBoss)
+
+    if sel ~= "All Bosses" and sel ~= "Pack Leaders Only" then
+        if BossHunt.bossZoneMap[sel] then
+            local entry = BossHunt.bossZoneMap[sel]
+            return { { Zone = entry.Zone, Name = entry.Name } }
+        end
+        local selLower = sel:lower()
+        for name, data in pairs(BossHunt.bossZoneMap) do
+            local nl = name:lower()
+            if selLower:find(nl, 1, true) or nl:find(selLower, 1, true) then
+                return { { Zone = data.Zone, Name = data.Name } }
+            end
+        end
+        if BossHunt.dynamicZoneMap[sel] then
+            return { { Zone = BossHunt.dynamicZoneMap[sel], Name = sel } }
+        end
+    elseif sel == "Pack Leaders Only" then
+        local eligible, higher = {}, {}
+        for _, lz in ipairs(BossHunt.leaderZones) do
+            if lz.Level <= (level + 10) then
+                table.insert(eligible, { Zone = lz.Zone, Name = lz.Name })
+            else
+                table.insert(higher, { Zone = lz.Zone, Name = lz.Name })
+            end
+        end
+        for _, h in ipairs(higher) do
+            table.insert(eligible, h)
+        end
+        return eligible
+    else
+        -- All Bosses: check eligible World Boss arenas from highest appropriate tier down to Boss01
+        local zones = {}
+        local effLevel = math.max(level, 18)
+        for i = #BossHunt.bossZones, 1, -1 do
+            local bz = BossHunt.bossZones[i]
+            if bz.MinLevel <= effLevel then
+                table.insert(zones, { Zone = bz.Zone, Name = bz.Name })
+            end
+        end
+        if #zones > 0 then
+            return zones
         end
     end
 
     if level >= 98 then
-        return "Boss05", "Volcano Turtle King"
+        return { { Zone = "Boss05", Name = "Volcano Turtle King" } }
     elseif level >= 85 then
-        return "Boss04", "Tempest Dragon King"
+        return { { Zone = "Boss04", Name = "Tempest Dragon King" } }
     elseif level >= 63 then
-        return "Boss03", "Obsidian Pharaoh"
+        return { { Zone = "Boss03", Name = "Obsidian Pharaoh" } }
     elseif level >= 39 then
-        return "Boss02", "Whitefang Sabertooth"
+        return { { Zone = "Boss02", Name = "Whitefang Sabertooth" } }
     else
-        return "Boss01", "Gorilla King"
+        return { { Zone = "Boss01", Name = "Gorilla King" } }
     end
 end
 
-local function executeBossInspection(silent)
+function BossHunt.refreshBossDropdown()
+    if not bossDropdown or not getBossList then return end
+    local list = getBossList()
+    local key = table.concat(list, "\0")
+    if BossHunt._lastListKey == key then
+        return
+    end
+    BossHunt._lastListKey = key
+    pcall(function()
+        bossDropdown:SetValues(list)
+    end)
+end
+
+local function getTargetBossZone(level, selectedBoss)
+    local zones = BossHunt.getInspectionZones(level, selectedBoss)
+    if zones and zones[1] then
+        return zones[1].Zone, zones[1].Name
+    end
+    return "Boss01", "Gorilla King"
+end
+
+local function executeBossInspection(silent, forceStart)
+    if not isScriptAlive() then return end
     if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
-    if isWarpingZone or isSelling or isReturningFromBoss or activeBossFight then return end
+    if isWarpingZone or isSelling or isReturningFromBoss or BossHunt.isServerHopping then return end
+    if not forceStart and activeBossFight and activeBossFight.model and isMonsterAlive(activeBossFight.model) and BossHunt.isMatchingBoss(activeBossFight.model, Config.SelectedBoss) then
+        return
+    end
+    if BossHunt.isInspecting and not forceStart then return end
+
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    local inBoss, currentBossArena = isPlayerInBossArena()
-    if not inBoss and Config.CurrentZone and not Config.CurrentZone:find("Boss") then
+    BossHunt.inspectToken = BossHunt.inspectToken + 1
+    local myToken = BossHunt.inspectToken
+    BossHunt.isInspecting = true
+    BossHunt.lastCheckTime = os.clock()
+
+    local inBoss = isPlayerInBossArena()
+    if not inBoss and Config.CurrentZone and not Config.CurrentZone:find("^Boss") then
         lastNormalFarmZone = Config.CurrentZone
     end
 
+    local selected = BossHunt.normalizeChoice(Config.SelectedBoss)
+    Config.SelectedBoss = selected
     local pLevel = getPlayerLevel()
-    local bZone, bName = getTargetBossZone(pLevel, Config.SelectedBoss)
-    if not bZone then return end
 
-    local bPos = ZoneCoordinates[bZone]
-    if bPos and (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude <= 120 then
-        -- Already at boss arena
+    -- Fast global check: if the matching boss is already spawned & loaded anywhere, engage immediately!
+    local liveGlobal = BossHunt.findMatchingBoss(selected, nil, math.huge)
+    if liveGlobal then
+        local mPart = getMonsterCombatPart(liveGlobal)
+        local mPos = mPart and mPart.Position
+        if mPos and (hrp.Position - mPos).Magnitude > 220 then
+            local nearZone = BossHunt.nearestZoneName(mPos) or getTargetBossZone(pLevel, selected)
+            isCheckingBossArena = true
+            if not silent and WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "👑 World Boss Found",
+                    Content = string.format("พบบอส %s! กำลังวาร์ปไปที่ %s", liveGlobal.Name, tostring(nearZone)),
+                    Duration = 3,
+                    Icon = "swords",
+                })
+            end
+            travelToZone(nearZone, liveGlobal.Name, true)
+            isCheckingBossArena = false
+        end
+        if BossHunt.inspectToken == myToken and isMonsterAlive(liveGlobal) then
+            activeBossFight = {
+                model = liveGlobal,
+                name = liveGlobal.Name,
+                pos = (getMonsterCombatPart(liveGlobal) and getMonsterCombatPart(liveGlobal).Position) or mPos,
+                time = os.clock(),
+            }
+            currentCombatTarget = liveGlobal
+            trackBossDeath(liveGlobal)
+        end
+        BossHunt.isInspecting = false
+        BossHunt.lastCheckTime = os.clock()
+        return
+    end
+
+    local zones = BossHunt.getInspectionZones(pLevel, selected)
+    if not zones or #zones == 0 then
+        BossHunt.isInspecting = false
         return
     end
 
     isCheckingBossArena = true
 
-    if not silent and WindUI and WindUI.Notify then
-        WindUI:Notify({
-            Title = "👑 World Boss Hunter",
-            Content = string.format("กำลังวาร์ปไปตรวจสอบบอส: %s (%s)", bName, bZone),
-            Duration = 3,
-            Icon = "swords",
-        })
-    end
-
-    travelToZone(bZone, bName .. " Arena")
-
     task.spawn(function()
-        -- Wait 3.5 seconds for chunks to stream in and check for alive boss
-        task.wait(3.5)
-        local folder = workspace:FindFirstChild("Monsters")
         local foundBoss = nil
+        local aborted = false
 
-        if folder and hrp and hrp.Parent then
-            for _, m in ipairs(folder:GetChildren()) do
-                if m:IsA("Model") and isMonsterAlive(m) and isBossMonster(m) then
-                    local mHrp = m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart
-                    if mHrp and (mHrp.Position - hrp.Position).Magnitude <= 240 then
-                        foundBoss = m
-                        break
-                    end
-                end
-            end
+        local function shouldAbort()
+            if not isScriptAlive() or BossHunt.inspectToken ~= myToken then return true end
+            if isInsideDungeon() or isEnteringDungeon or isWaitingForParty or BossHunt.isServerHopping then return true end
+            if not forceStart and not (Config.BossOnly or Config.BossServerHop or Config.AutoBoss) then return true end
+            return false
         end
 
-        if foundBoss then
+        local okRun, runErr = pcall(function()
+            for idx, targetInfo in ipairs(zones) do
+                if shouldAbort() then aborted = true; break end
+
+                local bZone = targetInfo.Zone
+                local bName = targetInfo.Name or selected
+                local bPos = getZonePosition(bZone)
+                local curChar = LocalPlayer.Character
+                local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+                local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+                if not curHrp or not curHum or curHum.Health <= 0 then
+                    aborted = true
+                    break
+                end
+
+                local distXZ = bPos and (Vector3.new(curHrp.Position.X, 0, curHrp.Position.Z) - Vector3.new(bPos.X, 0, bPos.Z)).Magnitude or math.huge
+                local alreadyNear = (distXZ <= 95)
+
+                if not alreadyNear then
+                    if (not silent or forceStart or idx == 1) and WindUI and WindUI.Notify then
+                        WindUI:Notify({
+                            Title = "👑 Boss Hunter",
+                            Content = string.format("กำลังวาร์ปไปหาบอส: %s (%s)", bName, bZone),
+                            Duration = 2.5,
+                            Icon = "swords",
+                        })
+                    end
+                    travelToZone(bZone, bName .. " Zone", forceStart == true or Config.BossOnly == true or Config.BossServerHop == true)
+                end
+
+                if shouldAbort() then aborted = true; break end
+
+                -- Poll while chunks & monsters stream in (returns the instant matching boss appears)
+                local zoneRadius = bZone:find("^Boss") and 155 or 270
+                local waitSecs = alreadyNear and 0.75 or ((#zones == 1) and 3.4 or 2.2)
+                local deadline = os.clock() + waitSecs
+
+                while os.clock() <= deadline do
+                    if shouldAbort() then aborted = true; break end
+                    foundBoss = BossHunt.findMatchingBoss(selected, bPos, zoneRadius)
+                    if not foundBoss and #zones == 1 then
+                        foundBoss = BossHunt.findMatchingBoss(selected, nil, math.huge)
+                    end
+                    if foundBoss then break end
+                    task.wait(0.25)
+                end
+
+                if aborted or foundBoss then break end
+            end
+        end)
+
+        if not okRun then
+            warn("[BossInspect Error]:", runErr)
+        end
+
+        isCheckingBossArena = false
+        BossHunt.isInspecting = false
+        BossHunt.lastCheckTime = os.clock()
+
+        if aborted or BossHunt.inspectToken ~= myToken or not isScriptAlive() then
+            return
+        end
+
+        if foundBoss and isMonsterAlive(foundBoss) then
+            local mPart = getMonsterCombatPart(foundBoss)
             activeBossFight = {
                 model = foundBoss,
                 name = foundBoss.Name,
-                pos = (foundBoss:FindFirstChild("HumanoidRootPart") or foundBoss.PrimaryPart) and (foundBoss:FindFirstChild("HumanoidRootPart") or foundBoss.PrimaryPart).Position,
+                pos = mPart and mPart.Position,
                 time = os.clock(),
             }
+            currentCombatTarget = foundBoss
             trackBossDeath(foundBoss)
-            isCheckingBossArena = false
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "⚔️ เจอบอสแล้ว!",
-                    Content = string.format("กำลังเปิดฉากต่อสู้กับ: %s", foundBoss.Name),
+                    Content = string.format("กำลังเข้าโจมตี: %s", foundBoss.Name),
                     Duration = 3,
                     Icon = "skull",
                 })
             end
+            return
+        end
+
+        -- No matching boss alive across inspected zone(s)
+        if Config.BossServerHop then
+            if WindUI and WindUI.Notify then
+                WindUI:Notify({
+                    Title = "🌐 ไม่พบบอส — กำลังย้ายเซิร์ฟ",
+                    Content = string.format("ไม่พบบอส (%s) ในเซิร์ฟนี้ กำลังย้ายเซิฟเวอร์หาบอสทันที!", selected),
+                    Duration = 3,
+                    Icon = "zap",
+                })
+            end
+            BossHunt.serverHopForBoss(selected, silent)
+        elseif Config.BossOnly then
+            -- Stay patiently at the selected boss's zone without touching trash mobs or turning off BossOnly!
+            local campZone = zones[1] and zones[1].Zone or "Boss"
+            local campName = zones[1] and zones[1].Name or selected
+            local nowT = os.clock()
+            if (not silent or forceStart) and ((nowT - BossHunt.lastStayNotify) >= 20 or BossHunt.lastStayZone ~= campZone) then
+                BossHunt.lastStayNotify = nowT
+                BossHunt.lastStayZone = campZone
+                if WindUI and WindUI.Notify then
+                    WindUI:Notify({
+                        Title = "⏳ รอดักเกิดเฉพาะบอส",
+                        Content = string.format("ยังไม่พบ %s (%s) — ยืนรอดักตีเฉพาะบอสที่โซนนี้", campName, campZone),
+                        Duration = 3,
+                        Icon = "clock",
+                    })
+                end
+            end
         else
-            -- No boss alive in the arena
+            -- Normal AutoBoss + AutoWarpToBoss (BossOnly OFF): return to farm field until next check
             if not silent and WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "บอสยังไม่เกิด (Cooldown)",
@@ -3161,10 +3473,11 @@ local function executeBossInspection(silent)
                     Icon = "clock",
                 })
             end
-            task.wait(0.8)
-            isCheckingBossArena = false
-            local targetField, fieldName = getReturnField()
-            travelToZone(targetField, fieldName)
+            task.wait(0.6)
+            if BossHunt.inspectToken == myToken and not isInsideDungeon() and not Config.BossOnly then
+                local targetField, fieldName = getReturnField()
+                travelToZone(targetField, fieldName)
+            end
         end
     end)
 end
@@ -3176,20 +3489,21 @@ local function handlePostBossReturn(bossName, deathPos)
     currentCombatTarget = nil
 
     task.spawn(function()
-        local success, err = pcall(function()
-            local bName = tostring(bossName or "Boss")
+        local shouldBossHopNow = false
+        local bName = tostring(bossName or "Boss")
 
+        local success, err = pcall(function()
             -- 1. Notify player
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "🏆 Boss Defeated!",
-                    Content = "กำจัด " .. bName .. " สำเร็จ!\nกำลังดูดเก็บไอเทมดรอปและเตรียมกลับไปฟาร์มมอนปกติ...",
+                    Content = "กำจัด " .. bName .. " สำเร็จ!\nกำลังดูดเก็บไอเทมดรอป" .. ((Config.BossServerHop and "และเตรียมย้ายเซิร์ฟหาบอสต่อ...") or ((Config.BossOnly and "และยืนรอ/ล่าบอสต่อ...") or "และเตรียมกลับไปฟาร์มมอนปกติ...")),
                     Duration = 2.5,
                     Icon = "trophy",
                 })
             end
 
-            -- 2. Fast stealth loot vacuum around boss death area (no character warp)
+            -- 2. Fast stealth loot vacuum around boss death area (ensures drops/eggs aren't lost before hop/warp)
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             local dropsFolder = workspace:FindFirstChild("Drops")
@@ -3197,25 +3511,26 @@ local function handlePostBossReturn(bossName, deathPos)
             for sweep = 1, 3 do
                 if dropsFolder and hrp and hrp.Parent then
                     for _, d in ipairs(dropsFolder:GetChildren()) do
-                        if d:IsA("BasePart") then
-                            local dDist = (d.Position - hrp.Position).Magnitude
+                        local dp = d:IsA("BasePart") and d or (d:IsA("Model") and (d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)))
+                        if dp and dp.Parent then
+                            local dDist = (dp.Position - hrp.Position).Magnitude
                             if dDist <= (Config.LootRadius or 120) then
                                 if Config.StealthMagnetLoot ~= false then
                                     pcall(function()
-                                        d.CanCollide = false
-                                        d.CFrame = hrp.CFrame
+                                        dp.CanCollide = false
+                                        dp.CFrame = hrp.CFrame
                                     end)
                                 end
                                 pcall(function()
                                     if RemotesLazy.PickupDrop then
                                         RemotesLazy.PickupDrop:FireServer(true)
-                                        RemotesLazy.PickupDrop:FireServer(d)
+                                        RemotesLazy.PickupDrop:FireServer(dp)
                                     end
                                 end)
                                 if firetouchinterest then
                                     pcall(function()
-                                        firetouchinterest(hrp, d, 0)
-                                        firetouchinterest(hrp, d, 1)
+                                        firetouchinterest(hrp, dp, 0)
+                                        firetouchinterest(hrp, dp, 1)
                                     end)
                                 end
                             end
@@ -3225,10 +3540,38 @@ local function handlePostBossReturn(bossName, deathPos)
                 task.wait(0.25)
             end
 
-            -- 3. Reset combat flags so normal monsters are immediately targetable
-            if Config.AutoBoss and Config.ReturnToProgressionAfterBoss then
+            if Config.AutoLoot and performAutoLoot then
+                pcall(performAutoLoot)
+                task.wait(0.25)
+            end
+
+            local selected = BossHunt.normalizeChoice(Config.SelectedBoss)
+
+            if Config.BossOnly then
+                -- CRITICAL: NEVER reset Config.BossOnly = false and NEVER warp back to Field13 while BossOnly is active!
+                local anotherAlive = BossHunt.findMatchingBoss(selected, hrp and hrp.Position or deathPos, 260)
+                if anotherAlive then
+                    activeBossFight = {
+                        model = anotherAlive,
+                        name = anotherAlive.Name,
+                        pos = getMonsterCombatPart(anotherAlive) and getMonsterCombatPart(anotherAlive).Position,
+                        time = os.clock(),
+                    }
+                    currentCombatTarget = anotherAlive
+                    trackBossDeath(anotherAlive)
+                elseif Config.BossServerHop then
+                    task.wait(0.5)
+                    local globalAlive = BossHunt.findMatchingBoss(selected, nil, math.huge)
+                    if not globalAlive then
+                        shouldBossHopNow = true
+                    end
+                end
+                return
+            end
+
+            -- Non-BossOnly mode: Reset combat flags if AutoReturn is on
+            if Config.AutoBoss and Config.ReturnToProgressionAfterBoss and not Config.BossServerHop then
                 Config.AutoFarm = true
-                Config.BossOnly = false
                 Config.SelectedMonster = "All"
                 pcall(function()
                     if autoFarmToggle and autoFarmToggle.SetValue then
@@ -3239,16 +3582,22 @@ local function handlePostBossReturn(bossName, deathPos)
                     if monsterDropdown then
                         monsterDropdown:SetValues(getMonsterList())
                     end
-                    if bossDropdown then
-                        bossDropdown:SetValues(getBossList())
+                    if BossHunt and BossHunt.refreshBossDropdown then
+                        BossHunt.refreshBossDropdown()
                     end
                 end)
             end
 
-            -- 4. Check whether player is inside a Boss Arena or in a normal field
-            local inBoss, bossArenaName = isPlayerInBossArena()
+            if Config.BossServerHop then
+                local anotherAlive = BossHunt.findMatchingBoss(selected, nil, math.huge)
+                if not anotherAlive then
+                    shouldBossHopNow = true
+                    return
+                end
+            end
+
+            local inBoss = isPlayerInBossArena()
             if inBoss then
-                -- Player is in a World Boss Arena (Boss01-05), warp back to normal field!
                 local targetField, fieldName = getReturnField()
                 travelToZone(targetField, fieldName)
 
@@ -3261,10 +3610,8 @@ local function handlePostBossReturn(bossName, deathPos)
                     })
                 end
             else
-                -- Player was already in a normal field (e.g. killed a Field Boss/Mini-Boss/Pack Leader)
-                -- DO NOT warp away! Keep fighting in place!
-                if Config.CurrentZone and Config.CurrentZone:find("Boss") then
-                    local targetField, fieldName = getReturnField()
+                if Config.CurrentZone and Config.CurrentZone:find("^Boss") then
+                    local targetField = getReturnField()
                     Config.CurrentZone = targetField
                 end
                 if WindUI and WindUI.Notify then
@@ -3282,24 +3629,30 @@ local function handlePostBossReturn(bossName, deathPos)
             warn("[Boss Return Error]:", err)
         end
 
-        task.wait(0.5)
+        task.wait(0.4)
         activeBossFight = nil
         isReturningFromBoss = false
+        BossHunt.lastCheckTime = os.clock()
+
+        if shouldBossHopNow and Config.BossServerHop and not isInsideDungeon() then
+            BossHunt.serverHopForBoss(Config.SelectedBoss, false)
+        end
     end)
 end
 
 trackBossDeath = function(boss)
-    if not boss or not boss:IsA("Model") or trackedBossDeaths[boss] then return end
-    trackedBossDeaths[boss] = true
+    if not boss or not boss:IsA("Model") or BossHunt.trackedDeaths[boss] then return end
+    BossHunt.trackedDeaths[boss] = true
 
     local hum = boss:FindFirstChildOfClass("Humanoid")
     local bName = boss.Name
-    local bHrp = boss:FindFirstChild("HumanoidRootPart") or boss.PrimaryPart
-    local bPos = bHrp and bHrp.Position
+    local bPart = getMonsterCombatPart(boss)
+    local bPos = bPart and bPart.Position
 
     local function onDead()
         if not isReturningFromBoss and (activeBossFight == nil or activeBossFight.model == boss or isBossMonster(boss)) then
-            local pos = (boss:FindFirstChild("HumanoidRootPart") or boss.PrimaryPart) and (boss:FindFirstChild("HumanoidRootPart") or boss.PrimaryPart).Position or bPos
+            local p = getMonsterCombatPart(boss)
+            local pos = (p and p.Position) or bPos
             activeBossFight = nil
             handlePostBossReturn(bName, pos)
         end
@@ -3334,8 +3687,10 @@ end
 
 outOfZoneTicks = 0
 local function checkAutoProgression(force)
-    -- Only proceed if AutoProgression is enabled or forced
+    -- Never override Boss Only / active Boss Server Hop with Auto Lv.99 normal field warping!
     if not Config.AutoProgression and not force then return end
+    if (Config.BossOnly or Config.BossServerHop) and not force then return end
+    if isCheckingBossArena or BossHunt.isInspecting or BossHunt.isServerHopping then return end
     if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then return end
     if isWarpingZone or isSelling or isReturningFromBoss then return end
     local char = LocalPlayer.Character
@@ -3353,7 +3708,7 @@ local function checkAutoProgression(force)
         if isCheckingBossArena or Config.BossOnly then
             return
         end
-        local aliveBoss = isAnyBossAliveInArena(bossZoneName)
+        local aliveBoss = isAnyBossAliveInArena(bossZoneName, Config.SelectedBoss)
         if not aliveBoss then
             outOfZoneTicks = 0
             handlePostBossReturn("World Boss Area", nil)
@@ -3445,29 +3800,122 @@ getMonsterList = function()
     return list
 end
 
--- ==================== LOW-PLAYER SERVER HOP SYSTEM ====================
-local isServerHopping = false
-local serverHopNextTick = 0
+-- ==================== LOW-PLAYER & BOSS SERVER HOP SYSTEM ====================
+do
+    local HISTORY_FILE = "HuntingTogether_BossHopHistory.json"
 
-local function serverHopLowPlayer(silent)
+    function BossHunt.loadHopHistory()
+        local out = {}
+        pcall(function()
+            if isfile and readfile and isfile(HISTORY_FILE) then
+                local raw = readfile(HISTORY_FILE)
+                local dec = raw and #raw > 0 and HttpService:JSONDecode(raw)
+                if type(dec) == "table" then
+                    local nowEpoch = os.time()
+                    for jId, ts in pairs(dec) do
+                        if type(jId) == "string" and type(ts) == "number" and (nowEpoch - ts) <= 120 then
+                            out[jId] = ts
+                        end
+                    end
+                end
+            end
+        end)
+        return out
+    end
+
+    function BossHunt.recordVisitedServer(jobId)
+        if not jobId or jobId == "" then return end
+        pcall(function()
+            local hist = BossHunt.loadHopHistory()
+            hist[tostring(jobId)] = os.time()
+            -- Cap stored history to avoid unbounded file growth
+            local keys = {}
+            for k, v in pairs(hist) do
+                table.insert(keys, { k = k, v = v })
+            end
+            if #keys > 30 then
+                table.sort(keys, function(a, b) return a.v > b.v end)
+                local trimmed = {}
+                for i = 1, 25 do
+                    trimmed[keys[i].k] = keys[i].v
+                end
+                hist = trimmed
+            end
+            if writefile then
+                writefile(HISTORY_FILE, HttpService:JSONEncode(hist))
+            end
+        end)
+    end
+
+    local TeleportService = game:GetService("TeleportService")
+    trackConn(TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+        if player ~= LocalPlayer then return end
+        BossHunt.isServerHopping = false
+        if BossHunt.lastHopJobId then
+            BossHunt.lastFailedJobId = BossHunt.lastHopJobId
+            BossHunt.recordVisitedServer(BossHunt.lastHopJobId)
+            BossHunt.lastHopJobId = nil
+        end
+        if WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "Teleport Failed",
+                Content = "ย้ายเซิร์ฟไม่สำเร็จ (" .. tostring(teleportResult) .. ") กำลังลองหาเซิร์ฟใหม่...",
+                Duration = 3,
+                Icon = "alert-circle",
+            })
+        end
+        if isScriptAlive() and (Config.BossServerHop or Config.ServerHopAuto) and not isInsideDungeon() then
+            task.delay(1.8, function()
+                if isScriptAlive() and not BossHunt.isServerHopping and not isInsideDungeon() then
+                    if Config.BossServerHop then
+                        BossHunt.serverHopForBoss(Config.SelectedBoss, false)
+                    elseif Config.ServerHopAuto then
+                        BossHunt.serverHop({ silent = true, forBoss = false })
+                    end
+                end
+            end)
+        end
+    end))
+end
+
+function BossHunt.serverHop(opts)
+    opts = opts or {}
+    local silent = opts.silent == true
+    local forBoss = opts.forBoss == true
+    local reasonBoss = tostring(opts.reasonBoss or Config.SelectedBoss or "Boss")
+
     if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then
         if not silent and WindUI and WindUI.Notify then
             WindUI:Notify({ Title = "Server Hop", Content = "กำลังสร้างห้องหรืออยู่ในดันเจี้ยน ปิดการย้ายเซิร์ฟเวอร์ชั่วคราว", Duration = 2.5, Icon = "clock" })
         end
         return
     end
-    if isServerHopping then
-        if not silent and WindUI and WindUI.Notify then
-            WindUI:Notify({ Title = "Server Hop", Content = "กำลังอยู่ระหว่างการย้ายเซิร์ฟเวอร์ กรุณารอสักครู่...", Duration = 2.5, Icon = "clock" })
+    if BossHunt.isServerHopping then
+        if (os.clock() - (BossHunt.hopStartedAt or 0)) < 18 then
+            if not silent and WindUI and WindUI.Notify then
+                WindUI:Notify({ Title = "Server Hop", Content = "กำลังอยู่ระหว่างการย้ายเซิร์ฟเวอร์ กรุณารอสักครู่...", Duration = 2.5, Icon = "clock" })
+            end
+            return
         end
-        return
+        BossHunt.isServerHopping = false
     end
-    isServerHopping = true
+
+    BossHunt.isServerHopping = true
+    BossHunt.hopStartedAt = os.clock()
+    BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+    BossHunt.isInspecting = false
+    isCheckingBossArena = false
+
+    -- Save current config so BossOnly / SelectedBoss / BossServerHop / AutoFarm carry over seamlessly
+    if Config.AutoSave then
+        SaveConfig(true)
+    end
+    pcall(function() registerQueueOnTeleport(true) end)
 
     if not silent and WindUI and WindUI.Notify then
         WindUI:Notify({
-            Title = "Server Hop",
-            Content = "กำลังค้นหาเซิร์ฟเวอร์ที่มีผู้เล่นน้อยที่สุด...",
+            Title = forBoss and ("👑 Boss Server Hop") or "Server Hop",
+            Content = forBoss and string.format("กำลังค้นหาเซิร์ฟเวอร์ใหม่เพื่อล่าบอส: %s...", reasonBoss) or "กำลังค้นหาเซิร์ฟเวอร์ที่มีผู้เล่นน้อยที่สุด...",
             Duration = 3,
             Icon = "search"
         })
@@ -3475,41 +3923,70 @@ local function serverHopLowPlayer(silent)
 
     task.spawn(function()
         local placeId = game.PlaceId
-        local curJob = game.JobId
-        local cursor = ""
-        local candidates = {}
+        local curJob = tostring(game.JobId or "")
+        BossHunt.recordVisitedServer(curJob)
+        local history = BossHunt.loadHopHistory()
 
-        -- Fetch up to 2 pages of servers sorted by lowest players first
-        for page = 1, 2 do
-            local url = string.format(
-                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s",
-                placeId,
-                (cursor ~= "" and ("&cursor=" .. cursor) or "")
-            )
-            local ok, body = pcall(function() return game:HttpGet(url) end)
-            if ok and body and type(body) == "string" and #body > 20 then
-                local data = nil
-                pcall(function() data = HttpService:JSONDecode(body) end)
-                if data and data.data then
-                    for _, s in ipairs(data.data) do
-                        if s.id and s.id ~= curJob and s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.playing > 0 then
-                            table.insert(candidates, s)
+        local freshCandidates = {}
+        local fallbackCandidates = {}
+
+        local function scanServers()
+            local cursor = ""
+            freshCandidates = {}
+            fallbackCandidates = {}
+            for page = 1, 3 do
+                local url = string.format(
+                    "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s",
+                    placeId,
+                    (cursor ~= "" and ("&cursor=" .. cursor) or "")
+                )
+                local ok, body = pcall(function() return game:HttpGet(url) end)
+                if ok and body and type(body) == "string" and #body > 20 then
+                    local data = nil
+                    pcall(function() data = HttpService:JSONDecode(body) end)
+                    if data and data.data then
+                        for _, s in ipairs(data.data) do
+                            local sId = tostring(s.id or "")
+                            if sId ~= "" and sId ~= curJob and s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.playing > 0 then
+                                if sId ~= BossHunt.lastFailedJobId then
+                                    table.insert(fallbackCandidates, s)
+                                    if not history[sId] then
+                                        table.insert(freshCandidates, s)
+                                    end
+                                end
+                            end
                         end
+                        cursor = data.nextPageCursor or ""
+                    else
+                        cursor = ""
                     end
-                    cursor = data.nextPageCursor or ""
+                else
+                    cursor = ""
                 end
-            end
-            if #candidates >= 15 or cursor == "" then
-                break
+                if #freshCandidates >= 15 or cursor == "" then
+                    break
+                end
             end
         end
 
-        if #candidates == 0 then
-            isServerHopping = false
+        scanServers()
+        if #freshCandidates == 0 and #fallbackCandidates == 0 then
+            -- Brief retry in case Roblox server list API returned transient 429 rate-limit
+            task.wait(2.2)
+            if not isScriptAlive() or isInsideDungeon() then
+                BossHunt.isServerHopping = false
+                return
+            end
+            scanServers()
+        end
+
+        local poolList = (#freshCandidates > 0) and freshCandidates or fallbackCandidates
+        if #poolList == 0 then
+            BossHunt.isServerHopping = false
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "Server Hop",
-                    Content = "ไม่พบเซิร์ฟเวอร์ว่างอื่นในขณะนี้ กรุณาลองใหม่อีกครั้ง",
+                    Content = "ไม่พบเซิร์ฟเวอร์ว่างอื่นในขณะนี้ (หรือ API ติดจำกัดชั่วคราว) จะลองใหม่อัตโนมัติ...",
                     Duration = 3.5,
                     Icon = "alert-triangle"
                 })
@@ -3518,37 +3995,33 @@ local function serverHopLowPlayer(silent)
         end
 
         -- Sort ascending: lowest players first, then lowest ping
-        table.sort(candidates, function(a, b)
+        table.sort(poolList, function(a, b)
             if a.playing ~= b.playing then
                 return a.playing < b.playing
             end
             return (a.ping or 999) < (b.ping or 999)
         end)
 
-        -- Pick among the top 3 lowest to avoid colliding on the exact same server
-        local pickPool = math.min(3, #candidates)
-        local targetServer = candidates[math.random(1, pickPool)]
+        -- Pick randomly among top 4 lowest-player servers to avoid colliding
+        local pickPool = math.min(4, #poolList)
+        local targetServer = poolList[math.random(1, pickPool)]
+        BossHunt.lastHopJobId = tostring(targetServer.id)
+        BossHunt.recordVisitedServer(targetServer.id)
 
         if WindUI and WindUI.Notify then
             WindUI:Notify({
-                Title = "Server Hop Found!",
-                Content = string.format("พบเซิร์ฟเวอร์: คนเล่น %d/%d คน (Ping: %s)\nกำลังเทเลพอร์ต...", targetServer.playing, targetServer.maxPlayers, tostring(targetServer.ping or "N/A")),
-                Duration = 4,
+                Title = forBoss and "👑 พบเซิร์ฟเวอร์ใหม่แล้ว!" or "Server Hop Found!",
+                Content = string.format("เป้าหมาย: คนเล่น %d/%d คน (Ping: %s)\nกำลังย้ายไปหาบอส...", targetServer.playing, targetServer.maxPlayers, tostring(targetServer.ping or "N/A")),
+                Duration = 3.5,
                 Icon = "zap"
             })
         end
 
-        -- Prepare autoexecute across teleport
-        pcall(function()
-            local queueScript = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. tostring(os.time())))()'
-            if syn and syn.queue_on_teleport then
-                syn.queue_on_teleport(queueScript)
-            elseif queue_on_teleport then
-                queue_on_teleport(queueScript)
-            end
-        end)
+        if Config.AutoSave then SaveConfig(true) end
+        pcall(function() registerQueueOnTeleport(true) end)
+        pcall(function() setClientCurrentTarget(nil) end)
 
-        task.wait(0.6)
+        task.wait(0.45)
 
         local TeleportService = game:GetService("TeleportService")
         local tpOk, tpErr = pcall(function()
@@ -3556,7 +4029,8 @@ local function serverHopLowPlayer(silent)
         end)
 
         if not tpOk then
-            isServerHopping = false
+            BossHunt.isServerHopping = false
+            BossHunt.lastFailedJobId = tostring(targetServer.id)
             if WindUI and WindUI.Notify then
                 WindUI:Notify({
                     Title = "Teleport Error",
@@ -3569,18 +4043,24 @@ local function serverHopLowPlayer(silent)
     end)
 end
 
+function BossHunt.serverHopForBoss(reasonBoss, silent)
+    BossHunt.serverHop({
+        silent = (silent == true),
+        forBoss = true,
+        reasonBoss = reasonBoss or Config.SelectedBoss,
+    })
+end
+
+local function serverHopLowPlayer(silent)
+    BossHunt.serverHop({ silent = (silent == true), forBoss = false })
+end
+
 local function rejoinCurrentServer()
     if WindUI and WindUI.Notify then
         WindUI:Notify({ Title = "Rejoining", Content = "กำลังรีจอยน์เซิร์ฟเวอร์เดิม...", Duration = 3, Icon = "rotate-cw" })
     end
-    pcall(function()
-        local queueScript = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. tostring(os.time())))()'
-        if syn and syn.queue_on_teleport then
-            syn.queue_on_teleport(queueScript)
-        elseif queue_on_teleport then
-            queue_on_teleport(queueScript)
-        end
-    end)
+    if Config.AutoSave then SaveConfig(true) end
+    pcall(function() registerQueueOnTeleport(true) end)
     task.wait(0.5)
     local TeleportService = game:GetService("TeleportService")
     TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
@@ -3596,16 +4076,16 @@ task.spawn(function()
         if Config.ServerHopAuto then
             local now = os.clock()
             local intervalSecs = math.max(60, (tonumber(Config.ServerHopInterval) or 15) * 60)
-            if serverHopNextTick == 0 then
-                serverHopNextTick = now + intervalSecs
+            if BossHunt.serverHopNextTick == 0 then
+                BossHunt.serverHopNextTick = now + intervalSecs
             end
-            if now >= serverHopNextTick then
-                serverHopNextTick = now + intervalSecs
+            if now >= BossHunt.serverHopNextTick then
+                BossHunt.serverHopNextTick = now + intervalSecs
                 print(string.format("[Server Hop] ⏰ Interval reached (%d mins). Hopping to low-player server...", tonumber(Config.ServerHopInterval) or 15))
                 serverHopLowPlayer(false)
             end
         else
-            serverHopNextTick = 0
+            BossHunt.serverHopNextTick = 0
         end
     end
 end)
@@ -4013,12 +4493,26 @@ end
 getBossList = function()
     local list = {"All Bosses", "Pack Leaders Only"}
     local seen = {["All Bosses"] = true, ["Pack Leaders Only"] = true}
+    local savedSel = BossHunt and BossHunt.normalizeChoice and BossHunt.normalizeChoice(Config.SelectedBoss) or Config.SelectedBoss
+    if savedSel and savedSel ~= "" and not seen[savedSel] then
+        seen[savedSel] = true
+        table.insert(list, savedSel)
+    end
     local folder = workspace:FindFirstChild("Monsters")
     if folder then
         for _, m in ipairs(folder:GetChildren()) do
-            if m:IsA("Model") and isBossMonster(m) and not seen[m.Name] then
-                seen[m.Name] = true
-                table.insert(list, m.Name)
+            if m:IsA("Model") and isBossMonster(m) then
+                if BossHunt and BossHunt.nearestZoneName and BossHunt.dynamicZoneMap then
+                    local mp = getMonsterCombatPart(m)
+                    local nz = mp and BossHunt.nearestZoneName(mp.Position)
+                    if nz then
+                        BossHunt.dynamicZoneMap[m.Name] = nz
+                    end
+                end
+                if not seen[m.Name] then
+                    seen[m.Name] = true
+                    table.insert(list, m.Name)
+                end
             end
         end
     end
@@ -4091,20 +4585,24 @@ local function getTargetMonster()
 
     -- 1. STICKINESS CHECK: Stick to current target until it dies to prevent target ping-pong / warping
     if currentCombatTarget and isMonsterAlive(currentCombatTarget) then
-        local tHrp = currentCombatTarget:FindFirstChild("HumanoidRootPart") or currentCombatTarget.PrimaryPart
+        local tHrp = getMonsterCombatPart(currentCombatTarget)
         if tHrp then
             local dist = (hrp.Position - tHrp.Position).Magnitude
             local currentIsBoss = isBossMonster(currentCombatTarget)
+            local currentMatchesSelected = currentIsBoss and BossHunt.isMatchingBoss(currentCombatTarget, Config.SelectedBoss)
+            local stickLimit = currentIsBoss and 280 or 140
 
-            if Config.BossOnly and not currentIsBoss then
+            if Config.BossOnly and (not currentIsBoss or not currentMatchesSelected) then
                 currentCombatTarget = nil
-            elseif dist <= 140 then
-                -- If we're fighting a normal mob and a boss is nearby with PrioritizeBoss, switch to boss
+            elseif (Config.AutoBoss or Config.PrioritizeBoss) and currentIsBoss and not currentMatchesSelected and Config.SelectedBoss and Config.SelectedBoss ~= "All Bosses" then
+                currentCombatTarget = nil
+            elseif dist <= stickLimit then
+                -- If we're fighting a normal mob and a matching boss is nearby with PrioritizeBoss, switch to boss
                 if not currentIsBoss and (Config.PrioritizeBoss or Config.BossOnly) then
                     for _, mob in ipairs(folder:GetChildren()) do
-                        if mob:IsA("Model") and isMonsterAlive(mob) and isBossMonster(mob) then
-                            local bHrp = mob:FindFirstChild("HumanoidRootPart") or mob.PrimaryPart
-                            if bHrp and (hrp.Position - bHrp.Position).Magnitude <= 120 then
+                        if mob:IsA("Model") and isMonsterAlive(mob) and BossHunt.isMatchingBoss(mob, Config.SelectedBoss) then
+                            local bHrp = getMonsterCombatPart(mob)
+                            if bHrp and (hrp.Position - bHrp.Position).Magnitude <= 180 then
                                 currentCombatTarget = mob
                                 return mob
                             end
@@ -4137,7 +4635,7 @@ local function getTargetMonster()
 
     for _, monster in ipairs(folder:GetChildren()) do
         if monster:IsA("Model") and isMonsterAlive(monster) then
-            local mHrp = monster:FindFirstChild("HumanoidRootPart") or monster.PrimaryPart
+            local mHrp = getMonsterCombatPart(monster)
             if mHrp then
                 local distFromPlayer = (hrp.Position - mHrp.Position).Magnitude
                 local inZone = true
@@ -4157,8 +4655,8 @@ local function getTargetMonster()
                 end
 
                 if inZone then
-                    -- 🎃 Halloween Priority Matching (Pumpkins, Pumpkin Spider, Event Bosses)
-                    if Config.AutoHalloween and Config.HuntHalloweenPumpkins then
+                    -- 🎃 Halloween Priority Matching (Skipped when BossOnly is filtering for specific bosses)
+                    if not Config.BossOnly and Config.AutoHalloween and Config.HuntHalloweenPumpkins then
                         local mName = monster.Name:lower()
                         local isPumpkin = monster:GetAttribute("HalloweenPumpkin") or mName:find("pumpkin") or mName:find("halloween")
                         if isPumpkin and distFromPlayer < bestHalloweenDist then
@@ -4167,20 +4665,9 @@ local function getTargetMonster()
                         end
                     end
 
-                    local isBoss = isBossMonster(monster)
-
-                    -- Boss Candidate Matching
-                    if isBoss and (Config.AutoBoss or Config.BossOnly or Config.PrioritizeBoss) then
-                        local bossAllowed = false
-                        if Config.SelectedBoss == "All Bosses" or not Config.SelectedBoss then
-                            bossAllowed = true
-                        elseif monster.Name == Config.SelectedBoss or string.find(monster.Name, Config.SelectedBoss) then
-                            bossAllowed = true
-                        elseif Config.SelectedBoss == "Pack Leaders Only" and monster:GetAttribute("IsLeader") then
-                            bossAllowed = true
-                        end
-
-                        if bossAllowed and distFromPlayer < bestBossDist then
+                    -- Boss Candidate Matching (strictly respects Config.SelectedBoss!)
+                    if isBoss and (Config.AutoBoss or Config.BossOnly or Config.PrioritizeBoss or Config.BossServerHop) then
+                        if BossHunt.isMatchingBoss(monster, Config.SelectedBoss) and distFromPlayer < bestBossDist then
                             bestBossDist = distFromPlayer
                             bestBoss = monster
                         end
@@ -4191,7 +4678,7 @@ local function getTargetMonster()
                         local nameAllowed = false
                         if Config.SelectedMonster == "All" or not Config.SelectedMonster then
                             nameAllowed = true
-                        elseif monster.Name == Config.SelectedMonster or string.find(monster.Name, Config.SelectedMonster) then
+                        elseif monster.Name == Config.SelectedMonster or string.find(monster.Name, Config.SelectedMonster, 1, true) then
                             nameAllowed = true
                         end
 
@@ -4212,18 +4699,18 @@ local function getTargetMonster()
     end
 
     -- Return priority:
-    if bestHalloween and Config.AutoHalloween and Config.HuntHalloweenPumpkins then
+    if bestHalloween and not Config.BossOnly and Config.AutoHalloween and Config.HuntHalloweenPumpkins then
         currentCombatTarget = bestHalloween
         return bestHalloween
     end
 
-    if bestBoss and (Config.PrioritizeBoss or Config.BossOnly or Config.AutoBoss) then
+    if bestBoss and (Config.PrioritizeBoss or Config.BossOnly or Config.AutoBoss or Config.BossServerHop) then
         currentCombatTarget = bestBoss
         trackBossDeath(bestBoss)
         activeBossFight = {
             model = bestBoss,
             name = bestBoss.Name,
-            pos = (bestBoss:FindFirstChild("HumanoidRootPart") or bestBoss.PrimaryPart) and (bestBoss:FindFirstChild("HumanoidRootPart") or bestBoss.PrimaryPart).Position,
+            pos = getMonsterCombatPart(bestBoss) and getMonsterCombatPart(bestBoss).Position,
             time = os.clock(),
         }
         return bestBoss
@@ -6778,19 +7265,33 @@ autoFarmToggle = FarmTab:Toggle({
 
 FarmTab:Button({
     Title = "⛔ Emergency Stop All (หยุดการทำงานและหยุดวาร์ปทั้งหมดทันที)",
-    Desc = "ปิด Auto Farm, Auto Dungeon, Auto Progression และหยุดการเคลื่อนที่ทั้งหมดทันที 100%",
+    Desc = "ปิด Auto Farm, Auto Dungeon, Auto Progression, Boss Only, Boss Server Hop และหยุดวาร์ปทั้งหมด 100%",
     Callback = function()
         Config.AutoFarm = false
         Config.AutoDungeon = false
         Config.AutoProgression = false
         Config.AutoBoss = false
         Config.AutoWarpToBoss = false
+        Config.BossOnly = false
+        Config.BossServerHop = false
+        Config.ServerHopAuto = false
         Config.AutoOpenLootBox = false
         Config.AutoTrickTreat = false
-        if autoFarmToggle and autoFarmToggle.SetValue then
-            autoFarmToggle:SetValue(false)
-        elseif autoFarmToggle and autoFarmToggle.Set then
-            autoFarmToggle:Set(false)
+        local function resetToggleVisual(t)
+            if t then
+                if t.SetValue then pcall(function() t:SetValue(false) end)
+                elseif t.Set then pcall(function() t:Set(false) end) end
+            end
+        end
+        resetToggleVisual(autoFarmToggle)
+        resetToggleVisual(autoDungeonToggle)
+        resetToggleVisual(autoProgressionToggle)
+        if BossHunt and BossHunt.uiRefs then
+            resetToggleVisual(BossHunt.uiRefs.autoBossToggle)
+            resetToggleVisual(BossHunt.uiRefs.autoWarpBossToggle)
+            resetToggleVisual(BossHunt.uiRefs.bossOnlyToggle)
+            resetToggleVisual(BossHunt.uiRefs.bossHopToggle)
+            resetToggleVisual(BossHunt.uiRefs.autoServerHopToggle)
         end
         stopCombatAndTargeting()
         if Config.AutoSave then SaveConfig(true) end
@@ -6886,17 +7387,21 @@ FarmTab:Button({
 
 FarmTab:Section({ Title = "👑 Auto Boss & Mini-Boss Hunter", Opened = true })
 
-FarmTab:Toggle({
+BossHunt.uiRefs.autoBossToggle = FarmTab:Toggle({
     Title = "Auto Hunt Bosses & Mini-Bosses",
     Desc = "ตรวจจับและโจมตีบอส / มินิบอส / หัวหน้าฝูงอัตโนมัติเมื่อเกิด",
     Value = Config.AutoBoss,
     Callback = function(state)
         Config.AutoBoss = state
         if Config.AutoSave then SaveConfig(true) end
+        if state then
+            BossHunt.lastCheckTime = -999
+            task.spawn(function() executeBossInspection(false, true) end)
+        end
     end,
 })
 
-FarmTab:Toggle({
+BossHunt.uiRefs.autoWarpBossToggle = FarmTab:Toggle({
     Title = "Auto Warp to World Bosses (วาร์ปไปห้องบอสโลกอัตโนมัติ)",
     Desc = "วาร์ปไปตรวจสอบและล่าบอสใหญ่ในห้องบอส (Boss01-05 เช่น Gorilla King, Obsidian Pharaoh) เป็นระยะอัตโนมัติ",
     Value = Config.AutoWarpToBoss,
@@ -6904,16 +7409,17 @@ FarmTab:Toggle({
         Config.AutoWarpToBoss = state
         if Config.AutoSave then SaveConfig(true) end
         if state then
-            task.spawn(function() executeBossInspection(false) end)
+            BossHunt.lastCheckTime = -999
+            task.spawn(function() executeBossInspection(false, true) end)
         end
     end,
 })
 
 FarmTab:Button({
     Title = "Warp to Level Boss Arena Now (วาร์ปไปห้องบอสทันที)",
-    Desc = "วาร์ปไปตรวจสอบบอสใหญ่ตามระดับเลเวลปัจจุบันทันที",
+    Desc = "วาร์ปไปตรวจสอบบอสตามรายชื่อบอสที่เลือก (หรือระดับเลเวล) ทันที",
     Callback = function()
-        executeBossInspection(false)
+        task.spawn(function() executeBossInspection(false, true) end)
     end,
 })
 
@@ -6927,19 +7433,41 @@ FarmTab:Toggle({
     end,
 })
 
-FarmTab:Toggle({
+BossHunt.uiRefs.bossOnlyToggle = FarmTab:Toggle({
     Title = "Bosses Only Mode (ล่าเฉพาะบอสเท่านั้น)",
-    Desc = "ไม่ตีมอนสเตอร์ขยะทั่วไป ล่าและยืนรอดักตีเฉพาะบอส/มินิบอส",
+    Desc = "ไม่ตีมอนสเตอร์ขยะทั่วไป วาร์ปไปหาและดักตีเฉพาะบอสที่เลือกไว้ (เปิด Auto Farm ให้อัตโนมัติ)",
     Value = Config.BossOnly,
     Callback = function(state)
         Config.BossOnly = state
-        if Config.AutoSave then SaveConfig(true) end
+        if state then
+            if currentCombatTarget and not BossHunt.isMatchingBoss(currentCombatTarget, Config.SelectedBoss) then
+                currentCombatTarget = nil
+            end
+            if activeBossFight and activeBossFight.model and not BossHunt.isMatchingBoss(activeBossFight.model, Config.SelectedBoss) then
+                activeBossFight = nil
+            end
+            if not Config.AutoFarm then
+                Config.AutoFarm = true
+                if autoFarmToggle then
+                    if autoFarmToggle.SetValue then pcall(function() autoFarmToggle:SetValue(true) end)
+                    elseif autoFarmToggle.Set then pcall(function() autoFarmToggle:Set(true) end) end
+                end
+            end
+            BossHunt.lastCheckTime = -999
+            if Config.AutoSave then SaveConfig(true) end
+            task.spawn(function() executeBossInspection(false, true) end)
+        else
+            BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+            BossHunt.isInspecting = false
+            isCheckingBossArena = false
+            if Config.AutoSave then SaveConfig(true) end
+        end
     end,
 })
 
 FarmTab:Toggle({
     Title = "Return to Auto Lv.99 Field After Boss (ตีบอสเสร็จกลับไปฟาร์มต่อ)",
-    Desc = "เมื่อบอสถูกกำจัด จะดูดเก็บของดรอป/ไข่สัตว์เลี้ยง แล้ววาร์ปกลับไปฟาร์มตามเลเวล 1-99 ทันทีอัตโนมัติ",
+    Desc = "เมื่อบอสถูกกำจัด จะดูดเก็บของดรอป/ไข่สัตว์เลี้ยง แล้ววาร์ปกลับไปฟาร์มตามเลเวล 1-99 (ทำงานเมื่อปิด Bosses Only)",
     Value = Config.ReturnToProgressionAfterBoss,
     Callback = function(state)
         Config.ReturnToProgressionAfterBoss = state
@@ -6952,8 +7480,28 @@ bossDropdown = FarmTab:Dropdown({
     Values = getBossList(),
     Value = Config.SelectedBoss,
     Callback = function(selected)
-        Config.SelectedBoss = selected
+        local chosen = BossHunt.normalizeChoice(selected)
+        Config.SelectedBoss = chosen
+        if currentCombatTarget and not BossHunt.isMatchingBoss(currentCombatTarget, chosen) then
+            currentCombatTarget = nil
+        end
+        if activeBossFight and activeBossFight.model and not BossHunt.isMatchingBoss(activeBossFight.model, chosen) then
+            activeBossFight = nil
+        end
+        BossHunt.lastCheckTime = -999
+        BossHunt.lastStayZone = ""
         if Config.AutoSave then SaveConfig(true) end
+        if Config.BossOnly or Config.BossServerHop or Config.AutoBoss then
+            task.spawn(function() executeBossInspection(false, true) end)
+        elseif WindUI and WindUI.Notify then
+            local z = getTargetBossZone(getPlayerLevel(), chosen)
+            WindUI:Notify({
+                Title = "เลือกบอสแล้ว",
+                Content = string.format("เป้าหมาย: %s (โซน %s)\nเปิด Boss Only เพื่อวาร์ปไปล่าทันที", chosen, tostring(z)),
+                Duration = 2.5,
+                Icon = "crown",
+            })
+        end
     end,
 })
 
@@ -6961,8 +7509,49 @@ FarmTab:Button({
     Title = "Refresh Boss List",
     Callback = function()
         local updated = getBossList()
+        BossHunt._lastListKey = table.concat(updated, "\0")
         bossDropdown:SetValues(updated)
         WindUI:Notify({ Title = "Updated", Content = "อัปเดตรายชื่อบอส: " .. #updated .. " ตัว", Duration = 2, Icon = "crown" })
+    end,
+})
+
+BossHunt.uiRefs.bossHopToggle = FarmTab:Toggle({
+    Title = "🌐 Auto Server Hop for Boss (ไม่เจอบอสย้ายเซิฟทันที)",
+    Desc = "วาร์ปเช็คบอสที่เลือก (หรือทุกห้องหากเลือก All Bosses) ถ้าไม่มีบอสเกิดจะย้ายเซิฟเวอร์ใหม่ทันทีอัตโนมัติ",
+    Value = Config.BossServerHop,
+    Callback = function(state)
+        Config.BossServerHop = state
+        if state then
+            if currentCombatTarget and not BossHunt.isMatchingBoss(currentCombatTarget, Config.SelectedBoss) then
+                currentCombatTarget = nil
+            end
+            if activeBossFight and activeBossFight.model and not BossHunt.isMatchingBoss(activeBossFight.model, Config.SelectedBoss) then
+                activeBossFight = nil
+            end
+            if not Config.AutoFarm then
+                Config.AutoFarm = true
+                if autoFarmToggle then
+                    if autoFarmToggle.SetValue then pcall(function() autoFarmToggle:SetValue(true) end)
+                    elseif autoFarmToggle.Set then pcall(function() autoFarmToggle:Set(true) end) end
+                end
+            end
+            BossHunt.lastCheckTime = -999
+            if Config.AutoSave then SaveConfig(true) end
+            task.spawn(function() executeBossInspection(false, true) end)
+        else
+            BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+            BossHunt.isInspecting = false
+            isCheckingBossArena = false
+            if Config.AutoSave then SaveConfig(true) end
+        end
+    end,
+})
+
+FarmTab:Button({
+    Title = "🚀 Hop Server to Find Selected Boss Now (ย้ายเซิฟหาบอสทันที)",
+    Desc = "ย้ายไปเซิร์ฟเวอร์คนน้อยที่ยังไม่เคยเช็คทันที เพื่อหาบอสที่เลือกใน Select Specific Boss Filter",
+    Callback = function()
+        BossHunt.serverHopForBoss(Config.SelectedBoss, false)
     end,
 })
 
@@ -7124,6 +7713,10 @@ autoDungeonToggle = DungeonTab:Toggle({
             -- 🛑 IMMEDIATELY STOP AUTO LV.99 (AutoProgression)
             Config.AutoProgression = false
             isCheckingBossArena = false
+    if BossHunt then
+        BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+        BossHunt.isInspecting = false
+    end
             activeBossFight = nil
             isWarpingZone = false
             pcall(function()
@@ -8059,6 +8652,10 @@ autoProgressionToggle = AutoProgTab:Toggle({
             end)
         else
             isCheckingBossArena = false
+    if BossHunt then
+        BossHunt.inspectToken = (BossHunt.inspectToken or 0) + 1
+        BossHunt.isInspecting = false
+    end
             activeBossFight = nil
             isWarpingZone = false
             stopCombatAndTargeting()
@@ -8820,16 +9417,16 @@ end
 -- ==================== LOW-PLAYER SERVER HOP UI ====================
 TeleportTab:Section({ Title = "🌐 Low-Player Server Hop (ระบบย้ายเซิร์ฟเวอร์คนน้อย)", Opened = true })
 
-TeleportTab:Toggle({
+BossHunt.uiRefs.autoServerHopToggle = TeleportTab:Toggle({
     Title = "Auto Server Hop (ย้ายเซิร์ฟเวอร์อัตโนมัติ)",
     Desc = "สลับย้ายไปเซิร์ฟเวอร์ที่มีผู้เล่นน้อยที่สุดตามรอบเวลาที่ตั้งไว้",
     Value = Config.ServerHopAuto,
     Callback = function(state)
         Config.ServerHopAuto = state
         if state then
-            serverHopNextTick = os.clock() + ((tonumber(Config.ServerHopInterval) or 15) * 60)
+            BossHunt.serverHopNextTick = os.clock() + ((tonumber(Config.ServerHopInterval) or 15) * 60)
         else
-            serverHopNextTick = 0
+            BossHunt.serverHopNextTick = 0
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
@@ -8848,7 +9445,7 @@ TeleportTab:Slider({
     Callback = function(val)
         Config.ServerHopInterval = tonumber(val) or 15
         if Config.ServerHopAuto then
-            serverHopNextTick = os.clock() + ((tonumber(val) or 15) * 60)
+            BossHunt.serverHopNextTick = os.clock() + ((tonumber(val) or 15) * 60)
         end
         if Config.AutoSave then SaveConfig(true) end
     end,
@@ -8859,6 +9456,14 @@ TeleportTab:Button({
     Desc = "ค้นหาเซิร์ฟเวอร์คนน้อยที่สุดในขณะนี้และย้ายทันที ไม่ต้องรอรอบเวลา",
     Callback = function()
         serverHopLowPlayer(false)
+    end,
+})
+
+TeleportTab:Button({
+    Title = "👑 Hop Server to Hunt Boss (ย้ายเซิฟเวอร์หาบอสที่เลือก)",
+    Desc = "ย้ายไปเซิร์ฟเวอร์ใหม่เพื่อล่าบอสตามชื่อที่เลือกไว้ใน Select Specific Boss Filter",
+    Callback = function()
+        BossHunt.serverHopForBoss(Config.SelectedBoss, false)
     end,
 })
 
@@ -9684,18 +10289,26 @@ end)
 -- 7. Auto Map Progression & Auto World Boss Hunter Loop
 task.spawn(function()
     while isScriptAlive() do
-        task.wait(2.5)
-        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty then continue end
+        task.wait(1.5)
+        if isInsideDungeon() or isEnteringDungeon or isWaitingForParty or BossHunt.isServerHopping then continue end
 
         -- 1. Track last normal farm zone when in normal field
         local inBoss, bossArenaName = isPlayerInBossArena()
-        if not inBoss and Config.CurrentZone and not Config.CurrentZone:find("Boss") then
+        if not inBoss and Config.CurrentZone and not Config.CurrentZone:find("^Boss") then
             lastNormalFarmZone = Config.CurrentZone
         end
 
-        -- 2. Boss Arena Safety Watchdog: Return only if bot actively initiated world boss hunting and boss is dead
-        if Config.AutoBoss and Config.AutoWarpToBoss and inBoss and (activeBossFight ~= nil or isCheckingBossArena) and not isReturningFromBoss and not isWarpingZone then
-            local aliveBoss, bMob = isAnyBossAliveInArena(bossArenaName)
+        -- Validate activeBossFight hasn't died/changed outside SelectedBoss
+        if activeBossFight then
+            local m = activeBossFight.model
+            if not m or not m.Parent or not isMonsterAlive(m) or not BossHunt.isMatchingBoss(m, Config.SelectedBoss) then
+                activeBossFight = nil
+            end
+        end
+
+        -- 2. Boss Arena Safety Watchdog (ONLY when NOT in BossOnly/BossServerHop and NOT mid-inspection)
+        if Config.AutoBoss and Config.AutoWarpToBoss and not Config.BossOnly and not Config.BossServerHop and inBoss and activeBossFight ~= nil and not isCheckingBossArena and not BossHunt.isInspecting and not isReturningFromBoss and not isWarpingZone then
+            local aliveBoss = isAnyBossAliveInArena(bossArenaName, Config.SelectedBoss)
             if not aliveBoss then
                 handlePostBossReturn("World Boss Area", nil)
             end
@@ -9713,22 +10326,24 @@ task.spawn(function()
             bossReturnTimeout = 0
         end
 
-        -- 4. Normal Progression check (only when not actively inspecting boss and not in boss arena)
-        if Config.AutoProgression and not isCheckingBossArena and not activeBossFight and not inBoss and not isEnteringDungeon and not isWaitingForParty then
+        -- 4. Normal Progression check (disabled while BossOnly / BossServerHop or inspecting boss)
+        if Config.AutoProgression and not Config.BossOnly and not Config.BossServerHop and not isCheckingBossArena and not BossHunt.isInspecting and not activeBossFight and not inBoss and not isEnteringDungeon and not isWaitingForParty then
             pcall(function()
                 checkAutoProgression(false)
             end)
         end
 
-        -- 5. Periodic World Boss Arena Inspection (Warp to Boss Room)
-        if Config.AutoBoss and not isEnteringDungeon and not isWaitingForParty then
-            local now = os.clock()
-            local interval = 12 -- Check boss arena every 12s for ultra-responsive boss hunting
-            if (now - lastBossWarpCheckTime) >= interval then
-                lastBossWarpCheckTime = now
-                pcall(function()
-                    executeBossInspection(true)
-                end)
+        -- 5. Periodic / Immediate Boss Inspection & Boss Server Hop
+        if (Config.BossOnly or Config.BossServerHop or Config.AutoBoss) and not isEnteringDungeon and not isWaitingForParty and not isReturningFromBoss and not isSelling and not isWarpingZone and not isCheckingBossArena and not BossHunt.isInspecting and not BossHunt.isServerHopping then
+            if not activeBossFight then
+                local now = os.clock()
+                local interval = (Config.BossOnly or Config.BossServerHop) and 3.5 or 12
+                if (now - (BossHunt.lastCheckTime or -999)) >= interval then
+                    BossHunt.lastCheckTime = now
+                    pcall(function()
+                        executeBossInspection(true, false)
+                    end)
+                end
             end
         end
     end
@@ -9738,7 +10353,7 @@ end)
 pcall(function()
     trackConn(LocalPlayer:GetAttributeChangedSignal("Level"):Connect(function()
         if not isScriptAlive() or not canScriptMoveOrWarp() then return end
-        if Config.AutoProgression then
+        if Config.AutoProgression and not Config.BossOnly and not Config.BossServerHop and not BossHunt.isServerHopping then
             task.wait(0.5)
             pcall(function()
                 checkAutoProgression(false)
