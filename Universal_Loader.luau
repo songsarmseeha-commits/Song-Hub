@@ -586,7 +586,7 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
 
             local authState = getgenv and getgenv()._SongHubAuth
             local expiresAtClock = authState and tonumber(authState.expiresAtClock) or nil
-            local waitSec = 20
+            local waitSec = 60
             if expiresAtClock then
                 local left = expiresAtClock - os.clock()
                 if left <= 0 then
@@ -1287,47 +1287,60 @@ openKeyVerificationWindow = function(statusMessage)
     })
 end
 
--- Step 1: Check Direct Roblox UserID Whitelist (VIP/Owner auto-bypass)
-local wlOk, wlData = sendVerifyRequest("")
-if wlOk and wlData.whitelisted then
-    local authOk = applyAuthenticatedSession(wlData, "")
-    if authOk then
-        print(string.format("[Song Hub] ✅ Direct Whitelist passed! Welcome %s (%s)", LocalPlayer.Name, wlData.role or "VIP/Owner"))
-        startSessionHeartbeat(wlData.sessionToken or "", "", wlData)
-        launchGameScript(wlData.sessionToken or "", "")
-        return
-    end
-end
-
--- Step 2: Check Locally Saved Key
+-- Step 1: Check Locally Saved Key first (Edge /api/verify-key already checks Direct Whitelist before key validation,
+-- avoiding an extra HTTP request + D1 read for returning users)
 local initialPromptReason = nil
+local cleanSavedKey = ""
 if isfile and isfile(KEY_SAVE_PATH) then
     local savedKey = ""
     pcall(function() savedKey = readfile(KEY_SAVE_PATH) end)
     if savedKey and #savedKey > 3 then
-        local cleanSavedKey = sanitizeLicenseKey(savedKey)
-        local keyOk, keyData = sendVerifyRequest(cleanSavedKey)
-        if keyOk then
-            local authOk, authErr = applyAuthenticatedSession(keyData, cleanSavedKey)
-            if authOk then
-                print(string.format("[Song Hub] ✅ Key Verified from Cache! Type: %s (Live Sessions: %s/%s)", keyData.keyType or "Active", tostring(keyData.activeSessionsCount or 1), tostring(keyData.maxSessions or 1)))
-                startSessionHeartbeat(keyData.sessionToken, cleanSavedKey, keyData)
-                launchGameScript(keyData.sessionToken, cleanSavedKey)
-                return
+        cleanSavedKey = sanitizeLicenseKey(savedKey)
+    end
+end
+
+if #cleanSavedKey > 3 then
+    local keyOk, keyData = sendVerifyRequest(cleanSavedKey)
+    if keyOk then
+        local isWl = keyData.whitelisted == true
+        local activeKeyArg = isWl and "" or cleanSavedKey
+        local authOk, authErr = applyAuthenticatedSession(keyData, activeKeyArg)
+        if authOk then
+            if isWl then
+                print(string.format("[Song Hub] ✅ Direct Whitelist passed! Welcome %s (%s)", LocalPlayer.Name, keyData.role or "VIP/Owner"))
             else
+                print(string.format("[Song Hub] ✅ Key Verified from Cache! Type: %s (Live Sessions: %s/%s)", keyData.keyType or "Active", tostring(keyData.activeSessionsCount or 1), tostring(keyData.maxSessions or 1)))
+            end
+            startSessionHeartbeat(keyData.sessionToken or "", activeKeyArg, keyData)
+            launchGameScript(keyData.sessionToken or "", activeKeyArg)
+            return
+        else
+            if not isWl then
                 clearSavedLicenseKey()
-                shutdownActiveScript(authErr, false)
-                initialPromptReason = authErr
             end
-        elseif type(keyData) == "table" then
-            local code = keyData.code
-            if code == "KEY_EXPIRED" or code == "KEY_REVOKED" or code == "INVALID_KEY" then
-                clearSavedLicenseKey()
-                shutdownActiveScript(keyData.message or "Saved key is no longer valid.", false)
-            end
-            if type(keyData.message) == "string" and #keyData.message > 0 then
-                initialPromptReason = keyData.message
-            end
+            shutdownActiveScript(authErr, false)
+            initialPromptReason = authErr
+        end
+    elseif type(keyData) == "table" then
+        local code = keyData.code
+        if code == "KEY_EXPIRED" or code == "KEY_REVOKED" or code == "INVALID_KEY" then
+            clearSavedLicenseKey()
+            shutdownActiveScript(keyData.message or "Saved key is no longer valid.", false)
+        end
+        if type(keyData.message) == "string" and #keyData.message > 0 then
+            initialPromptReason = keyData.message
+        end
+    end
+else
+    -- Step 2: No saved key -> Check Direct Roblox UserID Whitelist (VIP/Owner auto-bypass)
+    local wlOk, wlData = sendVerifyRequest("")
+    if wlOk and wlData.whitelisted then
+        local authOk = applyAuthenticatedSession(wlData, "")
+        if authOk then
+            print(string.format("[Song Hub] ✅ Direct Whitelist passed! Welcome %s (%s)", LocalPlayer.Name, wlData.role or "VIP/Owner"))
+            startSessionHeartbeat(wlData.sessionToken or "", "", wlData)
+            launchGameScript(wlData.sessionToken or "", "")
+            return
         end
     end
 end

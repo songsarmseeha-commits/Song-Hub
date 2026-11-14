@@ -50,6 +50,15 @@ const FALLBACK_LOADER_LUAU = ${JSON.stringify(loaderLuau)};
 // Active Admin Tokens Map (Edge In-Memory)
 const activeAdminSessions = new Map();
 
+// Free-Plan D1 Quota Optimization Constants & Per-Isolate Cache
+const SESSION_TIMEOUT_SECONDS = 180; // 3-minute idle timeout (3x grace over 60s client heartbeat)
+const HEARTBEAT_TOUCH_MIN_INTERVAL = 45; // Skip redundant D1 UPDATE if refreshed within 45s
+const SETTINGS_CACHE_TTL_MS = 60000; // Cache settings map per isolate for 60s
+let d1SessionTableEnsured = false;
+let d1SettingsTableEnsured = false;
+let cachedSettingsMap = null;
+let cachedSettingsExpiresAt = 0;
+
 // Crypto Helper: HMAC SHA256
 async function hmacSha256(message, secret) {
     const enc = new TextEncoder();
@@ -165,26 +174,60 @@ class DatabaseHandler {
         this.memoryStore = globalFallbackStore;
     }
 
-    async getSetting(key, defVal = '') {
+    async getSettingsMap(forceRefresh = false) {
         if (this.db) {
+            const nowMs = Date.now();
+            if (!forceRefresh && cachedSettingsMap && nowMs < cachedSettingsExpiresAt) {
+                return cachedSettingsMap;
+            }
             try {
-                await this.db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
-                const row = await this.db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
-                if (row) return row.value;
-            } catch (e) {}
+                const { results } = await this.db.prepare("SELECT key, value FROM settings").all();
+                const map = new Map();
+                if (Array.isArray(results)) {
+                    for (const row of results) {
+                        if (row && row.key !== undefined) map.set(String(row.key), String(row.value ?? ''));
+                    }
+                }
+                d1SettingsTableEnsured = true;
+                cachedSettingsMap = map;
+                cachedSettingsExpiresAt = nowMs + SETTINGS_CACHE_TTL_MS;
+                return map;
+            } catch (e) {
+                try {
+                    await this.db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
+                    d1SettingsTableEnsured = true;
+                } catch (_) {}
+            }
+        }
+        return this.memoryStore.settings;
+    }
+
+    async getSetting(key, defVal = '', forceRefresh = false) {
+        if (this.db) {
+            const map = await this.getSettingsMap(forceRefresh);
+            if (map && map.has(key)) return map.get(key);
+            return defVal;
         }
         return this.memoryStore.settings.has(key) ? this.memoryStore.settings.get(key) : defVal;
     }
 
     async setSetting(key, value) {
+        const strVal = String(value);
         if (this.db) {
             try {
-                await this.db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
-                await this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(key, String(value), String(value)).run();
+                if (!d1SettingsTableEnsured) {
+                    await this.db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
+                    d1SettingsTableEnsured = true;
+                }
+                await this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(key, strVal, strVal).run();
+                if (cachedSettingsMap) {
+                    cachedSettingsMap.set(key, strVal);
+                    cachedSettingsExpiresAt = Date.now() + SETTINGS_CACHE_TTL_MS;
+                }
                 return;
             } catch (e) {}
         }
-        this.memoryStore.settings.set(key, String(value));
+        this.memoryStore.settings.set(key, strVal);
     }
 
     async findWhitelistedUser(userId) {
@@ -268,6 +311,7 @@ class DatabaseHandler {
 
     async ensureSessionTable() {
         if (this.db) {
+            if (d1SessionTableEnsured) return;
             try {
                 await this.db.prepare(\`
                     CREATE TABLE IF NOT EXISTS key_sessions (
@@ -284,24 +328,17 @@ class DatabaseHandler {
                         created_at INTEGER NOT NULL
                     )
                 \`).run();
+                d1SessionTableEnsured = true;
             } catch (e) {}
         }
     }
 
-    async purgeExpiredAndInactiveSessions(nowSec = Math.floor(Date.now() / 1000), windowSeconds = 90) {
+    async purgeExpiredAndInactiveSessions(nowSec = Math.floor(Date.now() / 1000), windowSeconds = SESSION_TIMEOUT_SECONDS) {
         await this.ensureSessionTable();
         const cutoff = nowSec - windowSeconds;
         if (this.db) {
             try {
-                await this.db.prepare(\`
-                    DELETE FROM key_sessions
-                    WHERE last_heartbeat <= ?
-                       OR key_id NOT IN (SELECT id FROM keys)
-                       OR key_id IN (
-                           SELECT id FROM keys
-                           WHERE is_active = 0 OR (expires_at IS NOT NULL AND expires_at > 0 AND expires_at <= ?)
-                       )
-                \`).bind(cutoff, nowSec).run();
+                await this.db.prepare("DELETE FROM key_sessions WHERE last_heartbeat <= ?").bind(cutoff).run();
                 return;
             } catch (e) {
                 console.error("D1 purgeExpiredAndInactiveSessions error:", e);
@@ -324,31 +361,47 @@ class DatabaseHandler {
         }
     }
 
-    async getActiveSessions(keyId, windowSeconds = 90) {
+    async getActiveSessions(keyId, windowSeconds = SESSION_TIMEOUT_SECONDS, skipKeyCheck = false) {
         await this.ensureSessionTable();
         const nowSec = Math.floor(Date.now() / 1000);
         const cutoff = nowSec - windowSeconds;
         if (this.db) {
             try {
-                const keyRow = await this.db.prepare("SELECT id, is_active, expires_at FROM keys WHERE id = ?").bind(keyId).first();
-                if (!keyRow || keyRow.is_active === 0 || (keyRow.expires_at && keyRow.expires_at > 0 && nowSec >= keyRow.expires_at)) {
-                    await this.kickKeySessions(keyId);
-                    return [];
+                if (!skipKeyCheck) {
+                    const keyRow = await this.db.prepare("SELECT id, is_active, expires_at FROM keys WHERE id = ?").bind(keyId).first();
+                    if (!keyRow || keyRow.is_active === 0 || (keyRow.expires_at && keyRow.expires_at > 0 && nowSec >= keyRow.expires_at)) {
+                        await this.kickKeySessions(keyId);
+                        return [];
+                    }
                 }
-                await this.db.prepare("DELETE FROM key_sessions WHERE key_id = ? AND last_heartbeat <= ?").bind(keyId, cutoff).run();
                 const { results } = await this.db.prepare(
-                    "SELECT * FROM key_sessions WHERE key_id = ? AND last_heartbeat > ?"
-                ).bind(keyId, cutoff).all();
-                return results || [];
+                    "SELECT * FROM key_sessions WHERE key_id = ?"
+                ).bind(keyId).all();
+                const allRows = results || [];
+                let hasStale = false;
+                const activeRows = [];
+                for (const s of allRows) {
+                    if (Number(s.last_heartbeat || 0) > cutoff) {
+                        activeRows.push(s);
+                    } else {
+                        hasStale = true;
+                    }
+                }
+                if (hasStale) {
+                    await this.db.prepare("DELETE FROM key_sessions WHERE key_id = ? AND last_heartbeat <= ?").bind(keyId, cutoff).run();
+                }
+                return activeRows;
             } catch (e) {}
         }
-        let memKey = null;
-        for (const k of this.memoryStore.keys.values()) {
-            if (Number(k.id) === Number(keyId)) { memKey = k; break; }
-        }
-        if (!memKey || memKey.is_active === 0 || (memKey.expires_at && memKey.expires_at > 0 && nowSec >= memKey.expires_at)) {
-            await this.kickKeySessions(keyId);
-            return [];
+        if (!skipKeyCheck) {
+            let memKey = null;
+            for (const k of this.memoryStore.keys.values()) {
+                if (Number(k.id) === Number(keyId)) { memKey = k; break; }
+            }
+            if (!memKey || memKey.is_active === 0 || (memKey.expires_at && memKey.expires_at > 0 && nowSec >= memKey.expires_at)) {
+                await this.kickKeySessions(keyId);
+                return [];
+            }
         }
         return Array.from(this.memoryStore.sessions.values()).filter(s => s.key_id === Number(keyId) && s.last_heartbeat > cutoff);
     }
@@ -383,7 +436,10 @@ class DatabaseHandler {
                     return { active: false, code: "KEY_EXPIRED", message: "Your license key has expired.", expiresAt: row.expires_at };
                 }
                 if (touch) {
-                    await this.db.prepare("UPDATE key_sessions SET last_heartbeat = ? WHERE session_token = ?").bind(nowSec, sessionToken).run();
+                    const lastHb = Number(row.last_heartbeat || 0);
+                    if ((nowSec - lastHb) >= HEARTBEAT_TOUCH_MIN_INTERVAL) {
+                        await this.db.prepare("UPDATE key_sessions SET last_heartbeat = ? WHERE session_token = ?").bind(nowSec, sessionToken).run();
+                    }
                 }
                 return {
                     active: true,
@@ -466,7 +522,7 @@ class DatabaseHandler {
                 }
                 await this.db.prepare("DELETE FROM key_sessions WHERE session_token = ?").bind(sessionToken).run();
                 if (releaseIdleHwid && closedKeyId) {
-                    const cutoff = Math.floor(Date.now() / 1000) - 90;
+                    const cutoff = Math.floor(Date.now() / 1000) - SESSION_TIMEOUT_SECONDS;
                     const rem = await this.db.prepare(
                         "SELECT id, hwid FROM key_sessions WHERE key_id = ? AND last_heartbeat > ?"
                     ).bind(closedKeyId, cutoff).all();
@@ -487,7 +543,7 @@ class DatabaseHandler {
         }
         this.memoryStore.sessions.delete(sessionToken);
         if (releaseIdleHwid && closedKeyId) {
-            const cutoff = Math.floor(Date.now() / 1000) - 90;
+            const cutoff = Math.floor(Date.now() / 1000) - SESSION_TIMEOUT_SECONDS;
             const activeList = Array.from(this.memoryStore.sessions.values()).filter(
                 sess => sess.key_id === Number(closedKeyId) && sess.last_heartbeat > cutoff
             );
@@ -514,17 +570,31 @@ class DatabaseHandler {
     async getAllKeys() {
         await this.ensureSessionTable();
         const nowSec = Math.floor(Date.now() / 1000);
-        const cutoff = nowSec - 90;
-        await this.purgeExpiredAndInactiveSessions(nowSec, 90);
+        const cutoff = nowSec - SESSION_TIMEOUT_SECONDS;
+        await this.purgeExpiredAndInactiveSessions(nowSec, SESSION_TIMEOUT_SECONDS);
         if (this.db) {
             try {
-                const { results } = await this.db.prepare(\`
-                    SELECT k.*, 
-                           (SELECT COUNT(*) FROM key_hwids kh WHERE kh.key_id = k.id) as bound_hwids_count,
-                           (SELECT COUNT(*) FROM key_sessions ks WHERE ks.key_id = k.id AND ks.last_heartbeat > ? AND k.is_active = 1 AND (k.expires_at IS NULL OR k.expires_at = 0 OR k.expires_at > ?)) as active_sessions_count
-                    FROM keys k ORDER BY k.id DESC
-                \`).bind(cutoff, nowSec).all();
-                return results || [];
+                const [keysRes, hwidCountsRes, sessCountsRes] = await Promise.all([
+                    this.db.prepare("SELECT * FROM keys ORDER BY id DESC").all(),
+                    this.db.prepare("SELECT key_id, COUNT(*) as cnt FROM key_hwids GROUP BY key_id").all(),
+                    this.db.prepare("SELECT key_id, COUNT(*) as cnt FROM key_sessions WHERE last_heartbeat > ? GROUP BY key_id").bind(cutoff).all()
+                ]);
+                const hwidMap = new Map();
+                for (const row of (hwidCountsRes?.results || [])) {
+                    hwidMap.set(Number(row.key_id), Number(row.cnt || 0));
+                }
+                const sessMap = new Map();
+                for (const row of (sessCountsRes?.results || [])) {
+                    sessMap.set(Number(row.key_id), Number(row.cnt || 0));
+                }
+                return (keysRes?.results || []).map(k => {
+                    const isKeyValid = k.is_active !== 0 && (!k.expires_at || k.expires_at <= 0 || nowSec < k.expires_at);
+                    return {
+                        ...k,
+                        bound_hwids_count: hwidMap.get(Number(k.id)) || 0,
+                        active_sessions_count: isKeyValid ? (sessMap.get(Number(k.id)) || 0) : 0
+                    };
+                });
             } catch (e) {
                 console.error("D1 getAllKeys error:", e);
             }
@@ -597,19 +667,20 @@ class DatabaseHandler {
 
     async insertKey(record) {
         const now = Math.floor(Date.now() / 1000);
+        const normalizedKey = String(record.key_string || '').trim().toUpperCase();
         if (this.db) {
             try {
                 const res = await this.db.prepare(
                     "INSERT INTO keys (key_string, key_type, duration_seconds, is_active, note, max_hwid, max_sessions, created_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)"
-                ).bind(record.key_string, record.key_type, record.duration_seconds, record.note || '', record.max_hwid || 1, record.max_sessions || 1, now).run();
-                return { id: res.meta?.last_row_id || Date.now(), ...record, is_active: 1, created_at: now };
+                ).bind(normalizedKey, record.key_type, record.duration_seconds, record.note || '', record.max_hwid || 1, record.max_sessions || 1, now).run();
+                return { id: res.meta?.last_row_id || Date.now(), ...record, key_string: normalizedKey, is_active: 1, created_at: now };
             } catch (e) {
                 console.error("D1 insertKey error:", e);
             }
         }
         const id = this.memoryStore.keys.size + 1;
-        const entry = { id, ...record, is_active: 1, created_at: now };
-        this.memoryStore.keys.set(record.key_string, entry);
+        const entry = { id, ...record, key_string: normalizedKey, is_active: 1, created_at: now };
+        this.memoryStore.keys.set(normalizedKey, entry);
         return entry;
     }
 
@@ -766,11 +837,20 @@ class DatabaseHandler {
         const nowSec = Math.floor(Date.now() / 1000);
         if (this.db) {
             try {
-                const totalKeys = (await this.db.prepare("SELECT COUNT(*) as count FROM keys").first())?.count || 0;
-                const activeKeys = (await this.db.prepare("SELECT COUNT(*) as count FROM keys WHERE is_active = 1 AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?)").bind(nowSec).first())?.count || 0;
-                const totalWhitelist = (await this.db.prepare("SELECT COUNT(*) as count FROM whitelisted_users").first())?.count || 0;
-                const totalLogs = (await this.db.prepare("SELECT COUNT(*) as count FROM access_logs").first())?.count || 0;
-                return { totalKeys, activeKeys, boundKeys: 0, totalWhitelist, totalLogs };
+                const [keyAgg, wlRes, logsMax] = await Promise.all([
+                    this.db.prepare(
+                        "SELECT COUNT(*) as totalKeys, COALESCE(SUM(CASE WHEN is_active = 1 AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?) THEN 1 ELSE 0 END), 0) as activeKeys FROM keys"
+                    ).bind(nowSec).first(),
+                    this.db.prepare("SELECT COUNT(*) as count FROM whitelisted_users").first(),
+                    this.db.prepare("SELECT COALESCE(MAX(id), 0) as count FROM access_logs").first()
+                ]);
+                return {
+                    totalKeys: Number(keyAgg?.totalKeys || 0),
+                    activeKeys: Number(keyAgg?.activeKeys || 0),
+                    boundKeys: 0,
+                    totalWhitelist: Number(wlRes?.count || 0),
+                    totalLogs: Number(logsMax?.count || 0)
+                };
             } catch (e) {}
         }
         return {
@@ -1053,8 +1133,8 @@ export default {
                 return json({ success: false, code: "KEY_EXPIRED", expiresAt: keyData.expires_at, serverTime: nowSec, message: "Your license key has expired." }, 403);
             }
 
-            // Purge stale/idle sessions (> 90s since heartbeat) before evaluating HWID & session limits
-            let activeSessions = await db.getActiveSessions(keyData.id, 90);
+            // Purge stale/idle sessions (> SESSION_TIMEOUT_SECONDS since heartbeat) before evaluating HWID & session limits
+            let activeSessions = await db.getActiveSessions(keyData.id, SESSION_TIMEOUT_SECONDS, true);
             let boundHwids = await db.getKeyHwids(keyData.id);
 
             // Auto-release any bound HWIDs with zero active sessions (client exited cleanly or timed out > 90s)
@@ -1097,7 +1177,7 @@ export default {
                             }
                             await db.removeKeyHwid(keyData.id, bh.hwid);
                         }
-                        activeSessions = await db.getActiveSessions(keyData.id, 90);
+                        activeSessions = await db.getActiveSessions(keyData.id, SESSION_TIMEOUT_SECONDS, true);
                         boundHwids = await db.getKeyHwids(keyData.id);
                     }
                 }
@@ -1106,10 +1186,17 @@ export default {
                     await db.addKeyHwid(keyData.id, hwid, userId, username);
                 } else {
                     await db.logAccess({ key_string: key, roblox_user_id: userId, username, hwid, ip_address: clientIp, status: "HWID_MISMATCH", message: "Max devices exceeded (active session on another HWID)" });
-                    return json({ success: false, code: "HWID_MISMATCH", serverTime: nowSec, message: "Key is already active on another device. Exit the script on that device or wait 90s before re-using." }, 403);
+                    return json({ success: false, code: "HWID_MISMATCH", serverTime: nowSec, message: "Key is already active on another device. Exit the script on that device or wait 3m before re-using." }, 403);
                 }
             } else {
-                await db.addKeyHwid(keyData.id, hwid, userId, username);
+                const existingBound = boundHwids.find(h => h.hwid === hwid);
+                const sameIdentity = existingBound &&
+                    String(existingBound.user_id || '') === String(userId || '') &&
+                    String(existingBound.username || '') === String(username || '');
+                const touchedRecently = existingBound && (nowSec - Number(existingBound.last_used_at || 0)) < 600;
+                if (!sameIdentity || !touchedRecently) {
+                    await db.addKeyHwid(keyData.id, hwid, userId, username);
+                }
             }
 
             let effectiveExpiresAt = (keyData.expires_at && keyData.expires_at > 0) ? keyData.expires_at : null;
@@ -1141,7 +1228,7 @@ export default {
             if (!session) {
                 if (activeSessions.length >= (keyData.max_sessions || 1)) {
                     await db.logAccess({ key_string: key, roblox_user_id: userId, username, hwid, ip_address: clientIp, status: "SESSION_LIMIT", message: \`Max sessions (\${keyData.max_sessions}) exceeded\` });
-                    return json({ success: false, code: "MAX_SESSIONS_EXCEEDED", serverTime: nowSec, message: \`Session limit reached (\${activeSessions.length}/\${keyData.max_sessions} Live). Close other Roblox instances or wait 60s.\` }, 403);
+                    return json({ success: false, code: "MAX_SESSIONS_EXCEEDED", serverTime: nowSec, message: \`Session limit reached (\${activeSessions.length}/\${keyData.max_sessions} Live). Close other Roblox instances or wait 3m.\` }, 403);
                 }
                 sessionToken = generateHex(24);
                 const reqPlaceId = body.placeId || url.searchParams.get("placeId") || "";
@@ -1678,6 +1765,7 @@ export default {
                         }
                     });
                 } else {
+                    await db.getSettingsMap(true);
                     const maxHwid = parseInt(await db.getSetting("getkey_max_hwid", "1")) || 1;
                     const maxSessions = parseInt(await db.getSetting("getkey_max_sessions", "1")) || 1;
                     const durationHours = parseInt(await db.getSetting("getkey_duration_hours", "24")) || 24;
