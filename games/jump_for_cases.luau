@@ -71,6 +71,9 @@ if getgenv then
 end
 
 local function isScriptAlive()
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
     return (not getgenv) or (getgenv()._JumpForCasesRunning == EXEC_ID)
 end
 
@@ -926,6 +929,13 @@ local Window = WindUI:CreateWindow({
 
 if getgenv then
     getgenv()._JFC_Window = Window
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["JumpForCases"] = function()
+        if getgenv()._JumpForCasesRunning == EXEC_ID then
+            getgenv()._JumpForCasesRunning = -1
+        end
+        pcall(function() Window:Destroy() end)
+    end
 end
 
 pcall(function()

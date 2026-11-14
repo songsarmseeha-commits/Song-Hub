@@ -61,8 +61,11 @@ getgenv().__RaycityHubRunId = (tonumber(getgenv().__RaycityHubRunId) or 0) + 1
 local currentScriptRunId = getgenv().__RaycityHubRunId
 
 local function isAlive()
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
     local activeRun = tonumber(getgenv().__RaycityHubRunId)
-    if activeRun and currentScriptRunId and activeRun > currentScriptRunId then
+    if activeRun and currentScriptRunId and activeRun ~= currentScriptRunId then
         return false
     end
     return true
@@ -431,6 +434,17 @@ local Window = WindUI:CreateWindow({
     Acrylic = false,
     Resizable = true
 })
+
+if getgenv then
+    getgenv().__RaycityHubWindow = Window
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["RaycityRB"] = function()
+        if tonumber(getgenv().__RaycityHubRunId) == currentScriptRunId then
+            getgenv().__RaycityHubRunId = -1
+        end
+        pcall(function() Window:Destroy() end)
+    end
+end
 
 -- ==============================================================================
 -- 🖱️ UI CLICKABILITY & MODAL ENHANCER (FIX UNCLICKABLE UI BUG)

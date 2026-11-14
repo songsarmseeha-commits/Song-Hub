@@ -110,7 +110,10 @@ cleanAllWindUI()
 
 local currentScriptRunId = (getgenv and getgenv()._NetAFishRunId) or 1
 local function isAlive()
-    if getgenv and getgenv()._NetAFishRunId and getgenv()._NetAFishRunId > currentScriptRunId then
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
+    if getgenv and getgenv()._NetAFishRunId and getgenv()._NetAFishRunId ~= currentScriptRunId then
         return false
     end
     return true
@@ -567,6 +570,15 @@ if not WindUI then
         end
     end)
 end
+if not WindUI then
+    pcall(function()
+        local raw = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
+        if raw and #raw > 10000 then
+            pcall(function() if writefile then writefile("WindUI_cache.lua", raw) end end)
+            WindUI = loadstring(raw)()
+        end
+    end)
+end
 
 if not WindUI then
     warn("[Song Hub] ❌ Failed to load WindUI framework!")
@@ -587,6 +599,18 @@ local Window = WindUI:CreateWindow({
 
 if getgenv then
     getgenv()._NetAFish_Window = Window
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["NetAFish"] = function()
+        if getgenv()._NetAFishRunId == currentScriptRunId then
+            getgenv()._NetAFishRunId = -1
+        end
+        if type(Config) == "table" then
+            for k, v in pairs(Config) do
+                if type(v) == "boolean" then Config[k] = false end
+            end
+        end
+        pcall(function() Window:Destroy() end)
+    end
 end
 
 -- 🛠️ Universal Smooth UI Draggable Enhancer

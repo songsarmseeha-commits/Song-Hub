@@ -105,7 +105,10 @@ cleanAllWindUI()
 
 local currentScriptRunId = (getgenv and getgenv()._GrimorioRunId) or 1
 local function isAlive()
-    if getgenv and getgenv()._GrimorioRunId and getgenv()._GrimorioRunId > currentScriptRunId then
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
+    if getgenv and getgenv()._GrimorioRunId and getgenv()._GrimorioRunId ~= currentScriptRunId then
         return false
     end
     return true
@@ -275,6 +278,18 @@ local Window = WindUI:CreateWindow({
 
 if getgenv then
     getgenv()._Grimorio_Window = Window
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["EraDosGrimorios"] = function()
+        if getgenv()._GrimorioRunId == currentScriptRunId then
+            getgenv()._GrimorioRunId = -1
+        end
+        if type(Config) == "table" then
+            for k, v in pairs(Config) do
+                if type(v) == "boolean" then Config[k] = false end
+            end
+        end
+        pcall(function() Window:Destroy() end)
+    end
 end
 
 -- ==============================================================================

@@ -115,8 +115,16 @@ local function trackConn(conn)
 end
 
 local function isScriptAlive()
-    if getgenv and getgenv()._HT_ScriptRunId and getgenv()._HT_ScriptRunId ~= currentRunId then
-        return false
+    if getgenv then
+        if getgenv()._SongHubSessionExpired == true then
+            return false
+        end
+        if type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true then
+            return false
+        end
+        if getgenv()._HT_ScriptRunId and getgenv()._HT_ScriptRunId ~= currentRunId then
+            return false
+        end
     end
     return true
 end
@@ -7454,6 +7462,27 @@ local Window = WindUI:CreateWindow({
 if getgenv then
     getgenv()._HT_CurrentWindow = Window
     getgenv()._HT_WindUI = WindUI
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["HuntingTogether"] = function()
+        if getgenv()._HT_ScriptRunId == currentRunId then
+            getgenv()._HT_ScriptRunId = -1
+        end
+        getgenv()._HuntingTogetherRunning = false
+        if type(Config) == "table" then
+            for k, v in pairs(Config) do
+                if type(v) == "boolean" and (k:find("Auto") or k:find("Farm") or k:find("Kill") or k:find("Boss") or k:find("Spam") or k:find("Collect") or k:find("Hop")) then
+                    Config[k] = false
+                end
+            end
+        end
+        if getgenv()._HT_Connections then
+            for _, conn in ipairs(getgenv()._HT_Connections) do
+                pcall(function() conn:Disconnect() end)
+            end
+            getgenv()._HT_Connections = {}
+        end
+        pcall(function() Window:Destroy() end)
+    end
 end
 
 pcall(function()

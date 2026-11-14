@@ -116,7 +116,10 @@ cleanAllWindUI()
 
 local currentScriptRunId = (getgenv and getgenv()._GloryBoundRunId) or 1
 local function isAlive()
-    if getgenv and getgenv()._GloryBoundRunId and getgenv()._GloryBoundRunId > currentScriptRunId then
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
+    if getgenv and getgenv()._GloryBoundRunId and getgenv()._GloryBoundRunId ~= currentScriptRunId then
         return false
     end
     return true
@@ -241,11 +244,11 @@ local function registerQueueOnTeleport()
             getgenv()._SongHubLoading = true
             local cb = "]] .. cb .. [["
             local sOk, code = pcall(function()
-                return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
+                return game:HttpGet("https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev/loader.luau?v=" .. cb)
             end)
             if not sOk or not code or #code < 500 then
                 sOk, code = pcall(function()
-                    return game:HttpGet("https://song-hub-avp8.onrender.com/loader.luau?v=" .. cb)
+                    return game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb)
                 end)
             end
             if sOk and code and #code > 500 then
@@ -346,7 +349,22 @@ local Window = WindUI:CreateWindow({
     Acrylic = false,
     Resizable = true
 })
-if getgenv then getgenv()._GB_Window = Window end
+if getgenv then
+    getgenv()._GB_Window = Window
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["GloryBound"] = function()
+        if getgenv()._GloryBoundRunId == currentScriptRunId then
+            getgenv()._GloryBoundRunId = -1
+        end
+        getgenv()._GloryBoundRunning = false
+        if type(Config) == "table" then
+            for k, v in pairs(Config) do
+                if type(v) == "boolean" then Config[k] = false end
+            end
+        end
+        pcall(function() Window:Destroy() end)
+    end
+end
 
 -- ==============================================================================
 -- 🏋️ TAB 1: GYM & TRAINING
@@ -1109,7 +1127,7 @@ TabSettings:Button({
     Desc = "สร้างไฟล์ SongHub.luau ในโฟลเดอร์ autoexec ของตัวรัน (Wave/Solara/Swift/Delta/etc.)",
     Icon = "download",
     Callback = function()
-        local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+        local code = 'loadstring(game:HttpGet("https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev/loader.luau?v=" .. tostring(os.time())))()'
         local success = false
         pcall(function()
             if writefile then
@@ -1144,7 +1162,7 @@ TabSettings:Button({
     Desc = "คัดลอกคำสั่ง loadstring เพื่อนำไปใส่ในโฟลเดอร์ autoexec ด้วยตนเอง",
     Icon = "clipboard",
     Callback = function()
-        local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+        local code = 'loadstring(game:HttpGet("https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev/loader.luau?v=" .. tostring(os.time())))()'
         if setclipboard then
             setclipboard(code)
             WindUI:Notify({ Title = "Copied! 📋", Content = "คัดลอกโค้ดสำหรับ autoexec เรียบร้อยแล้ว", Duration = 3, Icon = "check" })
@@ -2256,7 +2274,7 @@ pcall(function()
         local installed = pcall(readfile, "autoexec/SongHub.luau")
         if not installed then
             if makefolder then pcall(makefolder, "autoexec") end
-            local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau"))()'
+            local code = 'loadstring(game:HttpGet("https://song-hub-whitelist.song-hub-cloudflare-worker.workers.dev/loader.luau?v=" .. tostring(os.time())))()'
             writefile("autoexec/SongHub.luau", code)
         end
     end

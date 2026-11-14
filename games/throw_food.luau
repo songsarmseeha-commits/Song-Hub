@@ -38,6 +38,9 @@
 getgenv().__ThrowFoodRunId = (getgenv().__ThrowFoodRunId or 0) + 1
 local currentRunId = getgenv().__ThrowFoodRunId
 local function isAlive()
+    if getgenv and (getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true)) then
+        return false
+    end
     return getgenv().__ThrowFoodRunId == currentRunId
 end
 
@@ -409,19 +412,37 @@ end)
 -- 🎨 WINDUI USER INTERFACE CREATION
 -- ==============================================================================
 
-local WindUI
-if isfile and isfile("WindUI_cache.lua") then
-    local cached = readfile("WindUI_cache.lua")
-    if cached and #cached > 1000 then
-        pcall(function() WindUI = loadstring(cached)() end)
+local WindUI = nil
+pcall(function()
+    if isfile and readfile and isfile("WindUI_cache.lua") then
+        local cached = readfile("WindUI_cache.lua")
+        if cached and #cached > 10000 then
+            WindUI = loadstring(cached)()
+        end
     end
+end)
+if not WindUI then
+    pcall(function()
+        local content = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
+        if content and #content > 10000 then
+            pcall(function() if writefile then writefile("WindUI_cache.lua", content) end end)
+            WindUI = loadstring(content)()
+        end
+    end)
 end
 if not WindUI then
-    local content = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
-    WindUI = loadstring(content)()
-    if writefile and content then
-        pcall(function() writefile("WindUI_cache.lua", content) end)
-    end
+    pcall(function()
+        local content = game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
+        if content and #content > 10000 then
+            pcall(function() if writefile then writefile("WindUI_cache.lua", content) end end)
+            WindUI = loadstring(content)()
+        end
+    end)
+end
+
+if not WindUI then
+    warn("[Song Hub] ❌ Failed to load WindUI framework! Please check your network connection.")
+    return
 end
 
 -- Purge residual window objects in cached WindUI
@@ -447,6 +468,15 @@ local Window = WindUI:CreateWindow({
     }
 })
 getgenv().__ThrowFoodWindow = Window
+if getgenv then
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["ThrowFood"] = function()
+        if getgenv().__ThrowFoodRunId == currentRunId then
+            getgenv().__ThrowFoodRunId = -1
+        end
+        pcall(function() Window:Destroy() end)
+    end
+end
 
 -- TABS
 local TabFarm = Window:Tab({ Title = "Auto Farm", Icon = "flame" })

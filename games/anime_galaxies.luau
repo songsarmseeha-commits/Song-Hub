@@ -70,8 +70,32 @@ getgenv().AnimeGalaxiesHubShutdown = function()
         pcall(function() teleportConnection:Disconnect() end)
         teleportConnection = nil
     end
+    if getgenv()._AG_Window then
+        pcall(function() getgenv()._AG_Window:Destroy() end)
+        getgenv()._AG_Window = nil
+    end
 end
 getgenv()._AG_RUNNING = true
+
+if getgenv then
+    getgenv()._SongHubRevokeCallbacks = getgenv()._SongHubRevokeCallbacks or {}
+    getgenv()._SongHubRevokeCallbacks["AnimeGalaxies"] = function()
+        if getgenv().AnimeGalaxiesHubShutdown then
+            pcall(getgenv().AnimeGalaxiesHubShutdown)
+        end
+    end
+    task.spawn(function()
+        while scriptRunning do
+            if getgenv()._SongHubSessionExpired == true or (type(getgenv()._SongHubAuth) == "table" and getgenv()._SongHubAuth.revoked == true) then
+                if getgenv().AnimeGalaxiesHubShutdown then
+                    pcall(getgenv().AnimeGalaxiesHubShutdown)
+                end
+                break
+            end
+            task.wait(1)
+        end
+    end)
+end
 
 -- 0.4 Clean up all existing UI instances across CoreGui, RobloxGui, gethui, and PlayerGui
 local function destroyOldUIs()
@@ -1233,6 +1257,7 @@ local Window = WindUI:CreateWindow({
 
 -- UI successfully initialized: release startup debounce lock
 getgenv()._AG_STARTING = nil
+if getgenv then getgenv()._AG_Window = Window end
 
 -- ==============================================================================
 -- TABS CONFIGURATION
