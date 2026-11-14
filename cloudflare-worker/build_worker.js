@@ -71,6 +71,27 @@ function generateKeyString(prefix = "GALAXY") {
     return \`\${prefix}-\${segment()}-\${segment()}-\${segment()}\`;
 }
 
+const KEY_DURATION_MAP = {
+    "24h": 86400,
+    "Free 24h": 86400,
+    "3d": 259200,
+    "7d": 604800,
+    "Weekly": 604800,
+    "30d": 2592000,
+    "Monthly": 2592000,
+    "Lifetime": 0
+};
+
+function resolveKeyDurationSeconds(rawType, durationHours) {
+    if (durationHours !== undefined && durationHours !== null && !isNaN(durationHours)) {
+        return Math.max(0, parseInt(durationHours, 10) * 3600);
+    }
+    if (rawType && KEY_DURATION_MAP[rawType] !== undefined) {
+        return KEY_DURATION_MAP[rawType];
+    }
+    return undefined;
+}
+
 function generateHex(len = 16) {
     const arr = new Uint8Array(len);
     crypto.getRandomValues(arr);
@@ -659,36 +680,75 @@ class DatabaseHandler {
     }
 
     async editKey(id, updates) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const computeUpdatedTiming = (existing) => {
+            if (!existing) return { durationSeconds: null, expiresAt: undefined, expiredNow: false };
+            const resolvedDur = (updates.durationSeconds !== undefined && updates.durationSeconds !== null && !isNaN(updates.durationSeconds))
+                ? Math.max(0, Number(updates.durationSeconds))
+                : resolveKeyDurationSeconds(updates.keyType, updates.durationHours);
+            if (resolvedDur === undefined) {
+                return { durationSeconds: null, expiresAt: undefined, expiredNow: false };
+            }
+            if (resolvedDur === 0) {
+                return { durationSeconds: 0, expiresAt: null, expiredNow: false };
+            }
+            // Non-zero timed key (24h, 3d, 7d, 30d)
+            if (!existing.activated_at || existing.activated_at <= 0) {
+                return { durationSeconds: resolvedDur, expiresAt: null, expiredNow: false };
+            }
+            const typeOrDurChanged = (updates.keyType !== undefined && updates.keyType !== existing.key_type)
+                || Number(existing.duration_seconds) !== resolvedDur
+                || !existing.expires_at;
+            if (!typeOrDurChanged) {
+                return { durationSeconds: resolvedDur, expiresAt: existing.expires_at, expiredNow: false };
+            }
+            const candidateExp = Number(existing.activated_at) + resolvedDur;
+            const nextExp = candidateExp > nowSec ? candidateExp : (nowSec + resolvedDur);
+            return { durationSeconds: resolvedDur, expiresAt: nextExp, expiredNow: nowSec >= nextExp };
+        };
+
         if (this.db) {
             try {
+                const existing = await this.db.prepare("SELECT * FROM keys WHERE id = ?").bind(id).first();
+                if (!existing) return;
+                const timing = computeUpdatedTiming(existing);
                 await this.db.prepare(
-                    "UPDATE keys SET note = COALESCE(?, note), max_hwid = COALESCE(?, max_hwid), max_sessions = COALESCE(?, max_sessions), is_active = COALESCE(?, is_active), key_type = COALESCE(?, key_type) WHERE id = ?"
+                    "UPDATE keys SET note = COALESCE(?, note), max_hwid = COALESCE(?, max_hwid), max_sessions = COALESCE(?, max_sessions), is_active = COALESCE(?, is_active), key_type = COALESCE(?, key_type), duration_seconds = COALESCE(?, duration_seconds) WHERE id = ?"
                 ).bind(
                     updates.note !== undefined ? updates.note : null,
                     updates.maxHwid !== undefined ? updates.maxHwid : null,
                     updates.maxSessions !== undefined ? updates.maxSessions : null,
                     updates.isActive !== undefined ? (updates.isActive ? 1 : 0) : null,
                     updates.keyType !== undefined ? updates.keyType : null,
+                    timing.durationSeconds !== null ? timing.durationSeconds : null,
                     id
                 ).run();
-                if (updates.isActive === false) {
+                if (timing.expiresAt !== undefined) {
+                    await this.db.prepare("UPDATE keys SET expires_at = ? WHERE id = ?").bind(timing.expiresAt, id).run();
+                }
+                if (updates.isActive === false || timing.expiredNow) {
                     await this.kickKeySessions(id);
                 }
                 return;
-            } catch (e) {}
+            } catch (e) {
+                console.error("D1 editKey error:", e);
+            }
         }
         for (const v of this.memoryStore.keys.values()) {
             if (v.id === Number(id)) {
+                const timing = computeUpdatedTiming(v);
                 if (updates.note !== undefined) v.note = updates.note;
                 if (updates.maxHwid !== undefined) v.max_hwid = updates.maxHwid;
                 if (updates.maxSessions !== undefined) v.max_sessions = updates.maxSessions;
                 if (updates.isActive !== undefined) v.is_active = updates.isActive ? 1 : 0;
                 if (updates.keyType !== undefined) v.key_type = updates.keyType;
+                if (timing.durationSeconds !== null) v.duration_seconds = timing.durationSeconds;
+                if (timing.expiresAt !== undefined) v.expires_at = timing.expiresAt;
+                if (updates.isActive === false || timing.expiredNow) {
+                    await this.kickKeySessions(id);
+                }
                 break;
             }
-        }
-        if (updates.isActive === false) {
-            await this.kickKeySessions(id);
         }
     }
 
@@ -1463,21 +1523,8 @@ export default {
                 const maxHwid = Math.min(Math.max(parseInt(body.maxHwid) || 1, 1), 50);
                 const maxSessions = Math.min(Math.max(parseInt(body.maxSessions) || 1, 1), 50);
 
-                const durationMap = {
-                    "24h": 86400,
-                    "Free 24h": 86400,
-                    "3d": 259200,
-                    "7d": 604800,
-                    "Weekly": 7 * 86400,
-                    "30d": 2592000,
-                    "Monthly": 30 * 86400,
-                    "Lifetime": 0
-                };
-
-                let durationSeconds = durationMap[rawType] !== undefined ? durationMap[rawType] : 86400;
-                if (body.durationHours && !isNaN(body.durationHours)) {
-                    durationSeconds = parseInt(body.durationHours) * 3600;
-                }
+                const resolvedDur = resolveKeyDurationSeconds(rawType, body.durationHours);
+                const durationSeconds = resolvedDur !== undefined ? resolvedDur : 86400;
 
                 const generated = [];
                 for (let i = 0; i < count; i++) {

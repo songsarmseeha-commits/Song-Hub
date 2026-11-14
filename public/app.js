@@ -446,7 +446,17 @@ window.openEditKeyModal = function(id) {
     document.getElementById('editKeyString').value = k.key_string;
     document.getElementById('editMaxHwid').value = k.max_hwid || 1;
     document.getElementById('editMaxSessions').value = k.max_sessions || 1;
-    document.getElementById('editKeyType').value = k.key_type || '24h';
+    const typeSelect = document.getElementById('editKeyType');
+    const rawType = k.key_type || '24h';
+    const aliasMap = { 'Weekly': '7d', 'Monthly': '30d' };
+    const targetType = aliasMap[rawType] || rawType;
+    if (!Array.from(typeSelect.options).some(o => o.value === targetType)) {
+        const opt = document.createElement('option');
+        opt.value = targetType;
+        opt.textContent = targetType;
+        typeSelect.appendChild(opt);
+    }
+    typeSelect.value = targetType;
     document.getElementById('editKeyStatus').value = k.is_active ? '1' : '0';
     document.getElementById('editNote').value = k.note || '';
 
