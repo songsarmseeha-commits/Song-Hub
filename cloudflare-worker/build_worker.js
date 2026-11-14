@@ -825,8 +825,9 @@ export default {
             return new Response(null, { headers: corsHeaders });
         }
 
+        const softStatus = url.searchParams.get("softStatus") === "1";
         const json = (data, status = 200) => new Response(JSON.stringify(data), {
-            status,
+            status: softStatus ? 200 : status,
             headers: {
                 ...corsHeaders,
                 "Content-Type": "application/json; charset=utf-8",
@@ -1091,7 +1092,8 @@ export default {
                     return json({ success: false, code: "MAX_SESSIONS_EXCEEDED", serverTime: nowSec, message: \`Session limit reached (\${activeSessions.length}/\${keyData.max_sessions} Live). Close other Roblox instances or wait 60s.\` }, 403);
                 }
                 sessionToken = generateHex(24);
-                await db.createKeySession(keyData.id, sessionToken, hwid, userId, username, jobId, body.placeId, clientIp);
+                const reqPlaceId = body.placeId || url.searchParams.get("placeId") || "";
+                await db.createKeySession(keyData.id, sessionToken, hwid, userId, username, jobId, reqPlaceId, clientIp);
             } else {
                 await db.updateSessionHeartbeat(sessionToken);
             }

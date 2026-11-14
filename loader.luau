@@ -177,7 +177,7 @@ local function getHardwareId()
         if type(fn) ~= "function" then return nil end
         local ok, res = pcall(fn)
         if ok and res ~= nil then
-            local trimmed = tostring(res):gsub("^%s+", ""):gsub("%s+$", "")
+            local trimmed = tostring(res):gsub("[%c]", ""):gsub("^%s+", ""):gsub("%s+$", "")
             if #trimmed > 0 and trimmed ~= "nil" then
                 return trimmed
             end
@@ -192,65 +192,191 @@ local function getHardwareId()
         return game:GetService("RbxAnalyticsService"):GetClientId()
     end)
     if okClient and clientId and #tostring(clientId) > 0 then
-        return "RBX_" .. tostring(clientId)
+        return "RBX_" .. tostring(clientId):gsub("[%c]", "")
     end
 
     local uid = LocalPlayer and LocalPlayer.UserId or 0
     if identifyexecutor then
         local okExec, exec = pcall(identifyexecutor)
         if okExec and exec and #tostring(exec) > 0 then
-            return tostring(exec) .. "_" .. tostring(uid)
+            return tostring(exec):gsub("[%c]", "") .. "_" .. tostring(uid)
         end
     end
     return "DEVICE_" .. tostring(uid)
 end
 
+local function getRequestFunctions()
+    local fns = {}
+    local seen = {}
+    local function addFn(name, fn)
+        if type(fn) == "function" and not seen[fn] then
+            seen[fn] = true
+            table.insert(fns, { name = name, fn = fn })
+        end
+    end
+    addFn("request", request)
+    addFn("http.request", type(http) == "table" and http.request or nil)
+    addFn("http_request", http_request)
+    addFn("syn.request", type(syn) == "table" and syn.request or nil)
+    addFn("fluxus.request", type(fluxus) == "table" and fluxus.request or nil)
+    addFn("krnl.request", type(krnl) == "table" and krnl.request or nil)
+    return fns
+end
+
+local function extractHttpBody(resp)
+    if type(resp) == "string" then
+        return 200, resp
+    end
+    if type(resp) == "table" then
+        local status = tonumber(resp.StatusCode or resp.status_code or resp.Status or resp.status)
+        local body = resp.Body or resp.body or resp.Content or resp.content or resp.Data or resp.data or resp.responseText
+        return status, body
+    end
+    return nil, nil
+end
+
+local function buildEdgeQueryUrl(endpointPath, queryParams)
+    local parts = { "softStatus=1", "_ts=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999)) }
+    if type(queryParams) == "table" then
+        for k, v in pairs(queryParams) do
+            if v ~= nil then
+                local cleanVal = tostring(v):gsub("[%c]", "")
+                local okEnc, encoded = pcall(function() return HttpService:UrlEncode(cleanVal) end)
+                table.insert(parts, tostring(k) .. "=" .. (okEnc and encoded or cleanVal))
+            end
+        end
+    end
+    return CLOUDFLARE_URL .. endpointPath .. "?" .. table.concat(parts, "&")
+end
+
+local function decodeEdgeJson(rawBody)
+    if type(rawBody) ~= "string" then return nil end
+    local trimmed = rawBody:gsub("^%s+", ""):gsub("%s+$", "")
+    if #trimmed == 0 or trimmed:sub(1, 1) ~= "{" then
+        return nil
+    end
+    local data = nil
+    pcall(function() data = HttpService:JSONDecode(trimmed) end)
+    if type(data) == "table" and (data.success ~= nil or data.active ~= nil or data.code ~= nil or data.message ~= nil) then
+        return data
+    end
+    return nil
+end
+
+local function performEdgeRequest(endpointPath, method, payloadTable, queryParams)
+    local reqFns = getRequestFunctions()
+    local postUrl = CLOUDFLARE_URL .. endpointPath
+    local queryUrl = buildEdgeQueryUrl(endpointPath, queryParams)
+    local encodedBody = (method == "POST" and type(payloadTable) == "table") and HttpService:JSONEncode(payloadTable) or nil
+    local diags = {}
+
+    local function tryRequestMode(useMode)
+        for _, entry in ipairs(reqFns) do
+            local opts = (useMode == "POST" and encodedBody) and {
+                Url = postUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["Accept"] = "application/json" },
+                Body = encodedBody
+            } or {
+                Url = queryUrl,
+                Method = "GET"
+            }
+            local okCall, resp = pcall(entry.fn, opts)
+            if okCall and resp ~= nil then
+                local status, rawBody = extractHttpBody(resp)
+                local decoded = decodeEdgeJson(rawBody)
+                if decoded then
+                    if getgenv then getgenv()._SongHubPreferredTransport = "request" end
+                    return true, decoded, status or 200
+                end
+                local snippet = (type(rawBody) == "string" and #rawBody > 0) and (rawBody:sub(1, 32):gsub("[\r\n]+", " ")) or "empty"
+                table.insert(diags, entry.name .. ":" .. useMode .. "=s" .. tostring(status) .. "(" .. snippet .. ")")
+            else
+                table.insert(diags, entry.name .. ":" .. useMode .. "=err")
+            end
+        end
+        return false, nil, nil
+    end
+
+    local function tryHttpGetFns()
+        local getFns = {
+            { name = "game:HttpGet", fn = function(u) return game:HttpGet(u) end },
+        }
+        if type(HttpGet) == "function" then
+            table.insert(getFns, { name = "HttpGet", fn = function(u) return HttpGet(u) end })
+        end
+        table.insert(getFns, { name = "HttpGetAsync", fn = function(u) return game:HttpGetAsync(u) end })
+
+        for _, g in ipairs(getFns) do
+            local okGet, rawBody = pcall(g.fn, queryUrl)
+            if okGet and type(rawBody) == "string" then
+                local decoded = decodeEdgeJson(rawBody)
+                if decoded then
+                    if getgenv then getgenv()._SongHubPreferredTransport = "httpget" end
+                    return true, decoded, 200
+                end
+                local snippet = #rawBody > 0 and (rawBody:sub(1, 32):gsub("[\r\n]+", " ")) or "empty"
+                table.insert(diags, g.name .. "=bad(" .. snippet .. ")")
+            else
+                local errMsg = tostring(rawBody):gsub("[\r\n]+", " "):sub(1, 44)
+                table.insert(diags, g.name .. "=err(" .. errMsg .. ")")
+            end
+        end
+        return false, nil, nil
+    end
+
+    local preferHttpGet = getgenv and getgenv()._SongHubPreferredTransport == "httpget"
+    if preferHttpGet then
+        local okG, decG, stG = tryHttpGetFns()
+        if okG then return true, decG, stG end
+        if method == "POST" and encodedBody then
+            local okP, decP, stP = tryRequestMode("POST")
+            if okP then return true, decP, stP end
+        end
+        local okR, decR, stR = tryRequestMode("GET")
+        if okR then return true, decR, stR end
+    else
+        if method == "POST" and encodedBody then
+            local okP, decP, stP = tryRequestMode("POST")
+            if okP then return true, decP, stP end
+        end
+        local okG, decG, stG = tryHttpGetFns()
+        if okG then return true, decG, stG end
+        local okR, decR, stR = tryRequestMode("GET")
+        if okR then return true, decR, stR end
+    end
+
+    local diagStr = #diags > 0 and (" [" .. table.concat(diags, "; "):sub(1, 140) .. "]") or " [No HTTP transport]"
+    return false, nil, diagStr
+end
+
 local function closeSessionRemote(sessionToken)
     if type(sessionToken) ~= "string" or #sessionToken == 0 then return end
     pcall(function()
-        local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
-        if requestFn then
-            requestFn({
-                Url = CLOUDFLARE_URL .. "/api/v1/session/close",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode({ sessionToken = sessionToken })
-            })
-        end
+        performEdgeRequest("/api/v1/session/close", "POST", { sessionToken = sessionToken }, { sessionToken = sessionToken })
     end)
 end
 
 local function sendVerifyRequest(key)
-    local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
-    if not requestFn then
-        return false, { message = "Your executor does not support HTTP requests!" }
-    end
-
     local cleanReqKey = sanitizeLicenseKey(key)
-    local payload = HttpService:JSONEncode({
+    local hwid = getHardwareId()
+    local uid = LocalPlayer and LocalPlayer.UserId or 0
+    local uname = LocalPlayer and LocalPlayer.Name or ""
+    local jid = game.JobId or ""
+    local pid = tostring(game.PlaceId or "")
+    local payloadTable = {
         key = cleanReqKey,
-        hwid = getHardwareId(),
-        userId = LocalPlayer.UserId,
-        username = LocalPlayer.Name,
-        jobId = game.JobId or "",
-        placeId = tostring(game.PlaceId or "")
-    })
+        hwid = hwid,
+        userId = uid,
+        username = uname,
+        jobId = jid,
+        placeId = pid
+    }
 
-    local success, response = pcall(requestFn, {
-        Url = SERVER_VERIFY_URL,
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = payload
-    })
-
-    local rawBody = response and (response.Body or response.body)
-    if not success or not response or type(rawBody) ~= "string" then
-        return false, { message = "Could not connect to Cloudflare Auth Edge!" }
+    local okEdge, data, extra = performEdgeRequest("/api/verify-key", "POST", payloadTable, payloadTable)
+    if not okEdge or type(data) ~= "table" then
+        return false, { message = "Could not connect to Cloudflare Auth Edge!" .. (type(extra) == "string" and extra or "") }
     end
-
-    local data = nil
-    pcall(function() data = HttpService:JSONDecode(rawBody) end)
-    if not data then return false, { message = "Server returned invalid response." } end
     return data.success == true, data
 end
 
@@ -453,9 +579,6 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
     end
 
     task.spawn(function()
-        local heartbeatUrl = CLOUDFLARE_URL .. "/api/v1/heartbeat"
-        local requestFn = (syn and syn.request) or request or (http and http.request) or http_request
-
         while true do
             if getgenv and (getgenv()._SongHubSessionExpired == true or getgenv()._SongHubSessionGeneration ~= myGen) then
                 break
@@ -484,18 +607,11 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
             authState = getgenv and getgenv()._SongHubAuth
             expiresAtClock = authState and tonumber(authState.expiresAtClock) or nil
 
-            local okReq, resp = false, nil
-            if requestFn then
-                okReq, resp = pcall(requestFn, {
-                    Url = heartbeatUrl,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode({
-                        sessionToken = currentToken,
-                        key = activeKey or ""
-                    })
-                })
-            end
+            local hbPayload = {
+                sessionToken = currentToken,
+                key = activeKey or ""
+            }
+            local okReq, decoded = performEdgeRequest("/api/v1/heartbeat", "POST", hbPayload, hbPayload)
 
             if getgenv and (getgenv()._SongHubSessionExpired == true or getgenv()._SongHubSessionGeneration ~= myGen) then
                 break
@@ -505,25 +621,13 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
             local revokeReason = "Your license key has expired or session was closed."
             local gotValidAck = false
 
-            if okReq and type(resp) == "table" then
-                local status = tonumber(resp.StatusCode or resp.status_code) or 200
-                local rawBody = resp.Body or resp.body
-                local decoded = nil
-                if type(rawBody) == "string" and #rawBody > 0 then
-                    pcall(function() decoded = HttpService:JSONDecode(rawBody) end)
-                end
-
-                if status == 401 or status == 403 then
-                    shouldRevoke = true
-                    if type(decoded) == "table" and type(decoded.message) == "string" and #decoded.message > 0 then
-                        revokeReason = decoded.message
-                    end
-                elseif type(decoded) == "table" and (decoded.active == false or decoded.success == false) then
+            if okReq and type(decoded) == "table" then
+                if decoded.active == false or decoded.success == false then
                     shouldRevoke = true
                     if type(decoded.message) == "string" and #decoded.message > 0 then
                         revokeReason = decoded.message
                     end
-                elseif status >= 200 and status < 300 and type(decoded) == "table" and decoded.active == true then
+                elseif decoded.active == true then
                     gotValidAck = true
                     if type(decoded.refreshedToken) == "string" and #decoded.refreshedToken > 0 then
                         currentToken = decoded.refreshedToken
@@ -563,7 +667,7 @@ local function startSessionHeartbeat(sessionToken, activeKey, authInfo)
                 break
             end
 
-            if not requestFn or (not gotValidAck and waitSec == 0) then
+            if not gotValidAck and waitSec == 0 then
                 task.wait(5)
             end
         end
