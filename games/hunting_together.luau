@@ -744,16 +744,21 @@ local function registerQueueOnTeleport(forceQueue)
                     "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/loader.luau?v=" .. cb,
                     "https://raw.githubusercontent.com/songsarmseeha-commits/Song-Hub/main/Universal_Loader.luau?v=" .. cb,
                 }
+                local function validLua(code)
+                    if type(code) ~= "string" or #code <= 500 then return nil end
+                    local head = code:sub(1, 512):gsub("^%s+", "")
+                    if head == "" or head:sub(1, 1) == "<" then return nil end
+                    if head:find("403: Forbidden", 1, true) or head:find("404: Not Found", 1, true) or head:find("-- Game script not found", 1, true) then return nil end
+                    return loadstring(code)
+                end
                 for _, u in ipairs(urls) do
                     local sOk, code = pcall(function() return game:HttpGet(u) end)
-                    if sOk and type(code) == "string" and #code > 500 and not code:find("404: Not Found", 1, true) then
-                        local fn = loadstring(code)
-                        if fn then compiledFn = fn; break end
-                    end
+                    local fn = sOk and validLua(code) or nil
+                    if fn then compiledFn = fn; break end
                     if reqFn then
                         local rOk, resp = pcall(reqFn, { Url = u, Method = "GET", Headers = { ["Cache-Control"] = "no-cache" } })
-                        if rOk and type(resp) == "table" and type(resp.Body) == "string" and #resp.Body > 500 then
-                            local fn = loadstring(resp.Body)
+                        if rOk and type(resp) == "table" then
+                            fn = validLua(resp.Body)
                             if fn then compiledFn = fn; break end
                         end
                     end
