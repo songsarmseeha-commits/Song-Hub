@@ -140,7 +140,7 @@
                         <i data-lucide="sliders-horizontal" class="w-4 h-4 text-purple-400"></i>
                         <span>Choose Checkpoint Sponsor:</span>
                     </span>
-                    <span class="text-[10px] text-gray-400">Select one provider to get key</span>
+                    <span id="providerSelectHint" class="text-[10px] text-gray-400">Select provider to complete checkpoints</span>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <!-- LootLabs Option -->
@@ -154,7 +154,7 @@
                                     <span>LootLabs</span>
                                     <span class="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-semibold">Recommended</span>
                                 </div>
-                                <div class="text-[10px] text-gray-400">1 Quick Task • Fast</div>
+                                <div id="optLootlabsSub" class="text-[10px] text-gray-400">Fast Tasks</div>
                             </div>
                         </div>
                         <div id="dotLootlabs" class="w-4 h-4 rounded-full border-2 border-purple-500 flex items-center justify-center">
@@ -170,7 +170,7 @@
                             </div>
                             <div>
                                 <div class="text-xs font-bold text-white">Linkvertise</div>
-                                <div class="text-[10px] text-gray-400">Standard Shortener</div>
+                                <div id="optLinkvertiseSub" class="text-[10px] text-gray-400">Standard Shortener</div>
                             </div>
                         </div>
                         <div id="dotLinkvertise" class="w-4 h-4 rounded-full border-2 border-gray-600 flex items-center justify-center">
@@ -314,13 +314,12 @@
             document.getElementById('hwidText').innerText = hwidParam;
         }
 
-        function getStepProvider(stepNum, totalSteps, mode, chosenSingle) {
+        function getStepProvider(stepNum, totalSteps, mode, chosenProvider) {
             const m = (mode || 'dual').toLowerCase();
             if (m === 'linkvertise') return 'linkvertise';
             if (m === 'lootlabs') return 'lootlabs';
-            if (totalSteps === 1) {
-                return (chosenSingle === 'linkvertise') ? 'linkvertise' : 'lootlabs';
-            }
+            if (chosenProvider === 'linkvertise') return 'linkvertise';
+            if (chosenProvider === 'lootlabs') return 'lootlabs';
             return (stepNum % 2 === 1) ? 'lootlabs' : 'linkvertise';
         }
 
@@ -353,9 +352,11 @@
         }
 
         async function selectProvider(p) {
-            if (!sessionData || sessionData.totalSteps > 1 || sessionData.configuredMode !== 'dual') return;
+            if (!sessionData || sessionData.isCompleted || sessionData.configuredMode !== 'dual') return;
             updateProviderUI(p);
-            if (sessionData.sessionId && !sessionData.isCompleted) {
+            sessionData.provider = p;
+            renderStep(sessionData.currentStep || 1, sessionData.totalSteps || 1);
+            if (sessionData.sessionId) {
                 try {
                     const res = await fetch('/api/v1/getkey/switch-provider', {
                         method: 'POST',
@@ -363,10 +364,11 @@
                         body: JSON.stringify({ sessionId: sessionData.sessionId, provider: p })
                     });
                     const data = await res.json();
-                    sessionData.provider = data.provider || p;
-                    sessionData.totalSteps = data.totalSteps || sessionData.totalSteps || 1;
-                    sessionData.currentStep = 1;
-                    renderStep(sessionData.currentStep, sessionData.totalSteps);
+                    if (data && data.success) {
+                        sessionData.provider = data.provider || p;
+                        sessionData.totalSteps = data.totalSteps || sessionData.totalSteps || 1;
+                        renderStep(sessionData.currentStep || 1, sessionData.totalSteps);
+                    }
                 } catch (e) {}
             }
         }
@@ -391,7 +393,8 @@
             let labelsHtml = '';
 
             for (let i = 1; i <= totalSteps; i++) {
-                const sp = getStepProvider(i, totalSteps, mode, selectedProvider);
+                const chosenP = (sessionData && sessionData.provider) || selectedProvider;
+                const sp = getStepProvider(i, totalSteps, mode, chosenP);
                 const isDone = completedAll || i < currentStep;
                 const isCurrent = !completedAll && i === currentStep;
                 const activeColor = sp === 'linkvertise' ? 'border-cyan-500 shadow-cyan-500/30' : 'border-purple-500 shadow-purple-500/30';
@@ -477,16 +480,25 @@
             const provSelectBox = document.getElementById('providerSelectContainer');
 
             if (provSelectBox) {
-                if (cfgMode === 'dual' && total === 1) {
+                if (cfgMode === 'dual') {
                     provSelectBox.classList.remove('hidden');
-                    updateProviderUI((sessionData && sessionData.provider === 'linkvertise') || selectedProvider === 'linkvertise' ? 'linkvertise' : 'lootlabs');
+                    const activeProv = (sessionData && sessionData.provider === 'linkvertise') || (!sessionData?.provider && selectedProvider === 'linkvertise')
+                        ? 'linkvertise'
+                        : 'lootlabs';
+                    updateProviderUI(activeProv);
+                    const hintEl = document.getElementById('providerSelectHint');
+                    const lootSub = document.getElementById('optLootlabsSub');
+                    const linkSub = document.getElementById('optLinkvertiseSub');
+                    if (hintEl) hintEl.innerText = total > 1 ? `Applies to all ${total} checkpoints` : 'Select one provider to get key';
+                    if (lootSub) lootSub.innerText = `${total} Checkpoint${total > 1 ? 's' : ''} • Fast Tasks`;
+                    if (linkSub) linkSub.innerText = `${total} Checkpoint${total > 1 ? 's' : ''} • Standard Shortener`;
                 } else {
                     provSelectBox.classList.add('hidden');
                 }
             }
 
-            const chosenSingle = (sessionData && sessionData.provider) || selectedProvider || 'lootlabs';
-            const stepProvider = getStepProvider(cur, total, cfgMode, chosenSingle);
+            const chosenProv = (sessionData && sessionData.provider) || selectedProvider || 'lootlabs';
+            const stepProvider = getStepProvider(cur, total, cfgMode, chosenProv);
             const durHours = (sessionData && sessionData.durationHours) || 24;
 
             renderProgressSteps(cur, total, false);

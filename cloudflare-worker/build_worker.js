@@ -1080,12 +1080,19 @@ export default {
                         });
                     }
                     let effSteps = Number(existing.total_steps) || cfgSteps;
-                    let effProvider = existing.provider || cfgMode;
-                    if (Number(existing.current_step) <= 1 && (effSteps !== cfgSteps || (cfgMode !== "dual" && effProvider !== cfgMode))) {
+                    let effProvider = String(existing.provider || cfgMode).toLowerCase();
+                    const needsProviderNormalize = (cfgMode === "dual" && effProvider !== "lootlabs" && effProvider !== "linkvertise");
+                    if (Number(existing.current_step) <= 1 && (effSteps !== cfgSteps || (cfgMode !== "dual" && effProvider !== cfgMode) || needsProviderNormalize)) {
                         effSteps = cfgSteps;
-                        effProvider = cfgMode === "dual"
-                            ? (cfgSteps === 1 && (queryProvider === "lootlabs" || queryProvider === "linkvertise") ? queryProvider : "dual")
-                            : cfgMode;
+                        if (cfgMode === "dual") {
+                            if (queryProvider === "lootlabs" || queryProvider === "linkvertise") {
+                                effProvider = queryProvider;
+                            } else if (effProvider !== "lootlabs" && effProvider !== "linkvertise") {
+                                effProvider = "lootlabs";
+                            }
+                        } else {
+                            effProvider = cfgMode;
+                        }
                         await db.updateSessionProvider(existing.session_id, effProvider, effSteps);
                     }
                     return json({
@@ -1103,8 +1110,8 @@ export default {
             }
 
             let initProvider = cfgMode;
-            if (cfgMode === "dual" && cfgSteps === 1 && (queryProvider === "lootlabs" || queryProvider === "linkvertise")) {
-                initProvider = queryProvider;
+            if (cfgMode === "dual") {
+                initProvider = (queryProvider === "linkvertise") ? "linkvertise" : "lootlabs";
             }
             const totalSteps = cfgSteps;
             const sessionId = generateHex(16);
@@ -1138,12 +1145,26 @@ export default {
             const cfgSteps = Math.max(1, Math.min(parseInt(await db.getSetting("getkey_steps", "2")) || 2, 10));
 
             let resolvedProvider = cfgMode;
-            if (cfgMode === "dual" && cfgSteps === 1 && (reqProv === "lootlabs" || reqProv === "linkvertise")) {
-                resolvedProvider = reqProv;
+            if (cfgMode === "dual") {
+                resolvedProvider = (reqProv === "linkvertise") ? "linkvertise" : "lootlabs";
             }
-            const totalSteps = cfgSteps;
 
+            let totalSteps = cfgSteps;
             if (sessionId) {
+                const existing = await db.findGetKeySession(sessionId);
+                if (existing) {
+                    if (existing.is_completed === 1) {
+                        return json({
+                            success: true,
+                            provider: existing.provider,
+                            totalSteps: Number(existing.total_steps) || cfgSteps,
+                            configuredMode: cfgMode
+                        });
+                    }
+                    totalSteps = (Number(existing.current_step) > 1 && Number(existing.total_steps))
+                        ? Number(existing.total_steps)
+                        : cfgSteps;
+                }
                 await db.updateSessionProvider(sessionId, resolvedProvider, totalSteps);
             }
             return json({ success: true, provider: resolvedProvider, totalSteps, configuredMode: cfgMode });
@@ -1171,9 +1192,9 @@ export default {
 
             const sessionProvider = String(session ? session.provider : (url.searchParams.get("provider") || cfgMode)).toLowerCase();
             let stepProvider = "lootlabs";
-            if (cfgMode === "linkvertise" || sessionProvider === "linkvertise") {
+            if (cfgMode === "linkvertise" || (cfgMode === "dual" && sessionProvider === "linkvertise")) {
                 stepProvider = "linkvertise";
-            } else if (cfgMode === "lootlabs" || sessionProvider === "lootlabs") {
+            } else if (cfgMode === "lootlabs" || (cfgMode === "dual" && sessionProvider === "lootlabs")) {
                 stepProvider = "lootlabs";
             } else {
                 stepProvider = (step % 2 === 1) ? "lootlabs" : "linkvertise";
